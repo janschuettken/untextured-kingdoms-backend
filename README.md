@@ -31,13 +31,19 @@ Ausbaukosten. Neue Clients bekommen im `welcome` alle stehenden Gebäude und ihr
 (`building_placed`, `building_changed`, `building_removed`, `stock` nur an den eigenen Spieler).
 
 Produktion (`server/src/world/production.rs`): Jeder Betrieb arbeitet sein eingestelltes Rezept ab
-(`configure_building`: Rezept, Pause, Lieferungen annehmen). Eingangswaren kommen beim Start aus dem Lager, das
-Ergebnis geht am Ende hinein. Abbaubetriebe brauchen Rohstoff in Reichweite (`gather_radius`) und verbrauchen ihn
+(`configure_building`: Rezept, Pause, Lieferungen annehmen). Eingangswaren kommen beim Start aus dem eigenen Lager
+des Betriebs (`inventory`, höchstens `transport.building_capacity` je Ware), das Ergebnis geht am Ende hinein. Abbaubetriebe brauchen Rohstoff in Reichweite (`gather_radius`) und verbrauchen ihn
 (`resource_amounts`); ein leeres Waldfeld verschwindet und gibt den Weg frei (`resource_changed`). `placement` legt
 fest, worauf ein Gebäude stehen muss (Steinbruch auf Stein, Mine auf Eisen, Bauernhof und Rinder auf Acker;
 fruchtbarer Boden macht sie schneller). Die Obstplantage lässt sich aufgeben (`release_trees`), dann wird ihre
-Fläche zu Wald. Der Zustand jedes Betriebs (`status`) geht bei Änderung an alle. Noch gibt es ein gemeinsames Lager
-je Spieler; Lager pro Gebäude und Transport folgen.
+Fläche zu Wald. Zustand und Lager jedes Betriebs gehen bei Änderung an alle (`building_changed`).
+
+Transport (`server/src/world/transport.rs`): Der gemeinsame Vorrat liegt in Bergfried und Vorratslagern (`hub`).
+Dort wohnen Träger (`spawns`), der Wagenschuppen stellt einen Karren. Träger holen fertige Waren aus den Betrieben
+ins nächste Lager und bringen fehlende Eingänge hin, wenn der Betrieb Lieferungen annimmt. Der Karren fährt erst ab
+`cart_min_load` Waren los, lädt viel und ist schneller; solange er frei ist, lassen die Träger so große Ladungen für
+ihn liegen. Träger und Karren nehmen keine Befehle an und weichen neuen Gebäuden aus. Bauen bezahlt man vorerst
+direkt aus dem Vorrat.
 
 Texte: Der Server schickt nie fertige Sätze, sondern Schlüssel mit Platzhaltern (`Text { key, args }`, z. B.
 `error.not_enough` mit `good` und `need`). Übersetzt wird im Client (Deutsch und Englisch).
