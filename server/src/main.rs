@@ -1,5 +1,6 @@
 //! Autoritativer Spielserver: feste Tick-Rate, Clients per WebSocket.
 
+mod buildings;
 mod map;
 mod nav;
 mod world;
@@ -106,7 +107,13 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) ->
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let player_id = state.next_player_id.fetch_add(1, Ordering::Relaxed);
     state.players_online.fetch_add(1, Ordering::Relaxed);
-    state.world.lock().unwrap().spawn_player(player_id);
+    // Gebäudestand und Abo im selben Lock holen: so geht keine Änderung
+    // verloren und keine kommt doppelt an.
+    let (buildings, mut ticks) = {
+        let mut world = state.world.lock().unwrap();
+        world.spawn_player(player_id);
+        (world.buildings.clone(), state.ticks.subscribe())
+    };
     info!("Spieler {player_id} verbunden");
 
     let (mut tx, mut rx) = socket.split();
@@ -116,11 +123,12 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         player_id,
         tick_rate: TICK_RATE,
         map: state.map.clone(),
+        building_specs: buildings::all_specs(),
+        buildings,
     };
     let _ = out_tx.send(welcome).await;
 
     // Ausgehend: direkte Antworten + Ticks an diesen Client schreiben.
-    let mut ticks = state.ticks.subscribe();
     let writer = tokio::spawn(async move {
         loop {
             let msg = tokio::select! {
@@ -146,12 +154,32 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             Ok(ClientMsg::MoveUnits { unit_ids, x, y }) => {
                 state.world.lock().unwrap().order_move(player_id, &unit_ids, (x, y));
             }
+            Ok(ClientMsg::PlaceBuilding { kind, x, y }) => {
+                let mut world = state.world.lock().unwrap();
+                match world.place_building(player_id, kind, x, y) {
+                    // Noch unter dem Lock verschicken, damit die Reihenfolge stimmt.
+                    Ok(building) => drop(state.ticks.send(ServerMsg::BuildingPlaced { building })),
+                    Err(reason) => drop(out_tx.try_send(ServerMsg::Rejected { reason })),
+                }
+            }
+            Ok(ClientMsg::DemolishBuilding { building_id }) => {
+                let mut world = state.world.lock().unwrap();
+                match world.demolish(player_id, building_id) {
+                    Ok(()) => drop(state.ticks.send(ServerMsg::BuildingRemoved { building_id })),
+                    Err(reason) => drop(out_tx.try_send(ServerMsg::Rejected { reason })),
+                }
+            }
             Err(e) => warn!("Ungültige Nachricht von {player_id}: {e}"),
         }
     }
 
     writer.abort();
-    state.world.lock().unwrap().remove_player(player_id);
+    {
+        let mut world = state.world.lock().unwrap();
+        for building_id in world.remove_player(player_id) {
+            let _ = state.ticks.send(ServerMsg::BuildingRemoved { building_id });
+        }
+    }
     state.players_online.fetch_sub(1, Ordering::Relaxed);
     info!("Spieler {player_id} getrennt");
 }

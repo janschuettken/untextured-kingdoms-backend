@@ -18,10 +18,17 @@ Client (`welcome`) und gibt jedem Spieler einen König auf einem Startfeld. Bewe
 (`move_units`) werden serverseitig mit A* über das Navigationsgitter ausgeführt. 20-mal pro Sekunde
 geht ein `tick` mit allen Einheiten an alle Clients.
 
+Gebäude (`place_building`, `demolish_building`): Mauer, hohe Mauer, Turm, Bergfried, Vorratslager. Der Server prüft
+die Bauregeln (ebener Boden, keine Rampe, kein Wasser, nichts im Weg, ein Bergfried pro Spieler), blockiert die
+Felder im Navigationsgitter und lässt laufende Einheiten neu planen. Neue Clients bekommen im `welcome` die
+Gebäudearten (`building_specs`) und alle stehenden Gebäude, danach nur Änderungen (`building_placed`,
+`building_removed`). Abgelehnte Befehle meldet `rejected` mit Grund.
+
 ```
 server/src/map.rs    Karte aus Textdatei lesen: Höhenstufen, Rampen, Wasser, Eckhöhen
 server/src/nav.rs    Navigationsgitter (wer darf wohin) und Wegsuche (A* + Glätten)
-server/src/world.rs  Spielzustand: Einheiten, Befehle, Bewegung pro Tick
+server/src/world.rs  Spielzustand: Einheiten, Gebäude, Befehle, Bewegung pro Tick
+server/src/buildings.rs  Gebäudearten mit Größe und Lebenspunkten (Balancing)
 server/maps/         Karten als Text, Legende steht oben in der Datei
 ```
 
