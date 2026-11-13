@@ -15,7 +15,7 @@ use production::Work;
 use transport::Job;
 
 /// Laufgeschwindigkeit des Königs in Feldern pro Sekunde.
-const KING_SPEED: f32 = 3.0;
+const KING_SPEED: f32 = 1.5; // Felder pro Sekunde, also gut 4 m/s
 
 pub struct Unit {
     pub id: u32,
@@ -442,17 +442,17 @@ mod tests {
         world.spawn_player(1);
         world.spawn_player(2);
         let id = world.units[0].id;
-        world.order_move(1, &[id], (30.5, 20.5));
+        world.order_move(1, &[id], (122.5, 82.5));
         world.order_move(1, &[world.units[1].id], (0.5, 0.5)); // fremde Einheit: ignoriert
         assert!(world.units[1].path.is_empty());
-        for _ in 0..20 * 60 {
+        for _ in 0..20 * 120 {
             world.step(0.05);
             let u = &world.units[0];
             let (x, y) = (u.pos.0.floor() as i32, u.pos.1.floor() as i32);
             assert!(world.map.nav.is_open(x, y), "König steht auf ({x}, {y}) im Wasser/Fels");
         }
         let u = &world.units[0];
-        assert!((u.pos.0 - 30.5).abs() < 1e-3 && (u.pos.1 - 20.5).abs() < 1e-3);
+        assert!((u.pos.0 - 122.5).abs() < 1e-3 && (u.pos.1 - 82.5).abs() < 1e-3, "König bei {:?}", u.pos);
     }
 
     fn eco() -> Economy {
@@ -471,11 +471,12 @@ mod tests {
     fn bauregeln_werden_geprueft() {
         let mut world = World::new(GameMap::parse(DEFAULT_MAP).unwrap(), eco());
         world.spawn_player(1);
-        let water = (0..64u32 * 64).find(|&i| world.map.tiles[i as usize] == TileKind::Water).unwrap();
-        assert!(world.place_building(1, BuildingKind::Wall, water % 64, water / 64).is_err());
-        let ramp = (0..64u32 * 64).find(|&i| world.map.tiles[i as usize] == TileKind::Ramp).unwrap();
-        assert!(world.place_building(1, BuildingKind::Wall, ramp % 64, ramp / 64).is_err());
-        assert!(world.place_building(1, BuildingKind::Keep, 62, 62).is_err(), "ragt aus der Karte");
+        let w = world.map.width;
+        let water = (0..w * world.map.height).find(|&i| world.map.tiles[i as usize] == TileKind::Water).unwrap();
+        assert!(world.place_building(1, BuildingKind::Wall, water % w, water / w).is_err());
+        let ramp = (0..w * world.map.height).find(|&i| world.map.tiles[i as usize] == TileKind::Ramp).unwrap();
+        assert!(world.place_building(1, BuildingKind::Wall, ramp % w, ramp / w).is_err());
+        assert!(world.place_building(1, BuildingKind::Keep, w - 2, w - 2).is_err(), "ragt aus der Karte");
         let king = world.units[0].pos;
         assert!(world.place_building(1, BuildingKind::Wall, king.0 as u32, king.1 as u32).is_err());
 

@@ -35,6 +35,10 @@ pub enum ClientMsg {
     ConfigureBuilding { building_id: u32, settings: BuildingSettings },
     /// Obstplantage aufgeben: ihre Bäume werden zu Wald, den man abholzen kann.
     ReleaseTrees { building_id: u32 },
+    /// Sichtbereich des Clients in Feldern (Rechteck, Ecken eingeschlossen).
+    /// Der Server schickt Einheiten nur für diesen Bereich (plus Rand) und
+    /// immer die eigenen. Ohne diese Nachricht sieht der Client alles.
+    View { x0: f32, y0: f32, x1: f32, y1: f32 },
 }
 
 /// Nachrichten vom Server an den Client.
@@ -47,7 +51,7 @@ pub enum ServerMsg {
     Welcome {
         player_id: u32,
         tick_rate: u32,
-        map: MapInfo,
+        map: MapRef,
         /// Waren, Gebäude, Stufen und Rezepte aus `server/data/economy.json`.
         /// So pflegt der Client nichts doppelt und kann die Produktionsketten anzeigen.
         economy: EconomyDef,
@@ -61,8 +65,11 @@ pub enum ServerMsg {
         #[ts(type = "number")]
         tick: u64,
         players_online: u32,
-        /// Alle Einheiten mit ihrem aktuellen Zustand.
+        /// Einheiten, die dieser Client sehen soll und die neu im Bild sind
+        /// oder sich verändert haben. Alle anderen sind unverändert.
         units: Vec<UnitState>,
+        /// Einheiten, die verschwunden oder aus dem Bild gelaufen sind.
+        gone: Vec<u32>,
     },
     Pong {
         client_time: f64,
@@ -106,33 +113,16 @@ pub enum TileKind {
     Water,
 }
 
-/// Karte als Gitter aus Feldern.
-///
-/// Jedes Feld hat vier Eckhöhen. Flache Felder haben vier gleiche Ecken,
-/// Rampen steigen gleichmäßig an. Wo zwei Nachbarfelder an ihrer gemeinsamen
-/// Kante nicht dieselben Höhen haben, ist dort eine Klippe (Wand).
+/// Welche Karte gespielt wird. Die Karte selbst (Höhen, Ressourcen) holt der
+/// Client als Text von `GET /api/maps/current` (Format wie `server/maps/*.txt`,
+/// mit dem aktuellen Stand der Ressourcen) und rechnet Eckhöhen selbst aus.
+/// Änderungen danach kommen als [`ServerMsg::ResourceChanged`].
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct MapInfo {
+pub struct MapRef {
+    pub name: String,
     pub width: u32,
     pub height: u32,
-    pub max_level: u8,
-    /// Wie viele Höhenschritte eine Stufe hat (Eckhöhen sind in Schritten).
-    pub steps_per_level: u16,
-    /// Pro Feld zeilenweise, Länge = width * height.
-    pub tiles: Vec<TileKind>,
-    /// Ressource pro Feld (Wald, Stein, ...). Wald, Stein und Eisen blockieren das Laufen.
-    pub resources: Vec<ResourceKind>,
-    /// Logische Höhenstufe pro Feld (bei Rampen die untere Stufe).
-    pub levels: Vec<u8>,
-    /// Vier Eckhöhen pro Feld in Schritten, Reihenfolge NW, NO, SO, SW
-    /// (also (x,y), (x+1,y), (x+1,y+1), (x,y+1)). Länge = 4 * width * height.
-    pub corners: Vec<u16>,
-    /// Navigationsgitter: pro Feld ein Bit je Richtung, in die man laufen kann.
-    /// Bit 0 = Ost (+x), dann im Uhrzeigersinn: 1 = SO, 2 = Süd (+y), 3 = SW,
-    /// 4 = West, 5 = NW, 6 = Nord, 7 = NO. 0 heißt: Feld ist nicht begehbar
-    /// oder komplett eingeschlossen.
-    pub nav: Vec<u8>,
 }
 
 /// Ressource auf einem Feld. In der Kartendatei die Ebene `[resources]`.
@@ -168,9 +158,9 @@ pub struct MapIssue {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct MapCheck {
-    /// Die Karte, so gut sie sich lesen ließ. Fehlt nur, wenn das Format
-    /// grundsätzlich kaputt ist (z. B. Zeilen unterschiedlich lang).
-    pub map: Option<MapInfo>,
+    /// Größe der Karte, 0 wenn sich das Format gar nicht lesen ließ.
+    pub width: u32,
+    pub height: u32,
     /// Startfelder (x, y).
     pub spawns: Vec<(u32, u32)>,
     /// Fehler: so lässt sich die Karte nicht spielen oder speichern.

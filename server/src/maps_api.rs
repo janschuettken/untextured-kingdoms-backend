@@ -4,11 +4,14 @@
 //! - `GET  /api/maps/{name}`  Kartendatei als Text
 //! - `POST /api/maps/check`   Text prüfen, liefert [`protocol::MapCheck`]
 //! - `PUT  /api/maps/{name}`  Karte speichern (nur wenn erlaubt, siehe [`MapStore::can_save`])
+//! - `GET  /api/maps/generate?width=..&height=..&players=..&seed=..`  Zufallskarte erzeugen
+//!
+//! `GET /api/maps/current` (die laufende Karte mit aktuellem Stand) liegt in `main.rs`.
 
 use std::{path::PathBuf, sync::Arc};
 
 use axum::{
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -58,7 +61,10 @@ pub fn router<S: Clone + Send + Sync + 'static>(store: Arc<MapStore>) -> Router<
     Router::new()
         .route("/api/maps", get(list))
         .route("/api/maps/check", post(check))
+        .route("/api/maps/generate", get(generate))
         .route("/api/maps/{name}", get(load).put(save))
+        // 1024 × 1024 Felder mit Ressourcen sind gut 2 MB Text.
+        .layer(DefaultBodyLimit::max(8 * 1024 * 1024))
         .with_state(store)
 }
 
@@ -84,8 +90,32 @@ async fn load(State(store): State<Arc<MapStore>>, Path(name): Path<String>) -> R
     }
 }
 
+/// Prüfen dauert bei großen Karten einige Millisekunden, deshalb nicht auf
+/// dem Netzwerk-Thread.
+async fn check_text(body: String) -> protocol::MapCheck {
+    tokio::task::spawn_blocking(move || GameMap::load(&body).into_check()).await.expect("Prüfung")
+}
+
 async fn check(body: String) -> Response {
-    Json(GameMap::load(&body).into_check()).into_response()
+    Json(check_text(body).await).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct GenerateParams {
+    width: Option<usize>,
+    height: Option<usize>,
+    players: Option<usize>,
+    seed: Option<u64>,
+}
+
+async fn generate(Query(p): Query<GenerateParams>) -> Response {
+    let params = crate::mapgen::Params {
+        width: p.width.unwrap_or(256).clamp(32, crate::map::MAX_SIZE),
+        height: p.height.unwrap_or(256).clamp(32, crate::map::MAX_SIZE),
+        players: p.players.unwrap_or(2).clamp(1, 8),
+        seed: p.seed.unwrap_or(1),
+    };
+    tokio::task::spawn_blocking(move || crate::mapgen::generate(&params)).await.expect("Generator").into_response()
 }
 
 async fn save(State(store): State<Arc<MapStore>>, Path(name): Path<String>, body: String) -> Response {
@@ -96,7 +126,7 @@ async fn save(State(store): State<Arc<MapStore>>, Path(name): Path<String>, body
     let Some(path) = store.path(&name) else {
         return (StatusCode::BAD_REQUEST, "Ungültiger Name: nur a-z, 0-9, - und _").into_response();
     };
-    let result = GameMap::load(&body).into_check();
+    let result = check_text(body.clone()).await;
     if !result.errors.is_empty() {
         return (StatusCode::UNPROCESSABLE_ENTITY, Json(result)).into_response();
     }
