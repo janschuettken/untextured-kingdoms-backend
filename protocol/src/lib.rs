@@ -381,6 +381,9 @@ pub struct BuildingDef {
     /// Aufgeben hinterlässt diesen Rohstoff auf der Fläche (Obstplantage → Wald).
     #[serde(default)]
     pub releases_as: Option<ResourceKind>,
+    /// Wagenschuppen: der Karren fährt nur Betriebe in diesem Umkreis (Felder) an. 0 = überall.
+    #[serde(default)]
+    pub service_radius: u32,
     /// Mauern und Türme haben keinen Eingang; alle anderen ein Feld davor, das frei bleiben muss.
     #[serde(default)]
     pub no_entrance: bool,
@@ -482,6 +485,13 @@ pub struct BuildingSettings {
     /// Darf der Transport hier Eingangswaren abliefern? Aus = der Betrieb
     /// arbeitet nur mit dem, was schon in seinem Lager liegt.
     pub accept_deliveries: bool,
+    /// Nur Lager: welche Waren hier eingelagert werden. `None` = alle.
+    #[serde(default)]
+    pub stores: Option<Vec<Good>>,
+    /// Mindestbestand im Vorrat: von diesen Waren bekommt der Betrieb nur, was
+    /// darüber liegt (z. B. Holz fürs Bauen behalten).
+    #[serde(default)]
+    pub keep_in_stock: Vec<GoodAmount>,
 }
 
 /// Was ein Betrieb gerade tut.

@@ -296,6 +296,8 @@ impl World {
             recipe: def.levels[0].recipes.first().cloned(),
             paused: false,
             accept_deliveries: true,
+            stores: None,
+            keep_in_stock: Vec::new(),
         };
         let status = if settings.recipe.is_some() { BuildingStatus::Working } else { BuildingStatus::Idle };
         let b = BuildingState {
