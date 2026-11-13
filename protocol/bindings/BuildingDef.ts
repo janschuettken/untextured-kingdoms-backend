@@ -2,6 +2,7 @@
 import type { BuildingCategory } from "./BuildingCategory";
 import type { BuildingKind } from "./BuildingKind";
 import type { BuildingLevel } from "./BuildingLevel";
+import type { Placement } from "./Placement";
 import type { ResourceKind } from "./ResourceKind";
 
 /**
@@ -17,9 +18,21 @@ w: number, h: number, max_hp: number,
  */
 max_per_player: number | null, 
 /**
- * Rohstoff-Felder, an denen dieser Betrieb arbeitet (z. B. Wald).
+ * Wo das Gebäude stehen darf. Fehlt es, reicht normaler Boden.
+ */
+placement: Placement | null, 
+/**
+ * Rohstoff-Felder, die dieser Betrieb abbaut (z. B. Wald).
  */
 gathers: Array<ResourceKind>, 
+/**
+ * Wie weit um das Gebäude abgebaut wird (Felder vom Rand). 0 = nur unter dem Gebäude.
+ */
+gather_radius: number, 
+/**
+ * Aufgeben hinterlässt diesen Rohstoff auf der Fläche (Obstplantage → Wald).
+ */
+releases_as: ResourceKind | null, 
 /**
  * Mindestens eine Stufe.
  */

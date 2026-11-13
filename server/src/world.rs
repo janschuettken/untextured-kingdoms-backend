@@ -2,9 +2,15 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use protocol::{BuildingKind, BuildingState, GoodAmount, StockState, Text, TileKind, UnitKind, UnitState};
+use protocol::{
+    BuildingKind, BuildingSettings, BuildingState, BuildingStatus, GoodAmount, ResourceKind, ServerMsg, StockState, Text,
+    TileKind, UnitKind, UnitState,
+};
 
 use crate::{economy::Economy, map::GameMap, stock::Stock};
+
+mod production;
+use production::Work;
 
 /// Laufgeschwindigkeit des Königs in Feldern pro Sekunde.
 const KING_SPEED: f32 = 3.0;
@@ -34,14 +40,26 @@ pub struct World {
     stocks: HashMap<u32, Stock>,
     /// Spieler, deren Lager sich seit dem letzten Senden geändert hat.
     dirty_stocks: BTreeSet<u32>,
+    /// Wie viel jedes Feld noch hergibt (Wald, Stein, Eisen).
+    resource_left: Vec<u32>,
+    /// Laufende Arbeit je Gebäude-Id.
+    work: HashMap<u32, Work>,
+    /// Änderungen für alle Clients (Gebäudestatus, Rohstoffe), siehe `take_events`.
+    events: Vec<ServerMsg>,
 }
 
 /// Fehlertext für den Client (Schlüssel, übersetzt wird dort).
 type Refusal = Text;
 
+/// Name eines Rohstoffs wie im Protokoll (`forest`, ...), für Text-Platzhalter.
+fn resource_key(r: ResourceKind) -> String {
+    serde_json::to_value(r).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default()
+}
+
 impl World {
     pub fn new(map: GameMap, economy: Economy) -> World {
         let n = (map.width * map.height) as usize;
+        let resource_left = map.resources.iter().map(|&r| economy.resource_amount(r)).collect();
         World {
             map,
             units: Vec::new(),
@@ -52,7 +70,15 @@ impl World {
             economy,
             stocks: HashMap::new(),
             dirty_stocks: BTreeSet::new(),
+            resource_left,
+            work: HashMap::new(),
+            events: Vec::new(),
         }
+    }
+
+    /// Änderungen seit dem letzten Aufruf, zum Verteilen an alle Clients.
+    pub fn take_events(&mut self) -> Vec<ServerMsg> {
+        std::mem::take(&mut self.events)
     }
 
     pub fn stock_state(&self, player: u32) -> StockState {
@@ -123,7 +149,7 @@ impl World {
     /// Rampe, kein Wasser, keinen Wald oder Fels, und darf weder ein anderes
     /// Gebäude noch eine Einheit überdecken.
     pub fn place_building(&mut self, player: u32, kind: BuildingKind, x: u32, y: u32) -> Result<BuildingState, Refusal> {
-        let def = self.economy.building(kind).ok_or_else(|| Text::new("error.unknown_building"))?;
+        let def = self.economy.building(kind).ok_or_else(|| Text::new("error.unknown_building"))?.clone();
         let (w, h, max_hp) = (def.w, def.h, def.max_hp);
         let cost = def.levels[0].cost.clone();
         if let Some(max) = def.max_per_player {
@@ -150,9 +176,21 @@ impl World {
                 if self.occupied[i] != 0 {
                     return Err(Text::new("error.occupied"));
                 }
-                if crate::map::resource_blocks(self.map.resources[i]) {
+                let r = self.map.resources[i];
+                let allowed = def.placement.as_ref().is_some_and(|p| p.resources.contains(&r));
+                if crate::map::resource_blocks(r) && !allowed {
                     return Err(Text::new("error.on_resource"));
                 }
+            }
+        }
+        if let Some(p) = &def.placement {
+            let on = (y..y + h)
+                .flat_map(|ty| (x..x + w).map(move |tx| (tx, ty)))
+                .filter(|&(tx, ty)| p.resources.contains(&self.map.resources[(ty * self.map.width + tx) as usize]))
+                .count() as u32;
+            if on * 100 < p.min_share_percent * w * h {
+                let names: Vec<String> = p.resources.iter().map(|r| resource_key(*r)).collect();
+                return Err(Text::new("error.needs_resource").arg("resources", names.join(",")));
             }
         }
         let covers = |p: (f32, f32)| {
@@ -164,7 +202,25 @@ impl World {
         }
         self.pay(player, &cost)?;
 
-        let b = BuildingState { id: self.next_building_id, owner: player, kind, x, y, w, h, hp: max_hp, level: 1 };
+        let settings = BuildingSettings {
+            recipe: def.levels[0].recipes.first().cloned(),
+            paused: false,
+            accept_deliveries: true,
+        };
+        let status = if settings.recipe.is_some() { BuildingStatus::Working } else { BuildingStatus::Idle };
+        let b = BuildingState {
+            id: self.next_building_id,
+            owner: player,
+            kind,
+            x,
+            y,
+            w,
+            h,
+            hp: max_hp,
+            level: 1,
+            settings,
+            status,
+        };
         self.next_building_id += 1;
         for ty in y..y + h {
             for tx in x..x + w {
@@ -242,6 +298,7 @@ impl World {
     fn remove_building(&mut self, id: u32) {
         let Some(pos) = self.buildings.iter().position(|b| b.id == id) else { return };
         let b = self.buildings.remove(pos);
+        self.work.remove(&id);
         for ty in b.y..b.y + b.h {
             for tx in b.x..b.x + b.w {
                 self.occupied[(ty * self.map.width + tx) as usize] = 0;
@@ -278,6 +335,7 @@ impl World {
 
     /// Einen Spieltakt von `dt` Sekunden simulieren.
     pub fn step(&mut self, dt: f32) {
+        self.step_production(dt);
         for unit in self.units.iter_mut() {
             let mut budget = KING_SPEED * dt;
             while budget > 0.0 {

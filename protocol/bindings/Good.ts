@@ -3,4 +3,4 @@
 /**
  * Eine Ware: Rohstoff, Zwischenprodukt oder Ausrüstung.
  */
-export type Good = "wood" | "boards" | "stone" | "blocks" | "iron_ore" | "iron" | "grain" | "flour" | "bread" | "meat" | "leather" | "spear" | "longbow" | "crossbow" | "sword" | "armor" | "light_armor" | "saddle";
+export type Good = "wood" | "boards" | "stone" | "blocks" | "iron_ore" | "iron" | "grain" | "flour" | "bread" | "fruit" | "meat" | "leather" | "spear" | "longbow" | "crossbow" | "sword" | "armor" | "light_armor" | "saddle";
