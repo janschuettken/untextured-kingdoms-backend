@@ -40,16 +40,16 @@
     {
       "kind": "tower",
       "category": "fortification",
-      "w": 2,
-      "h": 2,
+      "w": 3,
+      "h": 3,
       "max_hp": 900,
       "levels": [{"cost": [{"good": "wood", "amount": 10}, {"good": "blocks", "amount": 10}], "recipes": []}]
     },
     {
       "kind": "keep",
       "category": "fortification",
-      "w": 4,
-      "h": 4,
+      "w": 6,
+      "h": 6,
       "max_hp": 3000,
       "max_per_player": 1,
       "levels": [
@@ -66,26 +66,26 @@
     {
       "kind": "storehouse",
       "category": "storage",
-      "w": 3,
-      "h": 3,
+      "w": 4,
+      "h": 4,
       "max_hp": 600,
       "levels": [{"cost": [{"good": "wood", "amount": 40}], "recipes": []}]
     },
     {
       "kind": "woodcutter",
       "category": "raw",
-      "w": 2,
-      "h": 2,
+      "w": 3,
+      "h": 3,
       "max_hp": 250,
       "gathers": ["forest"],
-      "gather_radius": 6,
+      "gather_radius": 12,
       "levels": [{"cost": [{"good": "wood", "amount": 20}], "recipes": ["chop_wood"]}]
     },
     {
       "kind": "quarry",
       "category": "raw",
-      "w": 2,
-      "h": 2,
+      "w": 3,
+      "h": 3,
       "max_hp": 250,
       "placement": {"resources": ["stone"], "min_share_percent": 50},
       "gathers": ["stone"],
@@ -95,8 +95,8 @@
     {
       "kind": "mine",
       "category": "raw",
-      "w": 2,
-      "h": 2,
+      "w": 3,
+      "h": 3,
       "max_hp": 300,
       "placement": {"resources": ["iron"], "min_share_percent": 50},
       "gathers": ["iron"],
@@ -111,8 +111,8 @@
     {
       "kind": "farm",
       "category": "food",
-      "w": 3,
-      "h": 3,
+      "w": 7,
+      "h": 7,
       "max_hp": 250,
       "placement": {"resources": ["farmland", "fertile"], "min_share_percent": 50},
       "gathers": [],
@@ -121,32 +121,32 @@
     {
       "kind": "sawmill",
       "category": "workshop",
-      "w": 2,
-      "h": 2,
+      "w": 4,
+      "h": 4,
       "max_hp": 300,
       "levels": [{"cost": [{"good": "wood", "amount": 30}], "recipes": ["saw_boards"]}]
     },
     {
       "kind": "stonemason",
       "category": "workshop",
-      "w": 2,
-      "h": 2,
+      "w": 3,
+      "h": 3,
       "max_hp": 300,
       "levels": [{"cost": [{"good": "wood", "amount": 30}], "recipes": ["cut_blocks"]}]
     },
     {
       "kind": "spear_maker",
       "category": "workshop",
-      "w": 2,
-      "h": 2,
+      "w": 3,
+      "h": 3,
       "max_hp": 250,
       "levels": [{"cost": [{"good": "wood", "amount": 25}], "recipes": ["make_spear"]}]
     },
     {
       "kind": "bowyer",
       "category": "workshop",
-      "w": 2,
-      "h": 2,
+      "w": 3,
+      "h": 3,
       "max_hp": 300,
       "levels": [
         {
@@ -162,8 +162,8 @@
     {
       "kind": "tannery",
       "category": "workshop",
-      "w": 2,
-      "h": 2,
+      "w": 3,
+      "h": 3,
       "max_hp": 300,
       "levels": [
         {
@@ -179,8 +179,8 @@
     {
       "kind": "smelter",
       "category": "workshop",
-      "w": 2,
-      "h": 2,
+      "w": 4,
+      "h": 4,
       "max_hp": 400,
       "levels": [
         {
@@ -196,8 +196,8 @@
     {
       "kind": "smithy",
       "category": "workshop",
-      "w": 2,
-      "h": 2,
+      "w": 4,
+      "h": 4,
       "max_hp": 400,
       "levels": [
         {
@@ -221,8 +221,8 @@
     {
       "kind": "mill",
       "category": "food",
-      "w": 2,
-      "h": 2,
+      "w": 4,
+      "h": 4,
       "max_hp": 300,
       "levels": [
         {
@@ -234,8 +234,8 @@
     {
       "kind": "bakery",
       "category": "food",
-      "w": 2,
-      "h": 2,
+      "w": 3,
+      "h": 3,
       "max_hp": 350,
       "levels": [
         {
@@ -251,8 +251,8 @@
     {
       "kind": "orchard",
       "category": "food",
-      "w": 3,
-      "h": 3,
+      "w": 6,
+      "h": 6,
       "max_hp": 200,
       "releases_as": "forest",
       "levels": [{"cost": [{"good": "wood", "amount": 25}], "recipes": ["grow_fruit"]}]
@@ -260,8 +260,8 @@
     {
       "kind": "pig_farm",
       "category": "food",
-      "w": 3,
-      "h": 3,
+      "w": 5,
+      "h": 5,
       "max_hp": 250,
       "levels": [
         {"cost": [{"good": "wood", "amount": 30}], "recipes": ["raise_pigs"]},
@@ -274,8 +274,8 @@
     {
       "kind": "cattle_farm",
       "category": "food",
-      "w": 3,
-      "h": 3,
+      "w": 6,
+      "h": 6,
       "max_hp": 300,
       "placement": {"resources": ["farmland", "fertile"], "min_share_percent": 50},
       "levels": [

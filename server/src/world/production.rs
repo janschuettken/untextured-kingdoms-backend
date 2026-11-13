@@ -217,28 +217,43 @@ mod tests {
         }
     }
 
+    /// Flache Karte `w` x `h` mit Rohstoff-Rechtecken (x, y, w, h, Zeichen).
+    fn map(w: usize, h: usize, spawn: (u32, u32), rects: &[(usize, usize, usize, usize, char)]) -> String {
+        let mut res = vec![vec!['.'; w]; h];
+        for &(rx, ry, rw, rh, c) in rects {
+            for row in res.iter_mut().skip(ry).take(rh) {
+                for cell in row.iter_mut().skip(rx).take(rw) {
+                    *cell = c;
+                }
+            }
+        }
+        let terrain = format!("{}\n", "0".repeat(w)).repeat(h);
+        let resources: String = res.iter().map(|r| r.iter().collect::<String>() + "\n").collect();
+        format!("spawn {} {}\n[terrain]\n{terrain}[resources]\n{resources}", spawn.0, spawn.1)
+    }
+
     #[test]
     fn holzfaeller_holzt_wald_ab() {
-        let mut w = world("spawn 0 0\n[terrain]\n000000\n000000\n000000\n[resources]\n.....W\n......\n......\n");
+        let mut w = world(&map(20, 8, (0, 7), &[(15, 0, 1, 1, 'W')]));
         let before = w.stocks[&1].amount(Good::Wood);
-        let b = w.place_building(1, BuildingKind::Woodcutter, 1, 1).unwrap();
+        let b = w.place_building(1, BuildingKind::Woodcutter, 2, 2).unwrap();
         let wood_after_build = w.stocks[&1].amount(Good::Wood);
         assert_eq!(wood_after_build, before - 20);
-        assert!(!w.map.nav.is_open(5, 0), "Wald blockiert");
+        assert!(!w.map.nav.is_open(15, 0), "Wald blockiert");
         // Ein Waldfeld gibt 20 Holz, ein Durchlauf dauert 6 s.
         run(&mut w, 20.0 * 6.0 + 1.0);
         assert_eq!(w.stocks[&1].amount(Good::Wood), wood_after_build + 20);
-        assert_eq!(w.map.resources[5], ResourceKind::None);
-        assert!(w.map.nav.is_open(5, 0), "abgeholzt: wieder begehbar");
+        assert_eq!(w.map.resources[15], ResourceKind::None);
+        assert!(w.map.nav.is_open(15, 0), "abgeholzt: wieder begehbar");
         let events = w.take_events();
-        assert!(events.iter().any(|e| matches!(e, ServerMsg::ResourceChanged { x: 5, y: 0, .. })));
+        assert!(events.iter().any(|e| matches!(e, ServerMsg::ResourceChanged { x: 15, y: 0, .. })));
         run(&mut w, 1.0);
         assert_eq!(w.buildings.iter().find(|x| x.id == b.id).unwrap().status, BuildingStatus::NoResource);
     }
 
     #[test]
     fn werkstatt_braucht_eingaenge_und_rezept_einstellbar() {
-        let mut w = world("spawn 0 0\n000000\n000000\n000000\n");
+        let mut w = world(&map(10, 6, (0, 5), &[]));
         let b = w.place_building(1, BuildingKind::Bowyer, 2, 0).unwrap();
         assert_eq!(b.settings.recipe.as_deref(), Some("make_longbow"));
         // Armbrust erst ab Stufe 2.
@@ -261,19 +276,21 @@ mod tests {
 
     #[test]
     fn steinbruch_nur_auf_stein_bauernhof_auf_acker() {
-        let mut w = world("spawn 5 2\n[terrain]\n000000\n000000\n000000\n[resources]\n...SS.\n...SS.\nAAF...\n");
+        // Stein 3x3 oben rechts, Acker 7x3 unten links (zu wenig für einen 7x7-Hof).
+        let mut w = world(&map(20, 20, (19, 19), &[(14, 0, 3, 3, 'S'), (0, 13, 7, 3, 'A')]));
         assert_eq!(w.place_building(1, BuildingKind::Quarry, 0, 0).unwrap_err().key, "error.needs_resource");
-        w.place_building(1, BuildingKind::Quarry, 3, 0).unwrap();
+        w.place_building(1, BuildingKind::Quarry, 14, 0).unwrap();
         // Mine braucht Eisen, das es hier nicht gibt.
-        assert_eq!(w.place_building(1, BuildingKind::Mine, 0, 0).unwrap_err().key, "error.needs_resource");
-        // Bauernhof 3x3 auf 3 von 9 Ackerfeldern: zu wenig. Schweine gehen überall.
-        assert_eq!(w.place_building(1, BuildingKind::Farm, 0, 0).unwrap_err().key, "error.needs_resource");
-        w.place_building(1, BuildingKind::PigFarm, 0, 0).unwrap();
+        assert_eq!(w.place_building(1, BuildingKind::Mine, 4, 0).unwrap_err().key, "error.needs_resource");
+        // Bauernhof 7x7 auf 21 von 49 Ackerfeldern: zu wenig. Schweine gehen überall.
+        assert_eq!(w.place_building(1, BuildingKind::Farm, 0, 9).unwrap_err().key, "error.needs_resource");
+        w.place_building(1, BuildingKind::Farm, 0, 12).unwrap_err();
+        w.place_building(1, BuildingKind::PigFarm, 8, 8).unwrap();
     }
 
     #[test]
     fn obstplantage_wird_zu_wald() {
-        let mut w = world("spawn 5 5\n000000\n000000\n000000\n000000\n000000\n000000\n");
+        let mut w = world(&map(14, 10, (13, 9), &[]));
         let b = w.place_building(1, BuildingKind::Orchard, 0, 0).unwrap();
         run(&mut w, 26.0);
         assert_eq!(w.stocks[&1].amount(Good::Fruit), 2);
@@ -283,7 +300,7 @@ mod tests {
         assert_eq!(w.map.resources[0], ResourceKind::Forest);
         assert!(!w.map.nav.is_open(1, 1));
         // Darauf kann jetzt ein Holzfäller daneben arbeiten.
-        w.place_building(1, BuildingKind::Woodcutter, 3, 0).unwrap();
+        w.place_building(1, BuildingKind::Woodcutter, 7, 0).unwrap();
         run(&mut w, 7.0);
         assert_eq!(w.buildings[0].status, BuildingStatus::Working);
     }
