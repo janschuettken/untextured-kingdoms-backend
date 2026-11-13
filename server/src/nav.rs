@@ -4,6 +4,10 @@
 //! und ihre gemeinsame Kante auf beiden Seiten gleich hoch ist. Damit sind
 //! Rampen begehbar und Klippen nicht. Diagonal darf man nur gehen, wenn auch
 //! beide geraden Umwege frei sind, so schneidet niemand Klippenecken ab.
+//!
+//! Gebäude (und später z. B. Wald) blockieren Felder zusätzlich. Das Gelände
+//! ändert sich nie, deshalb merken wir uns seine Verbindungen getrennt und
+//! rechnen bei einer Blockade nur die Felder drumherum neu.
 
 use std::{cmp::Reverse, collections::BinaryHeap};
 
@@ -24,8 +28,12 @@ pub const DIRS: [(i32, i32); 8] = [
 pub struct NavGrid {
     pub width: u32,
     pub height: u32,
-    /// Pro Feld ein Bit je Richtung aus [`DIRS`].
+    /// Pro Feld ein Bit je Richtung aus [`DIRS`], mit Blockaden.
     pub dirs: Vec<u8>,
+    /// Nur das Gelände, ohne Blockaden.
+    terrain: Vec<u8>,
+    /// Wie viele Dinge dieses Feld blockieren (Gebäude, Wald, ...).
+    blocked: Vec<u8>,
 }
 
 /// Eckhöhen der Kante eines Feldes in Richtung (dx, dy), von "links" nach "rechts"
@@ -73,7 +81,44 @@ impl NavGrid {
                 dirs[idx(x, y)] = bits;
             }
         }
-        NavGrid { width, height, dirs }
+        let n = dirs.len();
+        NavGrid { width, height, terrain: dirs.clone(), dirs, blocked: vec![0; n] }
+    }
+
+    /// Feld blockieren (`true`) oder wieder freigeben. Mehrfaches Blockieren
+    /// wird gezählt, frei ist das Feld erst, wenn alle Blockaden weg sind.
+    pub fn set_blocked(&mut self, x: i32, y: i32, on: bool) {
+        if !self.inside(x, y) {
+            return;
+        }
+        let i = self.idx(x, y);
+        self.blocked[i] = if on { self.blocked[i].saturating_add(1) } else { self.blocked[i].saturating_sub(1) };
+        for ny in y - 1..=y + 1 {
+            for nx in x - 1..=x + 1 {
+                if self.inside(nx, ny) {
+                    self.recompute(nx, ny);
+                }
+            }
+        }
+    }
+
+    fn recompute(&mut self, x: i32, y: i32) {
+        let i = self.idx(x, y);
+        let free = |nx: i32, ny: i32| self.inside(nx, ny) && self.blocked[self.idx(nx, ny)] == 0;
+        let mut bits = 0u8;
+        if free(x, y) {
+            for (b, &(dx, dy)) in DIRS.iter().enumerate() {
+                // Diagonal müssen auch beide Felder um die Ecke frei sein.
+                if self.terrain[i] & (1 << b) != 0
+                    && free(x + dx, y + dy)
+                    && free(x + dx, y)
+                    && free(x, y + dy)
+                {
+                    bits |= 1 << b;
+                }
+            }
+        }
+        self.dirs[i] = bits;
     }
 
     fn idx(&self, x: i32, y: i32) -> usize {
@@ -230,6 +275,23 @@ mod tests {
         let path = map.nav.find_path((0, 1), (2, 1));
         assert_ne!(path.last(), Some(&(2, 1)));
         assert!(map.nav.waypoints((0.5, 1.5), (2.5, 1.5)).iter().all(|p| p.0 < 1.0));
+    }
+
+    #[test]
+    fn gebaeude_blockieren_und_geben_frei() {
+        let mut map = GameMap::parse("000\n000\n000\n").unwrap();
+        let nav = &mut map.nav;
+        // Mittlere Spalte zumauern: kein Weg mehr von links nach rechts.
+        for y in 0..3 {
+            nav.set_blocked(1, y, true);
+        }
+        assert!(!nav.is_open(1, 1));
+        assert!(!nav.can_step(0, 0, 1, 1), "nicht diagonal an der Mauer vorbei");
+        assert_ne!(nav.find_path((0, 1), (2, 1)).last(), Some(&(2, 1)));
+        nav.set_blocked(1, 2, false);
+        assert_eq!(nav.find_path((0, 0), (2, 0)).last(), Some(&(2, 0)), "Lücke unten");
+        assert!(nav.can_step(0, 2, 1, 0));
+        assert!(!nav.can_step(0, 1, 1, 1), "Ecke der Mauer nicht abschneiden");
     }
 
     #[test]

@@ -22,6 +22,11 @@ pub enum ClientMsg {
     /// Bewegungsbefehl: Einheiten sollen zum Punkt (x, y) laufen.
     /// Der Server prüft Besitz und sucht selbst den Weg.
     MoveUnits { unit_ids: Vec<u32>, x: f32, y: f32 },
+    /// Gebäude bauen. (x, y) ist das Feld oben links der Grundfläche.
+    /// Der Server prüft Untergrund, Platz und Besitz.
+    PlaceBuilding { kind: BuildingKind, x: u32, y: u32 },
+    /// Eigenes Gebäude abreißen.
+    DemolishBuilding { building_id: u32 },
 }
 
 /// Nachrichten vom Server an den Client.
@@ -33,6 +38,10 @@ pub enum ServerMsg {
         player_id: u32,
         tick_rate: u32,
         map: MapInfo,
+        /// Was es zu bauen gibt (Größe usw.), damit der Client nichts doppelt pflegt.
+        building_specs: Vec<BuildingSpec>,
+        /// Alle Gebäude, die schon stehen. Danach kommen nur noch Änderungen.
+        buildings: Vec<BuildingState>,
     },
     Tick {
         /// JSON-Zahl; reicht bei 20 Ticks/s für Millionen Jahre.
@@ -44,6 +53,16 @@ pub enum ServerMsg {
     },
     Pong {
         client_time: f64,
+    },
+    BuildingPlaced {
+        building: BuildingState,
+    },
+    BuildingRemoved {
+        building_id: u32,
+    },
+    /// Ein Befehl dieses Clients wurde abgelehnt (z. B. kein Platz zum Bauen).
+    Rejected {
+        reason: String,
     },
 }
 
@@ -105,4 +124,45 @@ pub struct UnitState {
     pub x: f32,
     pub y: f32,
     pub moving: bool,
+}
+
+/// Art eines Gebäudes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum BuildingKind {
+    /// Einfache Mauer, ein Feld.
+    Wall,
+    /// Hohe Mauer, ein Feld, schwerer zu überwinden.
+    HighWall,
+    Tower,
+    /// Bergfried: Hauptturm der Burg.
+    Keep,
+    /// Vorratslager für Holz, Stein, Eisen und Nahrung.
+    Storehouse,
+}
+
+/// Feste Eigenschaften einer Gebäudeart.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BuildingSpec {
+    pub kind: BuildingKind,
+    /// Grundfläche in Feldern.
+    pub w: u32,
+    pub h: u32,
+    pub max_hp: u32,
+}
+
+/// Ein Gebäude auf der Karte. Es belegt die Felder (x, y) bis (x + w - 1, y + h - 1).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BuildingState {
+    pub id: u32,
+    pub owner: u32,
+    pub kind: BuildingKind,
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+    pub hp: u32,
 }
