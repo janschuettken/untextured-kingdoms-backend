@@ -240,7 +240,7 @@ mod tests {
         assert_eq!(wood_after_build, before - 20);
         assert!(!w.map.nav.is_open(15, 0), "Wald blockiert");
         // Ein Waldfeld gibt 20 Holz, ein Durchlauf dauert 6 s; Träger bringen es zum Bergfried.
-        run(&mut w, 20.0 * 6.0 + 40.0);
+        run(&mut w, 20.0 * 6.0 + 70.0);
         assert_eq!(w.stocks[&1].amount(Good::Wood), wood_after_build + 20);
         assert_eq!(w.map.resources[15], ResourceKind::None);
         assert!(w.map.nav.is_open(15, 0), "abgeholzt: wieder begehbar");
@@ -260,12 +260,12 @@ mod tests {
         let mut s = b.settings.clone();
         s.recipe = Some("make_crossbow".into());
         assert_eq!(w.configure(1, b.id, s.clone()).unwrap_err().key, "error.recipe_locked");
-        run(&mut w, 25.0);
+        run(&mut w, 50.0);
         assert!(w.stocks[&1].amount(Good::Longbow) >= 1);
         // Ohne Holz bleibt er stehen, sobald sein eigener Vorrat verbraucht ist.
         let wood = w.stocks[&1].amount(Good::Wood);
         w.stocks.get_mut(&1).unwrap().take_all(&[GoodAmount { good: Good::Wood, amount: wood }]);
-        run(&mut w, 40.0);
+        run(&mut w, 60.0);
         let i = w.buildings.iter().position(|x| x.id == b.id).unwrap();
         assert_eq!(w.buildings[i].status, BuildingStatus::MissingInput);
         s.recipe = Some("make_longbow".into());

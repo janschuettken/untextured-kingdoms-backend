@@ -442,6 +442,12 @@ impl World {
 
     /// Freies Feld am Rand eines Gebäudes, das `from` am nächsten liegt.
     pub(super) fn door(&self, b: &BuildingState, from: (f32, f32)) -> Option<(f32, f32)> {
+        // Gebäude mit Eingang: immer dorthin.
+        if let Some((ex, ey)) = b.entrance {
+            if self.map.nav.is_open(ex as i32, ey as i32) {
+                return Some((ex as f32 + 0.5, ey as f32 + 0.5));
+            }
+        }
         let (x0, y0, x1, y1) = (
             b.x as i32 - 1,
             b.y as i32 - 1,

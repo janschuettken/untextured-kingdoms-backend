@@ -274,9 +274,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             Ok(ClientMsg::MoveUnits { unit_ids, x, y }) => {
                 state.world.lock().unwrap().order_move(player_id, &unit_ids, (x, y));
             }
-            Ok(ClientMsg::PlaceBuilding { kind, x, y }) => {
+            Ok(ClientMsg::PlaceBuilding { kind, x, y, rotation }) => {
                 let mut world = state.world.lock().unwrap();
-                match world.place_building(player_id, kind, x, y) {
+                match world.place_building_rotated(player_id, kind, x, y, rotation) {
                     // Noch unter dem Lock verschicken, damit die Reihenfolge stimmt.
                     Ok(building) => drop(state.ticks.send(ServerMsg::BuildingPlaced { building })),
                     Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),

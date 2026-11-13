@@ -27,6 +27,7 @@
       "w": 1,
       "h": 1,
       "max_hp": 300,
+      "no_entrance": true,
       "levels": [{"cost": [{"good": "stone", "amount": 3}], "recipes": []}]
     },
     {
@@ -35,6 +36,7 @@
       "w": 1,
       "h": 1,
       "max_hp": 700,
+      "no_entrance": true,
       "levels": [{"cost": [{"good": "blocks", "amount": 3}], "recipes": []}]
     },
     {
@@ -43,6 +45,7 @@
       "w": 3,
       "h": 3,
       "max_hp": 900,
+      "no_entrance": true,
       "levels": [
         {"cost": [{"good": "wood", "amount": 10}, {"good": "blocks", "amount": 10}], "recipes": []}
       ]

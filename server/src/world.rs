@@ -51,6 +51,8 @@ pub struct World {
     pub buildings: Vec<BuildingState>,
     /// Pro Feld die Id des Gebäudes darauf, 0 = frei.
     occupied: Vec<u32>,
+    /// Felder vor Eingängen (Feld-Index → Gebäude-Id): dort darf nichts gebaut werden.
+    entrances: HashMap<usize, u32>,
     next_unit_id: u32,
     next_building_id: u32,
     pub economy: Economy,
@@ -70,6 +72,18 @@ pub struct World {
     events: Vec<ServerMsg>,
 }
 
+/// Feld vor dem Eingang einer Grundfläche (x, y, w, h), mittig an der Vorderseite.
+/// Kann außerhalb der Karte liegen (dann negativ oder zu groß).
+fn entrance_tile(x: u32, y: u32, w: u32, h: u32, rotation: u8) -> (i64, i64) {
+    let (x, y, w, h) = (x as i64, y as i64, w as i64, h as i64);
+    match rotation % 4 {
+        0 => (x + w / 2, y + h),
+        1 => (x - 1, y + h / 2),
+        2 => (x + (w - 1) / 2, y - 1),
+        _ => (x + w, y + (h - 1) / 2),
+    }
+}
+
 /// Fehlertext für den Client (Schlüssel, übersetzt wird dort).
 type Refusal = Text;
 
@@ -87,6 +101,7 @@ impl World {
             units: Vec::new(),
             buildings: Vec::new(),
             occupied: vec![0; n],
+            entrances: HashMap::new(),
             next_unit_id: 1,
             next_building_id: 1,
             economy,
@@ -194,9 +209,26 @@ impl World {
     /// Gebäude braucht flachen Boden auf einer einzigen Höhenstufe, keine
     /// Rampe, kein Wasser, keinen Wald oder Fels, und darf weder ein anderes
     /// Gebäude noch eine Einheit überdecken.
+    #[cfg(test)]
     pub fn place_building(&mut self, player: u32, kind: BuildingKind, x: u32, y: u32) -> Result<BuildingState, Refusal> {
+        self.place_building_rotated(player, kind, x, y, 0)
+    }
+
+    /// Wie `place_building`, gedreht um `rotation` Vierteldrehungen (siehe Protokoll).
+    /// Vor dem Eingang muss ein begehbares Feld frei sein, und kein Gebäude darf
+    /// den Eingang eines anderen zubauen.
+    pub fn place_building_rotated(
+        &mut self,
+        player: u32,
+        kind: BuildingKind,
+        x: u32,
+        y: u32,
+        rotation: u8,
+    ) -> Result<BuildingState, Refusal> {
         let def = self.economy.building(kind).ok_or_else(|| Text::new("error.unknown_building"))?.clone();
-        let (w, h, max_hp) = (def.w, def.h, def.max_hp);
+        let rotation = rotation % 4;
+        let (w, h) = if rotation % 2 == 1 { (def.h, def.w) } else { (def.w, def.h) };
+        let max_hp = def.max_hp;
         let cost = def.levels[0].cost.clone();
         if let Some(max) = def.max_per_player {
             let have = self.buildings.iter().filter(|b| b.owner == player && b.kind == kind).count();
@@ -222,6 +254,9 @@ impl World {
                 if self.occupied[i] != 0 {
                     return Err(Text::new("error.occupied"));
                 }
+                if self.entrances.contains_key(&i) {
+                    return Err(Text::new("error.blocks_entrance"));
+                }
                 let r = self.map.resources[i];
                 let allowed = def.placement.as_ref().is_some_and(|p| p.resources.contains(&r));
                 if crate::map::resource_blocks(r) && !allowed {
@@ -239,6 +274,14 @@ impl World {
                 return Err(Text::new("error.needs_resource").arg("resources", names.join(",")));
             }
         }
+        let entrance = if def.no_entrance { None } else { Some(entrance_tile(x, y, w, h, rotation)) };
+        if let Some((ex, ey)) = entrance {
+            let inside = ex >= 0 && ey >= 0 && (ex as u32) < self.map.width && (ey as u32) < self.map.height;
+            if !inside || !self.map.nav.is_open(ex as i32, ey as i32) {
+                return Err(Text::new("error.entrance_blocked"));
+            }
+        }
+        let entrance = entrance.map(|(ex, ey)| (ex as u32, ey as u32));
         let covers = |p: (f32, f32)| {
             let (ux, uy) = (p.0.floor() as i64, p.1.floor() as i64);
             ux >= x as i64 && uy >= y as i64 && ux < (x + w) as i64 && uy < (y + h) as i64
@@ -267,9 +310,14 @@ impl World {
             level: 1,
             settings,
             status,
+            rotation,
+            entrance,
             inventory: Vec::new(),
         };
         self.next_building_id += 1;
+        if let Some((ex, ey)) = entrance {
+            self.entrances.insert((ey * self.map.width + ex) as usize, b.id);
+        }
         for ty in y..y + h {
             for tx in x..x + w {
                 self.occupied[(ty * self.map.width + tx) as usize] = b.id;
@@ -358,6 +406,7 @@ impl World {
         let b = self.buildings.remove(pos);
         self.work.remove(&id);
         self.dirty_buildings.remove(&id);
+        self.entrances.retain(|_, b| *b != id);
         let mut back: Vec<GoodAmount> = self.inventories.remove(&id).map(|s| s.state().goods).unwrap_or_default();
         back.extend(self.units.iter().filter(|u| u.home == Some(id)).filter_map(|u| u.carrying));
         self.units.retain(|u| u.home != Some(id));
@@ -554,6 +603,28 @@ mod tests {
         let all = w.stocks[&1].amount(Good::Stone);
         w.stocks.get_mut(&1).unwrap().take_all(&[GoodAmount { good: Good::Stone, amount: all }]);
         assert_eq!(w.place_building(1, BuildingKind::Wall, 0, 9).unwrap_err().key, "error.not_enough");
+    }
+
+    #[test]
+    fn drehen_und_eingang_freihalten() {
+        let mut w = flat_world();
+        // Sägewerk 4x4, Eingang unten mittig.
+        let b = w.place_building(1, BuildingKind::Sawmill, 4, 4).unwrap();
+        assert_eq!(b.entrance, Some((6, 8)));
+        assert_eq!(w.place_building(1, BuildingKind::Wall, 6, 8).unwrap_err().key, "error.blocks_entrance");
+        w.place_building(1, BuildingKind::Wall, 5, 8).unwrap();
+        // Eingang an den Kartenrand: geht nicht. Gedreht (Eingang links) schon.
+        assert_eq!(w.place_building(1, BuildingKind::Sawmill, 12, 20).unwrap_err().key, "error.entrance_blocked");
+        let r = w.place_building_rotated(1, BuildingKind::Sawmill, 12, 20, 1).unwrap();
+        assert_eq!((r.rotation, r.entrance), (1, Some((11, 22))));
+        // Tower ohne Eingang darf direkt anschließen.
+        let t = w.place_building(1, BuildingKind::Tower, 16, 20).unwrap();
+        assert_eq!(t.entrance, None);
+        // Formel für andere Seiten.
+        assert_eq!(entrance_tile(0, 0, 4, 2, 3), (4, 0));
+        assert_eq!(entrance_tile(5, 5, 3, 3, 2), (6, 4));
+        w.demolish(1, b.id).unwrap();
+        w.place_building(1, BuildingKind::Wall, 6, 8).unwrap();
     }
 
     #[test]

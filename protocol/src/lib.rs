@@ -26,7 +26,16 @@ pub enum ClientMsg {
     MoveUnits { unit_ids: Vec<u32>, x: f32, y: f32 },
     /// Gebäude bauen. (x, y) ist das Feld oben links der Grundfläche.
     /// Der Server prüft Untergrund, Platz und Besitz.
-    PlaceBuilding { kind: BuildingKind, x: u32, y: u32 },
+    /// `x`, `y` ist die linke obere Ecke der (gedrehten) Grundfläche.
+    /// `rotation` in Vierteldrehungen: 0 = Eingang unten (Süden, +y), 1 = links (-x),
+    /// 2 = oben (-y), 3 = rechts (+x). Bei 1 und 3 tauschen Breite und Tiefe.
+    PlaceBuilding {
+        kind: BuildingKind,
+        x: u32,
+        y: u32,
+        #[serde(default)]
+        rotation: u8,
+    },
     /// Eigenes Gebäude abreißen. Ein Teil der Baukosten kommt zurück.
     DemolishBuilding { building_id: u32 },
     /// Eigenes Gebäude auf die nächste Stufe ausbauen.
@@ -372,6 +381,9 @@ pub struct BuildingDef {
     /// Aufgeben hinterlässt diesen Rohstoff auf der Fläche (Obstplantage → Wald).
     #[serde(default)]
     pub releases_as: Option<ResourceKind>,
+    /// Mauern und Türme haben keinen Eingang; alle anderen ein Feld davor, das frei bleiben muss.
+    #[serde(default)]
+    pub no_entrance: bool,
     /// Bergfried und Vorratslager: hier liegt der gemeinsame Vorrat, Träger liefern hierhin.
     #[serde(default)]
     pub hub: bool,
@@ -505,6 +517,12 @@ pub struct BuildingState {
     pub level: u32,
     pub settings: BuildingSettings,
     pub status: BuildingStatus,
+    /// Vierteldrehungen wie bei `place_building`. `w`/`h` sind schon gedreht.
+    #[serde(default)]
+    pub rotation: u8,
+    /// Feld vor dem Eingang: hier holen und bringen Träger. `None` bei Mauern und Türmen.
+    #[serde(default)]
+    pub entrance: Option<(u32, u32)>,
     /// Waren im Gebäude selbst: Eingänge für den nächsten Durchlauf und
     /// Ergebnisse, die noch abgeholt werden. Leer bei Lagern (die zählen zum Vorrat).
     #[serde(default)]
