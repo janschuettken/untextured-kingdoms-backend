@@ -119,7 +119,10 @@ async fn current_map(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 /// Hat sich die Einheit so verändert, dass der Client es wissen muss?
 fn changed(old: &UnitState, new: &UnitState) -> bool {
-    old.moving != new.moving || (old.x - new.x).abs() > 0.001 || (old.y - new.y).abs() > 0.001
+    old.moving != new.moving
+        || old.carrying != new.carrying
+        || (old.x - new.x).abs() > 0.001
+        || (old.y - new.y).abs() > 0.001
 }
 
 /// Tick für einen Client: nur Einheiten in seinem Sichtbereich (und die
