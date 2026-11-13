@@ -18,18 +18,32 @@ Client (`welcome`) und gibt jedem Spieler einen König auf einem Startfeld. Bewe
 (`move_units`) werden serverseitig mit A* über das Navigationsgitter ausgeführt. 20-mal pro Sekunde
 geht ein `tick` mit allen Einheiten an alle Clients.
 
-Gebäude (`place_building`, `demolish_building`): Mauer, hohe Mauer, Turm, Bergfried, Vorratslager. Der Server prüft
-die Bauregeln (ebener Boden, keine Rampe, kein Wasser, nichts im Weg, ein Bergfried pro Spieler), blockiert die
-Felder im Navigationsgitter und lässt laufende Einheiten neu planen. Neue Clients bekommen im `welcome` die
-Gebäudearten (`building_specs`) und alle stehenden Gebäude, danach nur Änderungen (`building_placed`,
-`building_removed`). Abgelehnte Befehle meldet `rejected` mit Grund.
+Wirtschaft: Waren, Gebäude (Größe, Lebenspunkte, Stufen mit Kosten), Rezepte, Startlager und Lagerplatz stehen
+in **`server/data/economy.json`**. Das ist die einzige Quelle: der Server prüft die Datei beim Start (und in
+`cargo test`) und schickt sie im `welcome` an den Client, der daraus Baumenü, Kosten und Infofelder baut.
+Balancing heißt also nur diese Datei ändern. Ein Ausbau schaltet neue Rezepte frei statt pauschaler Boni
+(Bogner Stufe 1 Langbogen, Stufe 2 dazu Armbrust).
+
+Gebäude (`place_building`, `upgrade_building`, `demolish_building`): Der Server prüft die Bauregeln (ebener Boden,
+keine Rampe, kein Wasser, kein Wald oder Fels, nichts im Weg, Höchstzahl pro Spieler) und die Kosten, blockiert die
+Felder im Navigationsgitter und lässt laufende Einheiten neu planen. Abriss erstattet einen Teil aller Bau- und
+Ausbaukosten. Neue Clients bekommen im `welcome` alle stehenden Gebäude und ihr Lager, danach nur Änderungen
+(`building_placed`, `building_changed`, `building_removed`, `stock` nur an den eigenen Spieler).
+
+Texte: Der Server schickt nie fertige Sätze, sondern Schlüssel mit Platzhaltern (`Text { key, args }`, z. B.
+`error.not_enough` mit `good` und `need`). Übersetzt wird im Client (Deutsch und Englisch).
+
+Lager (`server/src/stock.rs`): Jede Ware liegt in Chargen mit optionalem Verfallsdatum. Heute verdirbt nichts;
+verderbliche Waren brauchen später nur ein Verfallsdatum beim Einlagern und einen Aufruf von `expire` pro Tick.
 
 ```
 server/src/map.rs    Karte aus Textdatei lesen: Höhenstufen, Rampen, Wasser, Eckhöhen
 server/src/nav.rs    Navigationsgitter (wer darf wohin) und Wegsuche (A* + Glätten)
 server/src/maps_api.rs  HTTP-API für den Karteneditor
 server/src/world.rs  Spielzustand: Einheiten, Gebäude, Befehle, Bewegung pro Tick
-server/src/buildings.rs  Gebäudearten mit Größe und Lebenspunkten (Balancing)
+server/src/economy.rs   Wirtschaftsdaten aus data/economy.json laden und prüfen
+server/src/stock.rs     Lagerbestand mit Chargen (vorbereitet für verderbliche Waren)
+server/data/economy.json  Waren, Gebäude, Stufen, Kosten, Rezepte (Balancing hier)
 server/maps/         Karten als Text, Legende steht oben in der Datei
 ```
 

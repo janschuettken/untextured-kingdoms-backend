@@ -1,0 +1,417 @@
+{
+  "goods": [
+    "wood",
+    "boards",
+    "stone",
+    "blocks",
+    "iron_ore",
+    "iron",
+    "grain",
+    "flour",
+    "bread",
+    "meat",
+    "leather",
+    "spear",
+    "longbow",
+    "crossbow",
+    "sword",
+    "armor",
+    "light_armor",
+    "saddle"
+  ],
+  "buildings": [
+    {
+      "kind": "wall",
+      "category": "fortification",
+      "w": 1,
+      "h": 1,
+      "max_hp": 300,
+      "levels": [{"cost": [{"good": "stone", "amount": 3}], "recipes": []}]
+    },
+    {
+      "kind": "high_wall",
+      "category": "fortification",
+      "w": 1,
+      "h": 1,
+      "max_hp": 700,
+      "levels": [{"cost": [{"good": "blocks", "amount": 3}], "recipes": []}]
+    },
+    {
+      "kind": "tower",
+      "category": "fortification",
+      "w": 2,
+      "h": 2,
+      "max_hp": 900,
+      "levels": [{"cost": [{"good": "wood", "amount": 10}, {"good": "blocks", "amount": 10}], "recipes": []}]
+    },
+    {
+      "kind": "keep",
+      "category": "fortification",
+      "w": 4,
+      "h": 4,
+      "max_hp": 3000,
+      "max_per_player": 1,
+      "levels": [
+        {
+          "cost": [
+            {"good": "wood", "amount": 60},
+            {"good": "boards", "amount": 40},
+            {"good": "blocks", "amount": 40}
+          ],
+          "recipes": []
+        }
+      ]
+    },
+    {
+      "kind": "storehouse",
+      "category": "storage",
+      "w": 3,
+      "h": 3,
+      "max_hp": 600,
+      "levels": [{"cost": [{"good": "wood", "amount": 40}], "recipes": []}]
+    },
+    {
+      "kind": "woodcutter",
+      "category": "raw",
+      "w": 2,
+      "h": 2,
+      "max_hp": 250,
+      "gathers": ["forest"],
+      "levels": [{"cost": [{"good": "wood", "amount": 20}], "recipes": ["chop_wood"]}]
+    },
+    {
+      "kind": "quarry",
+      "category": "raw",
+      "w": 2,
+      "h": 2,
+      "max_hp": 250,
+      "gathers": ["stone"],
+      "levels": [{"cost": [{"good": "wood", "amount": 25}], "recipes": ["quarry_stone"]}]
+    },
+    {
+      "kind": "mine",
+      "category": "raw",
+      "w": 2,
+      "h": 2,
+      "max_hp": 300,
+      "gathers": ["iron"],
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 30}, {"good": "boards", "amount": 15}],
+          "recipes": ["mine_ore"]
+        }
+      ]
+    },
+    {
+      "kind": "farm",
+      "category": "food",
+      "w": 3,
+      "h": 3,
+      "max_hp": 250,
+      "gathers": ["farmland", "fertile"],
+      "levels": [{"cost": [{"good": "wood", "amount": 30}], "recipes": ["grow_grain"]}]
+    },
+    {
+      "kind": "sawmill",
+      "category": "workshop",
+      "w": 2,
+      "h": 2,
+      "max_hp": 300,
+      "levels": [{"cost": [{"good": "wood", "amount": 30}], "recipes": ["saw_boards"]}]
+    },
+    {
+      "kind": "stonemason",
+      "category": "workshop",
+      "w": 2,
+      "h": 2,
+      "max_hp": 300,
+      "levels": [{"cost": [{"good": "wood", "amount": 30}], "recipes": ["cut_blocks"]}]
+    },
+    {
+      "kind": "spear_maker",
+      "category": "workshop",
+      "w": 2,
+      "h": 2,
+      "max_hp": 250,
+      "levels": [{"cost": [{"good": "wood", "amount": 25}], "recipes": ["make_spear"]}]
+    },
+    {
+      "kind": "bowyer",
+      "category": "workshop",
+      "w": 2,
+      "h": 2,
+      "max_hp": 300,
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 20}],
+          "recipes": ["make_longbow"]
+        },
+        {
+          "cost": [{"good": "boards", "amount": 30}, {"good": "iron", "amount": 10}],
+          "recipes": ["make_crossbow"]
+        }
+      ]
+    },
+    {
+      "kind": "tannery",
+      "category": "workshop",
+      "w": 2,
+      "h": 2,
+      "max_hp": 300,
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 20}],
+          "recipes": ["make_light_armor"]
+        },
+        {
+          "cost": [{"good": "boards", "amount": 20}, {"good": "leather", "amount": 10}],
+          "recipes": ["make_saddle"]
+        }
+      ]
+    },
+    {
+      "kind": "smelter",
+      "category": "workshop",
+      "w": 2,
+      "h": 2,
+      "max_hp": 400,
+      "levels": [
+        {
+          "cost": [
+            {"good": "wood", "amount": 20},
+            {"good": "boards", "amount": 20},
+            {"good": "stone", "amount": 30}
+          ],
+          "recipes": ["smelt_iron"]
+        }
+      ]
+    },
+    {
+      "kind": "smithy",
+      "category": "workshop",
+      "w": 2,
+      "h": 2,
+      "max_hp": 400,
+      "levels": [
+        {
+          "cost": [
+            {"good": "wood", "amount": 20},
+            {"good": "boards", "amount": 20},
+            {"good": "stone", "amount": 30}
+          ],
+          "recipes": ["forge_sword"]
+        },
+        {
+          "cost": [
+            {"good": "boards", "amount": 20},
+            {"good": "stone", "amount": 20},
+            {"good": "iron", "amount": 20}
+          ],
+          "recipes": ["forge_armor"]
+        }
+      ]
+    },
+    {
+      "kind": "mill",
+      "category": "food",
+      "w": 2,
+      "h": 2,
+      "max_hp": 300,
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 30}],
+          "recipes": ["grind_flour"]
+        }
+      ]
+    },
+    {
+      "kind": "bakery",
+      "category": "food",
+      "w": 2,
+      "h": 2,
+      "max_hp": 350,
+      "levels": [
+        {
+          "cost": [
+            {"good": "wood", "amount": 20},
+            {"good": "boards", "amount": 20},
+            {"good": "stone", "amount": 20}
+          ],
+          "recipes": ["bake_bread"]
+        }
+      ]
+    },
+    {
+      "kind": "pig_farm",
+      "category": "food",
+      "w": 3,
+      "h": 3,
+      "max_hp": 250,
+      "levels": [
+        {"cost": [{"good": "wood", "amount": 30}], "recipes": ["raise_pigs"]},
+        {
+          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 15}],
+          "recipes": ["pig_leather"]
+        }
+      ]
+    },
+    {
+      "kind": "cattle_farm",
+      "category": "food",
+      "w": 3,
+      "h": 3,
+      "max_hp": 300,
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 30}, {"good": "boards", "amount": 30}],
+          "recipes": ["raise_cattle"]
+        }
+      ]
+    }
+  ],
+  "recipes": [
+    {
+      "id": "chop_wood",
+      "building": "woodcutter",
+      "inputs": [],
+      "outputs": [{"good": "wood", "amount": 1}],
+      "seconds": 6
+    },
+    {
+      "id": "quarry_stone",
+      "building": "quarry",
+      "inputs": [],
+      "outputs": [{"good": "stone", "amount": 1}],
+      "seconds": 8
+    },
+    {
+      "id": "mine_ore",
+      "building": "mine",
+      "inputs": [],
+      "outputs": [{"good": "iron_ore", "amount": 1}],
+      "seconds": 10
+    },
+    {
+      "id": "grow_grain",
+      "building": "farm",
+      "inputs": [],
+      "outputs": [{"good": "grain", "amount": 2}],
+      "seconds": 20
+    },
+    {
+      "id": "saw_boards",
+      "building": "sawmill",
+      "inputs": [{"good": "wood", "amount": 2}],
+      "outputs": [{"good": "boards", "amount": 1}],
+      "seconds": 8
+    },
+    {
+      "id": "cut_blocks",
+      "building": "stonemason",
+      "inputs": [{"good": "stone", "amount": 2}],
+      "outputs": [{"good": "blocks", "amount": 1}],
+      "seconds": 10
+    },
+    {
+      "id": "make_spear",
+      "building": "spear_maker",
+      "inputs": [{"good": "wood", "amount": 1}],
+      "outputs": [{"good": "spear", "amount": 1}],
+      "seconds": 8
+    },
+    {
+      "id": "make_longbow",
+      "building": "bowyer",
+      "inputs": [{"good": "wood", "amount": 2}],
+      "outputs": [{"good": "longbow", "amount": 1}],
+      "seconds": 10
+    },
+    {
+      "id": "make_crossbow",
+      "building": "bowyer",
+      "inputs": [{"good": "wood", "amount": 1}, {"good": "iron", "amount": 1}],
+      "outputs": [{"good": "crossbow", "amount": 1}],
+      "seconds": 15
+    },
+    {
+      "id": "make_light_armor",
+      "building": "tannery",
+      "inputs": [{"good": "leather", "amount": 2}],
+      "outputs": [{"good": "light_armor", "amount": 1}],
+      "seconds": 15
+    },
+    {
+      "id": "make_saddle",
+      "building": "tannery",
+      "inputs": [{"good": "leather", "amount": 2}, {"good": "boards", "amount": 1}],
+      "outputs": [{"good": "saddle", "amount": 1}],
+      "seconds": 20
+    },
+    {
+      "id": "smelt_iron",
+      "building": "smelter",
+      "inputs": [{"good": "iron_ore", "amount": 2}, {"good": "wood", "amount": 1}],
+      "outputs": [{"good": "iron", "amount": 1}],
+      "seconds": 12
+    },
+    {
+      "id": "forge_sword",
+      "building": "smithy",
+      "inputs": [{"good": "iron", "amount": 1}],
+      "outputs": [{"good": "sword", "amount": 1}],
+      "seconds": 15
+    },
+    {
+      "id": "forge_armor",
+      "building": "smithy",
+      "inputs": [{"good": "iron", "amount": 2}, {"good": "leather", "amount": 1}],
+      "outputs": [{"good": "armor", "amount": 1}],
+      "seconds": 20
+    },
+    {
+      "id": "grind_flour",
+      "building": "mill",
+      "inputs": [{"good": "grain", "amount": 2}],
+      "outputs": [{"good": "flour", "amount": 1}],
+      "seconds": 8
+    },
+    {
+      "id": "bake_bread",
+      "building": "bakery",
+      "inputs": [{"good": "flour", "amount": 1}],
+      "outputs": [{"good": "bread", "amount": 2}],
+      "seconds": 10
+    },
+    {
+      "id": "raise_pigs",
+      "building": "pig_farm",
+      "inputs": [{"good": "grain", "amount": 1}],
+      "outputs": [{"good": "meat", "amount": 2}],
+      "seconds": 20
+    },
+    {
+      "id": "pig_leather",
+      "building": "pig_farm",
+      "inputs": [{"good": "grain", "amount": 1}],
+      "outputs": [{"good": "meat", "amount": 1}, {"good": "leather", "amount": 1}],
+      "seconds": 20
+    },
+    {
+      "id": "raise_cattle",
+      "building": "cattle_farm",
+      "inputs": [{"good": "grain", "amount": 2}],
+      "outputs": [{"good": "meat", "amount": 3}, {"good": "leather", "amount": 1}],
+      "seconds": 30
+    }
+  ],
+  "start_stock": [
+    {"good": "wood", "amount": 200},
+    {"good": "boards", "amount": 60},
+    {"good": "stone", "amount": 80},
+    {"good": "blocks", "amount": 60},
+    {"good": "bread", "amount": 30}
+  ],
+  "base_capacity": 300,
+  "storehouse_capacity": 300,
+  "demolish_refund_percent": 50
+}

@@ -1,8 +1,10 @@
 //! Spielzustand: Einheiten und Gebäude auf der Karte.
 
-use protocol::{BuildingKind, BuildingState, TileKind, UnitKind, UnitState};
+use std::collections::{BTreeSet, HashMap};
 
-use crate::{buildings, map::GameMap};
+use protocol::{BuildingKind, BuildingState, GoodAmount, StockState, Text, TileKind, UnitKind, UnitState};
+
+use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 /// Laufgeschwindigkeit des Königs in Feldern pro Sekunde.
 const KING_SPEED: f32 = 3.0;
@@ -27,10 +29,18 @@ pub struct World {
     occupied: Vec<u32>,
     next_unit_id: u32,
     next_building_id: u32,
+    pub economy: Economy,
+    /// Lager je Spieler.
+    stocks: HashMap<u32, Stock>,
+    /// Spieler, deren Lager sich seit dem letzten Senden geändert hat.
+    dirty_stocks: BTreeSet<u32>,
 }
 
+/// Fehlertext für den Client (Schlüssel, übersetzt wird dort).
+type Refusal = Text;
+
 impl World {
-    pub fn new(map: GameMap) -> World {
+    pub fn new(map: GameMap, economy: Economy) -> World {
         let n = (map.width * map.height) as usize;
         World {
             map,
@@ -39,6 +49,29 @@ impl World {
             occupied: vec![0; n],
             next_unit_id: 1,
             next_building_id: 1,
+            economy,
+            stocks: HashMap::new(),
+            dirty_stocks: BTreeSet::new(),
+        }
+    }
+
+    pub fn stock_state(&self, player: u32) -> StockState {
+        self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0 })
+    }
+
+    /// Lager, die sich geändert haben, seit dem letzten Aufruf.
+    pub fn take_dirty_stocks(&mut self) -> Vec<(u32, StockState)> {
+        let dirty = std::mem::take(&mut self.dirty_stocks);
+        dirty.into_iter().filter(|p| self.stocks.contains_key(p)).map(|p| (p, self.stock_state(p))).collect()
+    }
+
+    /// Kapazität je Ware: Grundwert plus je Vorratslager.
+    fn update_capacity(&mut self, player: u32) {
+        let n = self.buildings.iter().filter(|b| b.owner == player && b.kind == BuildingKind::Storehouse).count();
+        let cap = self.economy.def.base_capacity + n as u32 * self.economy.def.storehouse_capacity;
+        if let Some(s) = self.stocks.get_mut(&player) {
+            s.capacity = cap;
+            self.dirty_stocks.insert(player);
         }
     }
 
@@ -58,6 +91,11 @@ impl World {
             .unwrap_or(spawns[player as usize % spawns.len()]);
         let id = self.next_unit_id;
         self.next_unit_id += 1;
+        let mut stock = Stock::new(self.economy.def.base_capacity);
+        for g in &self.economy.def.start_stock {
+            stock.add(g.good, g.amount);
+        }
+        self.stocks.insert(player, stock);
         self.units.push(Unit {
             id,
             owner: player,
@@ -76,83 +114,129 @@ impl World {
         for &id in &ids {
             self.remove_building(id);
         }
+        self.stocks.remove(&player);
         ids
     }
 
-    /// Gebäude errichten, wenn der Platz passt. Ein Gebäude braucht flachen
-    /// Boden auf einer einzigen Höhenstufe, keine Rampe, kein Wasser, und darf
-    /// weder ein anderes Gebäude noch eine Einheit überdecken.
-    pub fn place_building(&mut self, player: u32, kind: BuildingKind, x: u32, y: u32) -> Result<BuildingState, String> {
-        let spec = buildings::spec(kind);
-        if let Some(max) = buildings::limit_per_player(kind) {
+    /// Gebäude errichten, wenn der Platz passt und das Lager reicht. Ein
+    /// Gebäude braucht flachen Boden auf einer einzigen Höhenstufe, keine
+    /// Rampe, kein Wasser, keinen Wald oder Fels, und darf weder ein anderes
+    /// Gebäude noch eine Einheit überdecken.
+    pub fn place_building(&mut self, player: u32, kind: BuildingKind, x: u32, y: u32) -> Result<BuildingState, Refusal> {
+        let def = self.economy.building(kind).ok_or_else(|| Text::new("error.unknown_building"))?;
+        let (w, h, max_hp) = (def.w, def.h, def.max_hp);
+        let cost = def.levels[0].cost.clone();
+        if let Some(max) = def.max_per_player {
             let have = self.buildings.iter().filter(|b| b.owner == player && b.kind == kind).count();
-            if have >= max {
-                return Err(format!("Davon darfst du nur {max} bauen"));
+            if have >= max as usize {
+                return Err(Text::new("error.limit_reached").arg("max", max));
             }
         }
-        if x.checked_add(spec.w).is_none_or(|r| r > self.map.width)
-            || y.checked_add(spec.h).is_none_or(|b| b > self.map.height)
-        {
-            return Err("Außerhalb der Karte".into());
+        if x.checked_add(w).is_none_or(|r| r > self.map.width) || y.checked_add(h).is_none_or(|b| b > self.map.height) {
+            return Err(Text::new("error.outside_map"));
         }
         let level = self.map.levels[(y * self.map.width + x) as usize];
-        for ty in y..y + spec.h {
-            for tx in x..x + spec.w {
+        for ty in y..y + h {
+            for tx in x..x + w {
                 let i = (ty * self.map.width + tx) as usize;
                 match self.map.tiles[i] {
-                    TileKind::Water => return Err("Nicht auf Wasser".into()),
-                    TileKind::Ramp => return Err("Nicht auf Rampen".into()),
+                    TileKind::Water => return Err(Text::new("error.on_water")),
+                    TileKind::Ramp => return Err(Text::new("error.on_ramp")),
                     TileKind::Ground => {}
                 }
                 if self.map.levels[i] != level {
-                    return Err("Der Boden muss eben sein".into());
+                    return Err(Text::new("error.not_flat"));
                 }
                 if self.occupied[i] != 0 {
-                    return Err("Dort steht schon ein Gebäude".into());
+                    return Err(Text::new("error.occupied"));
+                }
+                if crate::map::resource_blocks(self.map.resources[i]) {
+                    return Err(Text::new("error.on_resource"));
                 }
             }
         }
         let covers = |p: (f32, f32)| {
             let (ux, uy) = (p.0.floor() as i64, p.1.floor() as i64);
-            ux >= x as i64 && uy >= y as i64 && ux < (x + spec.w) as i64 && uy < (y + spec.h) as i64
+            ux >= x as i64 && uy >= y as i64 && ux < (x + w) as i64 && uy < (y + h) as i64
         };
         if self.units.iter().any(|u| covers(u.pos)) {
-            return Err("Dort steht eine Einheit".into());
+            return Err(Text::new("error.unit_in_way"));
         }
+        self.pay(player, &cost)?;
 
-        let b = BuildingState {
-            id: self.next_building_id,
-            owner: player,
-            kind,
-            x,
-            y,
-            w: spec.w,
-            h: spec.h,
-            hp: spec.max_hp,
-        };
+        let b = BuildingState { id: self.next_building_id, owner: player, kind, x, y, w, h, hp: max_hp, level: 1 };
         self.next_building_id += 1;
-        for ty in y..y + spec.h {
-            for tx in x..x + spec.w {
+        for ty in y..y + h {
+            for tx in x..x + w {
                 self.occupied[(ty * self.map.width + tx) as usize] = b.id;
                 self.map.nav.set_blocked(tx as i32, ty as i32, true);
             }
         }
         self.buildings.push(b.clone());
+        if kind == BuildingKind::Storehouse {
+            self.update_capacity(player);
+        }
         self.replan_all();
         Ok(b)
     }
 
-    /// Eigenes Gebäude abreißen.
-    pub fn demolish(&mut self, player: u32, id: u32) -> Result<(), String> {
-        match self.buildings.iter().find(|b| b.id == id) {
-            Some(b) if b.owner == player => {
-                self.remove_building(id);
-                self.replan_all();
-                Ok(())
-            }
-            Some(_) => Err("Das ist nicht dein Gebäude".into()),
-            None => Err("Gebäude gibt es nicht".into()),
+    /// Kosten aus dem Lager nehmen oder mit Grund ablehnen.
+    fn pay(&mut self, player: u32, cost: &[GoodAmount]) -> Result<(), Refusal> {
+        let stock = self.stocks.get_mut(&player).ok_or_else(|| Text::new("error.no_player"))?;
+        if let Some(missing) = cost.iter().find(|c| stock.amount(c.good) < c.amount) {
+            let good = serde_json::to_value(missing.good).ok().and_then(|v| v.as_str().map(String::from));
+            return Err(Text::new("error.not_enough")
+                .arg("good", good.unwrap_or_default())
+                .arg("need", missing.amount - stock.amount(missing.good)));
         }
+        stock.take_all(cost);
+        self.dirty_stocks.insert(player);
+        Ok(())
+    }
+
+    /// Eigenes Gebäude auf die nächste Stufe bringen.
+    pub fn upgrade(&mut self, player: u32, id: u32) -> Result<BuildingState, Refusal> {
+        let b = self.buildings.iter().find(|b| b.id == id).ok_or_else(|| Text::new("error.no_building"))?;
+        if b.owner != player {
+            return Err(Text::new("error.not_yours"));
+        }
+        let def = self.economy.building(b.kind).ok_or_else(|| Text::new("error.unknown_building"))?;
+        let Some(next) = def.levels.get(b.level as usize) else {
+            return Err(Text::new("error.max_level"));
+        };
+        let cost = next.cost.clone();
+        self.pay(player, &cost)?;
+        let b = self.buildings.iter_mut().find(|b| b.id == id).expect("eben gefunden");
+        b.level += 1;
+        Ok(b.clone())
+    }
+
+    /// Eigenes Gebäude abreißen. Ein Teil aller Bau- und Ausbaukosten kommt zurück.
+    pub fn demolish(&mut self, player: u32, id: u32) -> Result<(), Refusal> {
+        let b = match self.buildings.iter().find(|b| b.id == id) {
+            Some(b) if b.owner == player => b.clone(),
+            Some(_) => return Err(Text::new("error.not_yours")),
+            None => return Err(Text::new("error.no_building")),
+        };
+        let pct = self.economy.def.demolish_refund_percent;
+        let mut refund: Vec<GoodAmount> = Vec::new();
+        if let Some(def) = self.economy.building(b.kind) {
+            for level in def.levels.iter().take(b.level as usize) {
+                refund.extend(level.cost.iter().map(|c| GoodAmount { good: c.good, amount: c.amount * pct / 100 }));
+            }
+        }
+        self.remove_building(id);
+        if b.kind == BuildingKind::Storehouse {
+            self.update_capacity(player);
+        }
+        if let Some(stock) = self.stocks.get_mut(&player) {
+            for g in refund {
+                stock.add(g.good, g.amount);
+            }
+            self.dirty_stocks.insert(player);
+        }
+        self.replan_all();
+        Ok(())
     }
 
     fn remove_building(&mut self, id: u32) {
@@ -235,7 +319,7 @@ mod tests {
 
     #[test]
     fn koenig_laeuft_aus_der_burg_ins_tal() {
-        let mut world = World::new(GameMap::parse(DEFAULT_MAP).unwrap());
+        let mut world = World::new(GameMap::parse(DEFAULT_MAP).unwrap(), eco());
         world.spawn_player(1);
         world.spawn_player(2);
         let id = world.units[0].id;
@@ -252,17 +336,21 @@ mod tests {
         assert!((u.pos.0 - 30.5).abs() < 1e-3 && (u.pos.1 - 20.5).abs() < 1e-3);
     }
 
+    fn eco() -> Economy {
+        Economy::parse(crate::economy::ECONOMY_JSON).unwrap()
+    }
+
     fn flat_world() -> World {
         let row = "0".repeat(12);
         let text = format!("spawn 1 1\n{}", format!("{row}\n").repeat(12));
-        let mut world = World::new(GameMap::parse(&text).unwrap());
+        let mut world = World::new(GameMap::parse(&text).unwrap(), eco());
         world.spawn_player(1);
         world
     }
 
     #[test]
     fn bauregeln_werden_geprueft() {
-        let mut world = World::new(GameMap::parse(DEFAULT_MAP).unwrap());
+        let mut world = World::new(GameMap::parse(DEFAULT_MAP).unwrap(), eco());
         world.spawn_player(1);
         let water = (0..64u32 * 64).find(|&i| world.map.tiles[i as usize] == TileKind::Water).unwrap();
         assert!(world.place_building(1, BuildingKind::Wall, water % 64, water / 64).is_err());
@@ -282,6 +370,52 @@ mod tests {
         assert!(flat.demolish(2, b.id).is_err(), "fremdes Gebäude");
         flat.demolish(1, b.id).unwrap();
         assert!(flat.map.nav.is_open(5, 5));
+    }
+
+    #[test]
+    fn bauen_kostet_und_abriss_erstattet() {
+        use protocol::Good;
+        let mut w = flat_world();
+        let wood = w.stocks[&1].amount(Good::Wood);
+        let b = w.place_building(1, BuildingKind::Bowyer, 4, 4).unwrap();
+        let s = &w.stocks[&1];
+        assert_eq!(s.amount(Good::Wood), wood - 20);
+        assert_eq!(b.level, 1);
+        // Stufe 2 braucht Eisen, das es zu Beginn nicht gibt.
+        let err = w.upgrade(1, b.id).unwrap_err();
+        assert_eq!(err.key, "error.not_enough");
+        assert_eq!(err.args["good"], "iron");
+        w.stocks.get_mut(&1).unwrap().add(Good::Iron, 10);
+        assert_eq!(w.upgrade(1, b.id).unwrap().level, 2);
+        assert_eq!(w.upgrade(1, b.id).unwrap_err().key, "error.max_level");
+        assert_eq!(w.upgrade(2, b.id).unwrap_err().key, "error.not_yours");
+        let boards = w.stocks[&1].amount(Good::Boards);
+        w.demolish(1, b.id).unwrap();
+        // Hälfte von Stufe 1 (20 Bretter) und Stufe 2 (30 Bretter) zurück.
+        assert_eq!(w.stocks[&1].amount(Good::Boards), boards + 10 + 15);
+        assert!(!w.take_dirty_stocks().is_empty());
+        assert!(w.take_dirty_stocks().is_empty(), "nur einmal melden");
+    }
+
+    #[test]
+    fn ohne_material_kein_bau_und_lager_erhoeht_platz() {
+        use protocol::Good;
+        let mut w = flat_world();
+        let cap = w.stocks[&1].capacity;
+        w.place_building(1, BuildingKind::Storehouse, 6, 6).unwrap();
+        assert_eq!(w.stocks[&1].capacity, cap + w.economy.def.storehouse_capacity);
+        let all = w.stocks[&1].amount(Good::Stone);
+        w.stocks.get_mut(&1).unwrap().take_all(&[GoodAmount { good: Good::Stone, amount: all }]);
+        assert_eq!(w.place_building(1, BuildingKind::Wall, 0, 9).unwrap_err().key, "error.not_enough");
+    }
+
+    #[test]
+    fn nicht_auf_wald_bauen() {
+        let text = "spawn 0 0\n[terrain]\n000\n000\n[resources]\n..W\n...\n";
+        let mut w = World::new(GameMap::parse(text).unwrap(), eco());
+        w.spawn_player(1);
+        assert_eq!(w.place_building(1, BuildingKind::Wall, 2, 0).unwrap_err().key, "error.on_resource");
+        assert!(w.place_building(1, BuildingKind::Wall, 2, 1).is_ok());
     }
 
     #[test]

@@ -4,4 +4,4 @@ import type { BuildingKind } from "./BuildingKind";
 /**
  * Nachrichten vom Client an den Server.
  */
-export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", client_time: number, } | { "type": "move_units", unit_ids: Array<number>, x: number, y: number, } | { "type": "place_building", kind: BuildingKind, x: number, y: number, } | { "type": "demolish_building", building_id: number, };
+export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", client_time: number, } | { "type": "move_units", unit_ids: Array<number>, x: number, y: number, } | { "type": "place_building", kind: BuildingKind, x: number, y: number, } | { "type": "demolish_building", building_id: number, } | { "type": "upgrade_building", building_id: number, };

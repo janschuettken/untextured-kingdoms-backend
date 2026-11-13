@@ -4,4 +4,8 @@ import type { BuildingKind } from "./BuildingKind";
 /**
  * Ein Gebäude auf der Karte. Es belegt die Felder (x, y) bis (x + w - 1, y + h - 1).
  */
-export type BuildingState = { id: number, owner: number, kind: BuildingKind, x: number, y: number, w: number, h: number, hp: number, };
+export type BuildingState = { id: number, owner: number, kind: BuildingKind, x: number, y: number, w: number, h: number, hp: number, 
+/**
+ * Ausbaustufe, beginnt bei 1.
+ */
+level: number, };

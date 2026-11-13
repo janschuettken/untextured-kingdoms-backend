@@ -3,4 +3,4 @@
 /**
  * Art eines Gebäudes.
  */
-export type BuildingKind = "wall" | "high_wall" | "tower" | "keep" | "storehouse";
+export type BuildingKind = "wall" | "high_wall" | "tower" | "keep" | "storehouse" | "woodcutter" | "sawmill" | "quarry" | "stonemason" | "mine" | "smelter" | "smithy" | "spear_maker" | "bowyer" | "tannery" | "farm" | "mill" | "bakery" | "pig_farm" | "cattle_farm";
