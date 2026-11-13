@@ -2,6 +2,7 @@
 import type { BuildingState } from "./BuildingState";
 import type { EconomyDef } from "./EconomyDef";
 import type { MapInfo } from "./MapInfo";
+import type { ResourceKind } from "./ResourceKind";
 import type { StockState } from "./StockState";
 import type { Text } from "./Text";
 import type { UnitState } from "./UnitState";
@@ -30,4 +31,4 @@ tick: number, players_online: number,
 /**
  * Alle Einheiten mit ihrem aktuellen Zustand.
  */
-units: Array<UnitState>, } | { "type": "pong", client_time: number, } | { "type": "building_placed", building: BuildingState, } | { "type": "building_removed", building_id: number, } | { "type": "building_changed", building: BuildingState, } | { "type": "stock", stock: StockState, } | { "type": "rejected", text: Text, };
+units: Array<UnitState>, } | { "type": "pong", client_time: number, } | { "type": "building_placed", building: BuildingState, } | { "type": "building_removed", building_id: number, } | { "type": "building_changed", building: BuildingState, } | { "type": "resource_changed", x: number, y: number, resource: ResourceKind, } | { "type": "stock", stock: StockState, } | { "type": "rejected", text: Text, };

@@ -3,6 +3,7 @@ import type { BuildingDef } from "./BuildingDef";
 import type { Good } from "./Good";
 import type { GoodAmount } from "./GoodAmount";
 import type { RecipeDef } from "./RecipeDef";
+import type { ResourceAmount } from "./ResourceAmount";
 
 /**
  * Die ganze Wirtschaft als Daten (einzige Quelle: `server/data/economy.json`).
@@ -19,4 +20,12 @@ storehouse_capacity: number,
 /**
  * So viel Prozent der Bau- und Ausbaukosten gibt es beim Abriss zurück.
  */
-demolish_refund_percent: number, };
+demolish_refund_percent: number, 
+/**
+ * Wie viel ein Feld hergibt, bevor es erschöpft ist (Wald, Stein, Eisen).
+ */
+resource_amounts: Array<ResourceAmount>, 
+/**
+ * So viel schneller arbeiten Höfe auf besonders fruchtbarem Boden (anteilig).
+ */
+fertile_bonus_percent: number, };

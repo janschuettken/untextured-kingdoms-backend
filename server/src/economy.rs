@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use protocol::{BuildingDef, BuildingKind, EconomyDef, GoodAmount, RecipeDef};
+use protocol::{BuildingDef, BuildingKind, EconomyDef, GoodAmount, RecipeDef, ResourceKind};
 
 pub const ECONOMY_JSON: &str = include_str!("../data/economy.json");
 
@@ -59,11 +59,15 @@ impl Economy {
         Ok(Economy { def, buildings })
     }
 
+    /// Wie viel ein Feld mit diesem Rohstoff anfangs hergibt (0 = unbegrenzt bzw. nichts zum Abbauen).
+    pub fn resource_amount(&self, r: ResourceKind) -> u32 {
+        self.def.resource_amounts.iter().find(|a| a.resource == r).map_or(0, |a| a.amount)
+    }
+
     pub fn building(&self, kind: BuildingKind) -> Option<&BuildingDef> {
         self.buildings.get(&kind).map(|&i| &self.def.buildings[i])
     }
 
-    #[allow(dead_code)] // für die Produktion im nächsten Schritt
     pub fn recipe(&self, id: &str) -> Option<&RecipeDef> {
         self.def.recipes.iter().find(|r| r.id == id)
     }
@@ -80,7 +84,7 @@ mod tests {
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 20);
+        assert_eq!(eco.def.buildings.len(), 21);
     }
 
     #[test]

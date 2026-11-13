@@ -30,6 +30,15 @@ Felder im Navigationsgitter und lässt laufende Einheiten neu planen. Abriss ers
 Ausbaukosten. Neue Clients bekommen im `welcome` alle stehenden Gebäude und ihr Lager, danach nur Änderungen
 (`building_placed`, `building_changed`, `building_removed`, `stock` nur an den eigenen Spieler).
 
+Produktion (`server/src/world/production.rs`): Jeder Betrieb arbeitet sein eingestelltes Rezept ab
+(`configure_building`: Rezept, Pause, Lieferungen annehmen). Eingangswaren kommen beim Start aus dem Lager, das
+Ergebnis geht am Ende hinein. Abbaubetriebe brauchen Rohstoff in Reichweite (`gather_radius`) und verbrauchen ihn
+(`resource_amounts`); ein leeres Waldfeld verschwindet und gibt den Weg frei (`resource_changed`). `placement` legt
+fest, worauf ein Gebäude stehen muss (Steinbruch auf Stein, Mine auf Eisen, Bauernhof und Rinder auf Acker;
+fruchtbarer Boden macht sie schneller). Die Obstplantage lässt sich aufgeben (`release_trees`), dann wird ihre
+Fläche zu Wald. Der Zustand jedes Betriebs (`status`) geht bei Änderung an alle. Noch gibt es ein gemeinsames Lager
+je Spieler; Lager pro Gebäude und Transport folgen.
+
 Texte: Der Server schickt nie fertige Sätze, sondern Schlüssel mit Platzhaltern (`Text { key, args }`, z. B.
 `error.not_enough` mit `good` und `need`). Übersetzt wird im Client (Deutsch und Englisch).
 

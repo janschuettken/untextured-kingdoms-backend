@@ -27,7 +27,7 @@ use axum::{
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
-use protocol::{ClientMsg, MapInfo, ServerMsg};
+use protocol::{ClientMsg, ServerMsg};
 use world::World;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
@@ -35,8 +35,6 @@ use tracing::{info, warn};
 const TICK_RATE: u32 = 20;
 
 struct AppState {
-    /// Kartendaten für neue Clients (ändert sich nicht).
-    map: MapInfo,
     /// Spielzustand. Nur kurz sperren, nie über ein `.await` hinweg.
     world: Mutex<World>,
     next_player_id: AtomicU32,
@@ -68,7 +66,6 @@ async fn main() {
         .unwrap_or_else(|e| panic!("Karte {map_name} ist ungültig: {e}"));
     info!("Karte {map_name} geladen ({} x {})", game_map.width, game_map.height);
     let state = Arc::new(AppState {
-        map: game_map.info(),
         world: Mutex::new(World::new(
             game_map,
             economy::Economy::parse(economy::ECONOMY_JSON).expect("economy.json ist gültig"),
@@ -108,6 +105,10 @@ async fn game_loop(state: Arc<AppState>) {
         let (units, stocks) = {
             let mut world = state.world.lock().unwrap();
             world.step(1.0 / TICK_RATE as f32);
+            // Unter dem Lock verschicken, damit neue Clients nichts doppelt oder gar nicht sehen.
+            for event in world.take_events() {
+                let _ = state.ticks.send(event);
+            }
             (world.snapshot(), world.take_dirty_stocks())
         };
         if !stocks.is_empty() {
@@ -137,11 +138,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     // Gebäudestand und Abo im selben Lock holen: so geht keine Änderung
     // verloren und keine kommt doppelt an.
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<ServerMsg>(64);
-    let (buildings, economy, stock, mut ticks) = {
+    let (map, buildings, economy, stock, mut ticks) = {
         let mut world = state.world.lock().unwrap();
         world.spawn_player(player_id);
         state.clients.lock().unwrap().insert(player_id, out_tx.clone());
-        (world.buildings.clone(), world.economy.def.clone(), world.stock_state(player_id), state.ticks.subscribe())
+        (
+            world.map.info(), // aktueller Stand, z. B. mit abgeholztem Wald
+            world.buildings.clone(),
+            world.economy.def.clone(),
+            world.stock_state(player_id),
+            state.ticks.subscribe(),
+        )
     };
     info!("Spieler {player_id} verbunden");
 
@@ -150,7 +157,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let welcome = ServerMsg::Welcome {
         player_id,
         tick_rate: TICK_RATE,
-        map: state.map.clone(),
+        map,
         economy,
         stock,
         buildings,
@@ -195,6 +202,25 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 let mut world = state.world.lock().unwrap();
                 match world.demolish(player_id, building_id) {
                     Ok(()) => drop(state.ticks.send(ServerMsg::BuildingRemoved { building_id })),
+                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                }
+            }
+            Ok(ClientMsg::ConfigureBuilding { building_id, settings }) => {
+                let mut world = state.world.lock().unwrap();
+                match world.configure(player_id, building_id, settings) {
+                    Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
+                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                }
+            }
+            Ok(ClientMsg::ReleaseTrees { building_id }) => {
+                let mut world = state.world.lock().unwrap();
+                match world.release_trees(player_id, building_id) {
+                    Ok(()) => {
+                        let _ = state.ticks.send(ServerMsg::BuildingRemoved { building_id });
+                        for event in world.take_events() {
+                            let _ = state.ticks.send(event);
+                        }
+                    }
                     Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                 }
             }

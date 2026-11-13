@@ -31,6 +31,10 @@ pub enum ClientMsg {
     DemolishBuilding { building_id: u32 },
     /// Eigenes Gebäude auf die nächste Stufe ausbauen.
     UpgradeBuilding { building_id: u32 },
+    /// Einstellungen eines eigenen Gebäudes ändern (was es herstellt usw.).
+    ConfigureBuilding { building_id: u32, settings: BuildingSettings },
+    /// Obstplantage aufgeben: ihre Bäume werden zu Wald, den man abholzen kann.
+    ReleaseTrees { building_id: u32 },
 }
 
 /// Nachrichten vom Server an den Client.
@@ -72,6 +76,12 @@ pub enum ServerMsg {
     /// Ein Gebäude hat sich geändert (z. B. ausgebaut).
     BuildingChanged {
         building: BuildingState,
+    },
+    /// Rohstoff auf einem Feld hat sich geändert (z. B. Wald abgeholzt).
+    ResourceChanged {
+        x: u32,
+        y: u32,
+        resource: ResourceKind,
     },
     /// Eigener Lagerbestand hat sich geändert (geht nur an diesen Spieler).
     Stock {
@@ -225,6 +235,7 @@ pub enum Good {
     Grain,
     Flour,
     Bread,
+    Fruit,
     Meat,
     Leather,
     Spear,
@@ -281,6 +292,8 @@ pub enum BuildingKind {
     Farm,
     Mill,
     Bakery,
+    /// Obstplantage: Obstbäume wachsen überall.
+    Orchard,
     PigFarm,
     CattleFarm,
 }
@@ -308,6 +321,15 @@ pub struct BuildingLevel {
     pub recipes: Vec<String>,
 }
 
+/// Wo ein Gebäude stehen darf: ein Mindestanteil seiner Felder muss einer
+/// dieser Rohstoffe sein (z. B. Steinbruch auf Stein, Bauernhof auf Acker).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Placement {
+    pub resources: Vec<ResourceKind>,
+    pub min_share_percent: u32,
+}
+
 /// Feste Eigenschaften einer Gebäudeart.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -321,9 +343,18 @@ pub struct BuildingDef {
     /// Höchstens so viele pro Spieler.
     #[serde(default)]
     pub max_per_player: Option<u32>,
-    /// Rohstoff-Felder, an denen dieser Betrieb arbeitet (z. B. Wald).
+    /// Wo das Gebäude stehen darf. Fehlt es, reicht normaler Boden.
+    #[serde(default)]
+    pub placement: Option<Placement>,
+    /// Rohstoff-Felder, die dieser Betrieb abbaut (z. B. Wald).
     #[serde(default)]
     pub gathers: Vec<ResourceKind>,
+    /// Wie weit um das Gebäude abgebaut wird (Felder vom Rand). 0 = nur unter dem Gebäude.
+    #[serde(default)]
+    pub gather_radius: u32,
+    /// Aufgeben hinterlässt diesen Rohstoff auf der Fläche (Obstplantage → Wald).
+    #[serde(default)]
+    pub releases_as: Option<ResourceKind>,
     /// Mindestens eine Stufe.
     pub levels: Vec<BuildingLevel>,
 }
@@ -355,6 +386,45 @@ pub struct EconomyDef {
     pub storehouse_capacity: u32,
     /// So viel Prozent der Bau- und Ausbaukosten gibt es beim Abriss zurück.
     pub demolish_refund_percent: u32,
+    /// Wie viel ein Feld hergibt, bevor es erschöpft ist (Wald, Stein, Eisen).
+    pub resource_amounts: Vec<ResourceAmount>,
+    /// So viel schneller arbeiten Höfe auf besonders fruchtbarem Boden (anteilig).
+    pub fertile_bonus_percent: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResourceAmount {
+    pub resource: ResourceKind,
+    pub amount: u32,
+}
+
+/// Was der Spieler pro Gebäude einstellt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BuildingSettings {
+    /// Welches freigeschaltete Rezept läuft. `None` = nichts herstellen.
+    pub recipe: Option<String>,
+    pub paused: bool,
+    /// Darf der Transport hier Waren abliefern? (wirkt, sobald es Transport gibt)
+    pub accept_deliveries: bool,
+}
+
+/// Was ein Betrieb gerade tut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum BuildingStatus {
+    /// Stellt nichts her (z. B. Mauer, oder kein Rezept gewählt).
+    Idle,
+    Working,
+    Paused,
+    /// Es fehlen Eingangswaren im Lager.
+    MissingInput,
+    /// Kein Rohstoff mehr in Reichweite (Wald abgeholzt, Stein erschöpft).
+    NoResource,
+    /// Lager voll, das Ergebnis passt nicht hinein.
+    StorageFull,
 }
 
 /// Ein Gebäude auf der Karte. Es belegt die Felder (x, y) bis (x + w - 1, y + h - 1).
@@ -371,4 +441,6 @@ pub struct BuildingState {
     pub hp: u32,
     /// Ausbaustufe, beginnt bei 1.
     pub level: u32,
+    pub settings: BuildingSettings,
+    pub status: BuildingStatus,
 }
