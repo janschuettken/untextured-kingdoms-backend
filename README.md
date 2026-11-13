@@ -52,8 +52,9 @@ Lager (`server/src/stock.rs`): Jede Ware liegt in Chargen mit optionalem Verfall
 verderbliche Waren brauchen später nur ein Verfallsdatum beim Einlagern und einen Aufruf von `expire` pro Tick.
 
 ```
-server/src/map.rs    Karte aus Textdatei lesen: Höhenstufen, Rampen, Wasser, Eckhöhen
-server/src/nav.rs    Navigationsgitter (wer darf wohin) und Wegsuche (A* + Glätten)
+server/src/map.rs    Karte aus Textdatei lesen: Höhenstufen, Wasser, Eckhöhen (Schrägen/Wände)
+server/src/nav.rs    Navigationsgitter und hierarchische Wegsuche (Blöcke 16×16, Korridor-A*, Glätten)
+server/src/mapgen.rs Zufallskarten bis 1024 × 1024 für bis zu 8 Spieler
 server/src/maps_api.rs  HTTP-API für den Karteneditor
 server/src/world.rs  Spielzustand: Einheiten, Gebäude, Befehle, Bewegung pro Tick
 server/src/economy.rs   Wirtschaftsdaten aus data/economy.json laden und prüfen
@@ -71,14 +72,19 @@ schreibt dieselben Textdateien:
 # Kommentar
 spawn 10 10
 [terrain]
-0001>>>2
+0001123333
 ...
 [resources]
 ..WW....
 ```
 
-- `[terrain]`, ein Zeichen pro Feld: `0`–`9` Boden auf dieser Höhenstufe, `~` Wasser, `> < v ^` Rampe,
-  die in Pfeilrichtung ansteigt. Jeder andere Höhensprung ist eine Klippe.
+Maßstab: ein Feld ≈ 3 × 3 m, eine Höhenstufe ≈ 1,5 m. Ein einfaches Haus ist etwa 3 × 3 Felder groß,
+Bäume 3–4 Felder hoch. Karten dürfen bis 1024 × 1024 Felder groß sein.
+
+- `[terrain]`, ein Zeichen pro Feld: `0`–`9` Boden auf dieser Höhenstufe, `~` Wasser. Nachbarn, die sich
+  um genau eine Stufe unterscheiden, gehen als begehbare Schräge ineinander über; ab zwei Stufen
+  Unterschied steht dazwischen eine Wand. Rampen malt man also nicht, man legt Stufen nebeneinander
+  (`0123` ist eine Rampe drei Stufen hoch). Die alten Pfeile `> < v ^` meldet die Prüfung als Fehler.
 - `[resources]` (optional, gleiche Größe): `.` nichts, `W` Wald, `S` Steinbruch, `E` Eisen, `A` Acker,
   `F` besonders fruchtbar. Wald, Stein und Eisen blockieren Einheiten, bis sie abgebaut sind.
 - `spawn x y` legt Startfelder fest.
@@ -92,8 +98,24 @@ Welche Karte der Server lädt, steuert `MAP=<name>` (ohne `.txt`, Standard `zwei
 | --- | --- | --- |
 | GET | `/api/maps` | Kartennamen und ob Speichern erlaubt ist |
 | GET | `/api/maps/{name}` | Kartendatei als Text |
-| POST | `/api/maps/check` | Text prüfen: fertige Karte, Fehler, Hinweise |
+| POST | `/api/maps/check` | Text prüfen: Größe, Startfelder, Fehler, Hinweise |
 | PUT | `/api/maps/{name}` | Karte speichern (nur ohne Fehler) |
+| GET | `/api/maps/generate?width=&height=&players=&seed=` | Zufallskarte als Text |
+| GET | `/api/maps/current` | Die laufende Karte mit aktuellem Stand (der Client lädt sie nach `welcome`) |
+
+## Große Karten
+
+Gebaut für 1000 × 1000 Felder mit etwa 8 Spielern:
+
+- Wegsuche hierarchisch: erst über Gebiete in Blöcken zu 16 × 16 Feldern, dann feldgenau nur im
+  Korridor. Ein Weg quer über eine 1000er-Karte dauert etwa 2 ms. Gebäude und Abholzen teilen nur die
+  betroffenen Blöcke neu ein.
+- Die Karte geht nicht über den WebSocket, sondern als Text über `/api/maps/current` (2 MB, mit gzip
+  deutlich weniger). Danach kommen nur Änderungen (`resource_changed`, Gebäude).
+- Ticks gehen pro Client: nur Einheiten im Sichtbereich (`view`, plus Rand) und die eigenen, und davon
+  nur neue oder veränderte; `gone` nennt Einheiten, die weg oder aus dem Bild sind.
+- `cargo test --release -p server -- --ignored --nocapture` erzeugt und prüft eine 1000er-Karte mit
+  8 Spielern und gibt die Zeiten aus.
 
 Speichern ist im Debug-Build (`cargo run`) an und im Release-Build (Docker) aus, damit auf dem
 öffentlichen Server niemand Karten überschreibt. `MAP_EDITOR_SAVE=1` bzw. `0` überschreibt das.

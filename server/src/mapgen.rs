@@ -95,6 +95,99 @@ struct Gen {
 }
 
 impl Gen {
+    /// Darf man von Feld i zum Nachbarn j gehen (nur Gelände)?
+    fn step_ok(&self, i: usize, j: usize) -> bool {
+        self.level[i] != WATER && self.level[j] != WATER && (self.level[i] - self.level[j]).abs() <= 1
+    }
+
+    /// Gebiete, die nur der Wald abschneidet, mit einer Schneise anbinden;
+    /// winzige Taschen einfach zuwachsen lassen. So meldet die Prüfung nichts.
+    fn open_forest_pockets(&mut self, from: (i32, i32)) {
+        let n = self.w * self.h;
+        let blocks = |c: u8| matches!(c, b'W' | b'S' | b'E');
+        for _round in 0..400 {
+            // Erreichbar vom ersten Startplatz (mit Wald als Hindernis).
+            let mut reach = vec![false; n];
+            let start = self.idx(from.0, from.1);
+            let mut stack = vec![start];
+            reach[start] = true;
+            while let Some(i) = stack.pop() {
+                for j in self.neighbors4(i) {
+                    if !reach[j] && !blocks(self.res[j]) && self.step_ok(i, j) {
+                        reach[j] = true;
+                        stack.push(j);
+                    }
+                }
+            }
+            let Some(pocket) = (0..n).find(|&i| !reach[i] && self.level[i] != WATER && !blocks(self.res[i])) else {
+                return;
+            };
+            // Größe der Tasche.
+            let mut cells = vec![pocket];
+            let mut seen = vec![false; n];
+            seen[pocket] = true;
+            let mut k = 0;
+            while k < cells.len() {
+                let i = cells[k];
+                k += 1;
+                for j in self.neighbors4(i) {
+                    if !seen[j] && !blocks(self.res[j]) && self.step_ok(i, j) {
+                        seen[j] = true;
+                        cells.push(j);
+                    }
+                }
+            }
+            if cells.len() < 30 {
+                for i in cells {
+                    self.res[i] = b'W';
+                }
+                continue;
+            }
+            // Kürzester Weg durch den Wald zu erreichbarem Land, dann eine
+            // zwei Felder breite Schneise schlagen.
+            let mut came = vec![usize::MAX; n];
+            let mut queue = std::collections::VecDeque::from([pocket]);
+            came[pocket] = pocket;
+            let mut hit = None;
+            while let Some(i) = queue.pop_front() {
+                if reach[i] {
+                    hit = Some(i);
+                    break;
+                }
+                for j in self.neighbors4(i) {
+                    if came[j] == usize::MAX && self.res[j] != b'S' && self.res[j] != b'E' && self.step_ok(i, j) {
+                        came[j] = i;
+                        queue.push_back(j);
+                    }
+                }
+            }
+            let Some(mut i) = hit else {
+                for c in cells {
+                    self.res[c] = b'W';
+                }
+                continue;
+            };
+            while i != pocket {
+                for j in std::iter::once(i).chain(self.neighbors4(i).into_iter().take(2)) {
+                    if self.res[j] == b'W' {
+                        self.res[j] = b'.';
+                    }
+                }
+                i = came[i];
+            }
+        }
+    }
+
+    fn neighbors4(&self, i: usize) -> Vec<usize> {
+        let (x, y) = ((i % self.w) as i32, (i / self.w) as i32);
+        [(1, 0), (0, 1), (-1, 0), (0, -1)]
+            .into_iter()
+            .map(|(dx, dy)| (x + dx, y + dy))
+            .filter(|&(nx, ny)| self.inside(nx, ny))
+            .map(|(nx, ny)| self.idx(nx, ny))
+            .collect()
+    }
+
     fn idx(&self, x: i32, y: i32) -> usize {
         y as usize * self.w + x as usize
     }
@@ -306,7 +399,7 @@ pub fn generate(p: &Params) -> String {
             }
             let t = (e - 0.18) / 0.82 * (MAX_LEVEL as f32 / 2.0);
             let (fl, fr) = (t.floor(), t - t.floor());
-            let width = 0.04 + 0.9 * sharp_noise.fbm(fx, fy, 70.0, 2).powi(2);
+            let width = 0.02 + 0.8 * sharp_noise.fbm(fx, fy, 70.0, 2).powi(3);
             let step = smoothstep(0.5 - width / 2.0, 0.5 + width / 2.0, fr);
             g.level[i] = ((fl + step) * 2.0).round().min(MAX_LEVEL as f32) as i8;
         }
@@ -372,6 +465,10 @@ pub fn generate(p: &Params) -> String {
         }
     }
 
+    if let Some(&s0) = spawns.first() {
+        g.open_forest_pockets(s0);
+    }
+
     let mut out = String::with_capacity((w + 1) * h * 2 + 512);
     let _ = writeln!(out, "# Zufallskarte {w} x {h} für {} Spieler, Seed {}.", p.players, p.seed);
     let _ = writeln!(out, "# Erzeugt vom Kartengenerator; Format siehe server/maps/zwei-burgen.txt.");
@@ -409,6 +506,7 @@ mod tests {
         assert!(result.errors.is_empty(), "{size}: {:?}", result.errors.first());
         let map = result.map.unwrap();
         assert_eq!(map.spawns.len(), players);
+        assert!(result.warnings.is_empty(), "{size}: {:?}", result.warnings.first());
         // Alle Startplätze sind untereinander erreichbar.
         let s0 = map.spawns[0];
         let t = std::time::Instant::now();
