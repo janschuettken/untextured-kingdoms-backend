@@ -1,12 +1,14 @@
 //! Autoritativer Spielserver: feste Tick-Rate, Clients per WebSocket.
 
 mod map;
+mod nav;
+mod world;
 
 use std::{
     net::SocketAddr,
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -22,13 +24,17 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use protocol::{ClientMsg, MapInfo, ServerMsg};
+use world::World;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 
 const TICK_RATE: u32 = 20;
 
 struct AppState {
+    /// Kartendaten für neue Clients (ändert sich nicht).
     map: MapInfo,
+    /// Spielzustand. Nur kurz sperren, nie über ein `.await` hinweg.
+    world: Mutex<World>,
     next_player_id: AtomicU32,
     players_online: AtomicU32,
     /// Jeder Tick wird an alle verbundenen Clients verteilt.
@@ -45,8 +51,10 @@ async fn main() {
         .init();
 
     let (ticks, _) = broadcast::channel(64);
+    let game_map = map::GameMap::parse(map::DEFAULT_MAP).expect("Standardkarte ist gültig");
     let state = Arc::new(AppState {
-        map: map::generate(64, 64, 3, 42),
+        map: game_map.info(),
+        world: Mutex::new(World::new(game_map)),
         next_player_id: AtomicU32::new(1),
         players_online: AtomicU32::new(0),
         ticks,
@@ -77,10 +85,16 @@ async fn game_loop(state: Arc<AppState>) {
     loop {
         interval.tick().await;
         tick += 1;
+        let units = {
+            let mut world = state.world.lock().unwrap();
+            world.step(1.0 / TICK_RATE as f32);
+            world.snapshot()
+        };
         // Fehler heißt nur: gerade niemand verbunden.
         let _ = state.ticks.send(ServerMsg::Tick {
             tick,
             players_online: state.players_online.load(Ordering::Relaxed),
+            units,
         });
     }
 }
@@ -92,6 +106,7 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) ->
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let player_id = state.next_player_id.fetch_add(1, Ordering::Relaxed);
     state.players_online.fetch_add(1, Ordering::Relaxed);
+    state.world.lock().unwrap().spawn_player(player_id);
     info!("Spieler {player_id} verbunden");
 
     let (mut tx, mut rx) = socket.split();
@@ -128,11 +143,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             Ok(ClientMsg::Ping { client_time }) => {
                 let _ = out_tx.send(ServerMsg::Pong { client_time }).await;
             }
+            Ok(ClientMsg::MoveUnits { unit_ids, x, y }) => {
+                state.world.lock().unwrap().order_move(player_id, &unit_ids, (x, y));
+            }
             Err(e) => warn!("Ungültige Nachricht von {player_id}: {e}"),
         }
     }
 
     writer.abort();
+    state.world.lock().unwrap().remove_player(player_id);
     state.players_online.fetch_sub(1, Ordering::Relaxed);
     info!("Spieler {player_id} getrennt");
 }
