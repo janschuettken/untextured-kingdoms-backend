@@ -290,6 +290,8 @@ pub struct StockState {
     pub goods: Vec<GoodAmount>,
     /// Höchstmenge je Ware (wächst mit Vorratslagern).
     pub capacity: u32,
+    #[serde(default)]
+    pub people: PeopleState,
 }
 
 /// Art eines Gebäudes.
@@ -325,6 +327,8 @@ pub enum BuildingKind {
     CattleFarm,
     /// Wagenschuppen: stellt einen Karren für große Ladungen.
     CartShed,
+    /// Wohnhaus: Platz für Arbeiter und Träger.
+    House,
 }
 
 /// Gruppe im Baumenü.
@@ -332,6 +336,7 @@ pub enum BuildingKind {
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum BuildingCategory {
+    Housing,
     Fortification,
     Storage,
     Raw,
@@ -348,6 +353,9 @@ pub struct BuildingLevel {
     /// Rezepte, die diese Stufe freischaltet (zusätzlich zu den vorigen).
     #[serde(default)]
     pub recipes: Vec<String>,
+    /// So viele Bewohner passen auf dieser Stufe hinein (Wohnhäuser).
+    #[serde(default)]
+    pub housing: u32,
 }
 
 /// Wo ein Gebäude stehen darf: ein Mindestanteil seiner Felder muss einer
@@ -397,6 +405,9 @@ pub struct BuildingDef {
     #[serde(default)]
     pub spawns: Vec<UnitCount>,
     /// Mindestens eine Stufe.
+    /// Arbeiter, die der Betrieb braucht (sie wohnen in Häusern und essen).
+    #[serde(default)]
+    pub workers: u32,
     pub levels: Vec<BuildingLevel>,
 }
 
@@ -456,6 +467,8 @@ pub struct EconomyDef {
     pub transport: TransportDef,
     #[serde(default)]
     pub movement: MovementDef,
+    #[serde(default)]
+    pub population: PopulationDef,
 }
 
 /// Lauftempo der Einheiten, die nicht transportieren (Felder pro Sekunde).
@@ -463,6 +476,40 @@ pub struct EconomyDef {
 #[ts(export)]
 pub struct MovementDef {
     pub king_speed: f32,
+}
+
+/// Bewohner: Arbeiter und Träger brauchen einen Platz in einem Haus und essen.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PopulationDef {
+    /// Diese Waren werden gegessen (eine Einheit je Bewohner und Mahlzeit).
+    pub food: Vec<Good>,
+    /// Alle so viele Sekunden isst jeder Bewohner einmal.
+    pub meal_seconds: f32,
+    /// Ohne Essen arbeiten und laufen alle nur mit diesem Anteil des Tempos.
+    pub hungry_speed_percent: u32,
+    /// Bewohner je Träger oder Karren.
+    pub per_transport: u32,
+}
+
+impl Default for PopulationDef {
+    fn default() -> Self {
+        PopulationDef { food: vec![Good::Bread, Good::Meat, Good::Fruit], meal_seconds: 60.0, hungry_speed_percent: 50, per_transport: 1 }
+    }
+}
+
+/// Bewohner eines Spielers, wie im Vorrat angezeigt.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PeopleState {
+    /// Plätze in allen Häusern.
+    pub housing: u32,
+    /// So viele Arbeiter brauchen alle Betriebe, Träger und Karren zusammen.
+    pub needed: u32,
+    /// So viele davon haben eine Wohnung und arbeiten.
+    pub working: u32,
+    /// Bei der letzten Mahlzeit gab es nicht genug Essen.
+    pub hungry: bool,
 }
 
 impl Default for MovementDef {
@@ -512,6 +559,8 @@ pub enum BuildingStatus {
     NoResource,
     /// Lager des Betriebs voll, das Ergebnis passt nicht hinein (Träger fehlen?).
     StorageFull,
+    /// Keine Wohnung frei für die Arbeiter: mehr Häuser bauen.
+    NoWorkers,
 }
 
 /// Ein Gebäude auf der Karte. Es belegt die Felder (x, y) bis (x + w - 1, y + h - 1).

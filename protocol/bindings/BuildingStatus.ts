@@ -3,4 +3,4 @@
 /**
  * Was ein Betrieb gerade tut.
  */
-export type BuildingStatus = "idle" | "working" | "paused" | "missing_input" | "no_resource" | "storage_full";
+export type BuildingStatus = "idle" | "working" | "paused" | "missing_input" | "no_resource" | "storage_full" | "no_workers";
