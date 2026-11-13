@@ -164,6 +164,10 @@ impl World {
                 return Err(Text::new("error.recipe_locked"));
             }
         }
+        let goods = &self.economy.def.goods;
+        if settings.stores.iter().flatten().chain(settings.keep_in_stock.iter().map(|g| &g.good)).any(|g| !goods.contains(g)) {
+            return Err(Text::new("error.unknown_good"));
+        }
         if b.settings.recipe != settings.recipe {
             // Rezept gewechselt: laufender Durchlauf verfällt (Eingänge sind verbraucht).
             self.work.remove(&id);

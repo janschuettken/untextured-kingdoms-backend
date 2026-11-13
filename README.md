@@ -42,7 +42,10 @@ Transport (`server/src/world/transport.rs`): Der gemeinsame Vorrat liegt in Berg
 Dort wohnen Träger (`spawns`), der Wagenschuppen stellt einen Karren. Träger holen fertige Waren aus den Betrieben
 ins nächste Lager und bringen fehlende Eingänge hin, wenn der Betrieb Lieferungen annimmt. Der Karren fährt erst ab
 `cart_min_load` Waren los, lädt viel und ist schneller; solange er frei ist, lassen die Träger so große Ladungen für
-ihn liegen. Träger und Karren nehmen keine Befehle an und weichen neuen Gebäuden aus. Bauen bezahlt man vorerst
+ihn liegen. Lager lassen sich auf bestimmte Waren beschränken (`stores`), dann bringen Träger nur diese dorthin. Jeder Betrieb
+kann je Eingang einen Mindestbestand im Vorrat festlegen (`keep_in_stock`): geliefert wird nur, was darüber liegt.
+Der Karren fährt nur Betriebe im Umkreis seines Schuppens an (`service_radius`) und sammelt bei mehreren gleichen
+Betrieben nacheinander ein, wenn einer allein nicht genug hat. Träger und Karren nehmen keine Befehle an und weichen neuen Gebäuden aus. Bauen bezahlt man vorerst
 direkt aus dem Vorrat.
 
 Texte: Der Server schickt nie fertige Sätze, sondern Schlüssel mit Platzhaltern (`Text { key, args }`, z. B.

@@ -86,6 +86,7 @@
       "w": 4,
       "h": 4,
       "max_hp": 500,
+      "service_radius": 40,
       "spawns": [{"kind": "cart", "count": 1}],
       "levels": [
         {"cost": [{"good": "wood", "amount": 30}, {"good": "boards", "amount": 20}], "recipes": []}

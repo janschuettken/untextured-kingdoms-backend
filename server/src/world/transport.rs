@@ -30,13 +30,24 @@ const FAIL_WAIT: f32 = 3.0;
 /// So nah (Felder vom Gebäuderand) muss ein Träger kommen, um zu laden.
 const REACH: f32 = 1.6;
 
+/// Höchstens so viele Betriebe fährt ein Karren auf einer Sammelfahrt an.
+const TOUR_STOPS: usize = 4;
+
 #[derive(Debug, Clone, Copy)]
 pub struct Job {
     kind: JobKind,
     good: Good,
     amount: u32,
     stage: Stage,
+    /// Sammelfahrt: weitere Betriebe (Id, Menge), die danach noch angefahren
+    /// werden. Id 0 = leer.
+    rest: [(u32, u32); TOUR_STOPS - 1],
 }
+
+/// Für Sammelfahrten: (Art, Ware) → Betriebe als (Abstand, Id, Menge).
+type Groups = HashMap<(protocol::BuildingKind, Good), Vec<(f32, u32, u32)>>;
+
+const NO_REST: [(u32, u32); TOUR_STOPS - 1] = [(0, 0); TOUR_STOPS - 1];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum JobKind {
@@ -69,7 +80,10 @@ impl Reserved {
     fn add(&mut self, owner: u32, job: &Job) {
         match (job.kind, job.stage) {
             (JobKind::Pickup { from }, Stage::Load(_)) => {
-                *self.pickup.entry((from, job.good)).or_default() += job.amount
+                *self.pickup.entry((from, job.good)).or_default() += job.amount;
+                for &(id, n) in job.rest.iter().filter(|r| r.0 != 0) {
+                    *self.pickup.entry((id, job.good)).or_default() += n;
+                }
             }
             (JobKind::Supply { to }, stage) => {
                 *self.incoming.entry((to, job.good)).or_default() += job.amount;
@@ -84,6 +98,22 @@ impl Reserved {
     fn get(map: &HashMap<(u32, Good), u32>, key: (u32, Good)) -> u32 {
         map.get(&key).copied().unwrap_or(0)
     }
+}
+
+/// Lagert dieses Lager die Ware? Ohne Auswahl lagert es alles.
+fn stores(b: &BuildingState, good: Good) -> bool {
+    b.settings.stores.as_ref().is_none_or(|s| s.contains(&good))
+}
+
+fn center(b: &BuildingState) -> (f32, f32) {
+    (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0)
+}
+
+fn within(area: Option<((f32, f32), f32)>, b: &BuildingState) -> bool {
+    area.is_none_or(|(c, r)| {
+        let p = center(b);
+        r <= 0.0 || ((p.0 - c.0).powi(2) + (p.1 - c.1).powi(2)).sqrt() <= r
+    })
 }
 
 /// Abstand eines Punktes zum Rechteck des Gebäudes (0 = darin).
@@ -144,13 +174,20 @@ impl World {
         self.economy.building(b.kind).is_some_and(|d| d.hub)
     }
 
-    /// Nächstes eigenes Lager zu einem Punkt.
-    fn nearest_hub(&self, owner: u32, p: (f32, f32)) -> Option<u32> {
+    /// Nächstes eigenes Lager zu einem Punkt, das diese Ware lagert.
+    fn nearest_hub(&self, owner: u32, p: (f32, f32), good: Good) -> Option<u32> {
         self.buildings
             .iter()
-            .filter(|b| b.owner == owner && self.is_hub(b))
+            .filter(|b| b.owner == owner && self.is_hub(b) && stores(b, good))
             .min_by(|a, b| dist_to(a, p).total_cmp(&dist_to(b, p)))
             .map(|b| b.id)
+    }
+
+    /// Mittelpunkt und Reichweite des Wagenschuppens eines Karrens (0 = überall).
+    fn service_area(&self, home: Option<u32>) -> Option<((f32, f32), f32)> {
+        let b = self.buildings.iter().find(|b| Some(b.id) == home)?;
+        let r = self.economy.building(b.kind).map_or(0, |d| d.service_radius);
+        Some((center(b), r as f32))
     }
 
     /// Bester Auftrag für eine freie Einheit: der nächste, den sie erledigen kann.
@@ -159,84 +196,113 @@ impl World {
         let owner = u.owner;
         let cap = self.capacity(u.kind);
         let cart = u.kind == UnitKind::Cart;
-        let min_load = if cart {
-            self.economy.def.transport.cart_min_load
-        } else {
-            1
-        };
-        let hub = self.nearest_hub(owner, u.pos)?;
-        let stock = self.stocks.get(&owner)?;
-        // Große Ladungen bleiben für einen freien Karren liegen.
         let cart_min = self.economy.def.transport.cart_min_load;
-        let cart_free = !cart
-            && self.units.iter().any(|c| c.owner == owner && c.kind == UnitKind::Cart && c.job.is_none());
+        let min_load = if cart { cart_min } else { 1 };
+        let stock = self.stocks.get(&owner)?;
+        // Karren fahren nur im Umkreis ihres Schuppens.
+        let area = if cart { self.service_area(u.home) } else { None };
+        // Große Ladungen lassen Träger für einen freien Karren liegen, der dort hinkommt.
+        let free_carts: Vec<_> = if cart {
+            Vec::new()
+        } else {
+            self.units
+                .iter()
+                .filter(|c| c.owner == owner && c.kind == UnitKind::Cart && c.job.is_none())
+                .map(|c| self.service_area(c.home))
+                .collect()
+        };
         let mut best: Option<(f32, Job)> = None;
-        let mut offer = |d: f32, job: Job| {
+        let offer = |best: &mut Option<(f32, Job)>, d: f32, job: Job| {
             if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
-                best = Some((d, job));
+                *best = Some((d, job));
             }
         };
+        // Für Sammelfahrten: gleiche Betriebe mit derselben Ware.
+        let mut groups: Groups = HashMap::new();
         for b in self.buildings.iter().filter(|b| b.owner == owner) {
-            let Some(inv) = self.inventories.get(&b.id) else {
+            let Some(inv) = self.inventories.get(&b.id) else { continue };
+            if cart && !within(area, b) {
                 continue;
-            };
-            let inputs: &[GoodAmount] = b
-                .settings
-                .recipe
-                .as_ref()
-                .and_then(|r| self.economy.recipe(r))
-                .map_or(&[], |r| &r.inputs);
+            }
+            let inputs: &[GoodAmount] =
+                b.settings.recipe.as_ref().and_then(|r| self.economy.recipe(r)).map_or(&[], |r| &r.inputs);
             let d = dist_to(b, u.pos);
-            // Abholen: alles, was kein Eingang ist.
+            // Abholen: alles, was kein Eingang ist, wenn ein Lager es nimmt.
             for g in inv.state().goods {
-                if inputs.iter().any(|i| i.good == g.good) {
+                if inputs.iter().any(|i| i.good == g.good) || self.nearest_hub(owner, u.pos, g.good).is_none() {
                     continue;
                 }
-                let free = g
-                    .amount
-                    .saturating_sub(Reserved::get(&reserved.pickup, (b.id, g.good)));
+                let free = g.amount.saturating_sub(Reserved::get(&reserved.pickup, (b.id, g.good)));
                 let room = stock.capacity.saturating_sub(stock.amount(g.good));
                 let amount = free.min(cap).min(room);
-                if cart_free && free >= cart_min {
+                if free >= cart_min && free_carts.iter().any(|a| within(*a, b)) {
                     continue;
                 }
+                if cart && amount > 0 {
+                    groups.entry((b.kind, g.good)).or_default().push((d, b.id, amount));
+                }
                 if amount >= min_load {
-                    offer(
-                        d,
-                        Job {
-                            kind: JobKind::Pickup { from: b.id },
-                            good: g.good,
-                            amount,
-                            stage: Stage::Load(b.id),
-                        },
-                    );
+                    let job = Job {
+                        kind: JobKind::Pickup { from: b.id },
+                        good: g.good,
+                        amount,
+                        stage: Stage::Load(b.id),
+                        rest: NO_REST,
+                    };
+                    offer(&mut best, d, job);
                 }
             }
-            // Beliefern: Eingänge für zwei Durchläufe.
+            // Beliefern: Eingänge für zwei Durchläufe, aber nicht unter den Mindestbestand.
             if !b.settings.accept_deliveries || b.settings.paused {
                 continue;
             }
             for i in inputs {
+                let Some(hub) = self.nearest_hub(owner, u.pos, i.good) else { continue };
                 let want = (i.amount * 2).min(inv.capacity);
                 let have = inv.amount(i.good) + Reserved::get(&reserved.incoming, (b.id, i.good));
+                let keep = b.settings.keep_in_stock.iter().find(|g| g.good == i.good).map_or(0, |g| g.amount);
                 let there = stock
                     .amount(i.good)
-                    .saturating_sub(Reserved::get(&reserved.central, (owner, i.good)));
+                    .saturating_sub(Reserved::get(&reserved.central, (owner, i.good)))
+                    .saturating_sub(keep);
                 let amount = want.saturating_sub(have).min(cap).min(there);
                 if amount >= min_load {
                     // Erst zum Lager, dann zum Betrieb: Weg über das Lager zählt.
-                    let via = index
-                        .get(&hub)
-                        .map_or(0.0, |&h| dist_to(&self.buildings[h], u.pos));
-                    offer(
-                        via + d,
-                        Job {
-                            kind: JobKind::Supply { to: b.id },
-                            good: i.good,
-                            amount,
-                            stage: Stage::Load(hub),
-                        },
-                    );
+                    let via = index.get(&hub).map_or(0.0, |&h| dist_to(&self.buildings[h], u.pos));
+                    let job = Job {
+                        kind: JobKind::Supply { to: b.id },
+                        good: i.good,
+                        amount,
+                        stage: Stage::Load(hub),
+                        rest: NO_REST,
+                    };
+                    offer(&mut best, via + d, job);
+                }
+            }
+        }
+        // Karren: reicht ein Betrieb allein nicht, mehrere gleiche nacheinander anfahren.
+        if cart && best.is_none() {
+            for ((_, good), mut list) in groups {
+                list.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let room = stock.capacity.saturating_sub(stock.amount(good)).min(cap);
+                let mut stops: Vec<(u32, u32)> = Vec::new();
+                let mut total = 0;
+                for &(_, id, n) in list.iter().take(TOUR_STOPS) {
+                    let n = n.min(room - total);
+                    if n == 0 {
+                        break;
+                    }
+                    stops.push((id, n));
+                    total += n;
+                }
+                if total >= cart_min && stops.len() > 1 {
+                    let mut rest = NO_REST;
+                    for (slot, &stop) in rest.iter_mut().zip(&stops[1..]) {
+                        *slot = stop;
+                    }
+                    let (first, n) = stops[0];
+                    let job = Job { kind: JobKind::Pickup { from: first }, good, amount: n, stage: Stage::Load(first), rest };
+                    offer(&mut best, list[0].0, job);
                 }
             }
         }
@@ -289,26 +355,31 @@ impl World {
                         n
                     }
                 };
-                if taken == 0 {
+                let carried = self.units[k].carrying.map_or(0, |c| c.amount) + taken;
+                if carried == 0 {
                     self.units[k].job = None;
                     return;
                 }
-                self.units[k].carrying = Some(GoodAmount {
-                    good: job.good,
-                    amount: taken,
-                });
+                self.units[k].carrying = Some(GoodAmount { good: job.good, amount: carried });
+                // Sammelfahrt: weiter zum nächsten Betrieb.
+                if let (JobKind::Pickup { .. }, (next, n)) = (job.kind, job.rest[0]) {
+                    if next != 0 {
+                        let mut rest = NO_REST;
+                        rest[..TOUR_STOPS - 2].copy_from_slice(&job.rest[1..]);
+                        self.units[k].job = Some(Job { kind: JobKind::Pickup { from: next }, amount: n, stage: Stage::Load(next), rest, ..job });
+                        if self.route(k, next, index) {
+                            return;
+                        }
+                    }
+                }
                 let dest = match job.kind {
-                    JobKind::Pickup { .. } => self.nearest_hub(owner, self.units[k].pos),
+                    JobKind::Pickup { .. } => self.nearest_hub(owner, self.units[k].pos, job.good),
                     JobKind::Supply { to } => Some(to),
                 };
                 let Some(dest) = dest else {
                     return self.fail(k, index);
                 };
-                self.units[k].job = Some(Job {
-                    amount: taken,
-                    stage: Stage::Unload(dest),
-                    ..job
-                });
+                self.units[k].job = Some(Job { amount: carried, stage: Stage::Unload(dest), rest: NO_REST, ..job });
                 if !self.route(k, dest, index) {
                     self.fail(k, index);
                 }
@@ -362,12 +433,13 @@ impl World {
             return;
         };
         let u = &self.units[k];
-        let hub = self.nearest_hub(u.owner, u.pos);
+        let hub = self.nearest_hub(u.owner, u.pos, load.good);
         let job = hub.map(|h| Job {
             kind: JobKind::Pickup { from: 0 },
             good: load.good,
             amount: load.amount,
             stage: Stage::Unload(h),
+            rest: NO_REST,
         });
         self.units[k].job = job;
         if !hub.is_some_and(|h| self.route(k, h, index)) {
@@ -654,6 +726,75 @@ mod tests {
         w.configure(1, orchard.id, s).unwrap();
         run(&mut w, 30.0);
         assert_eq!(local(&w, orchard.id, Good::Fruit), min - 1);
+    }
+
+    fn set_fruit(w: &mut World, id: u32, n: u32) {
+        let inv = w.inventories.get_mut(&id).unwrap();
+        let have = inv.amount(Good::Fruit);
+        inv.take_all(&[GoodAmount { good: Good::Fruit, amount: have }]);
+        inv.add(Good::Fruit, n);
+    }
+
+    fn pause(w: &mut World, id: u32) {
+        let mut s = w.buildings.iter().find(|b| b.id == id).unwrap().settings.clone();
+        s.paused = true;
+        w.configure(1, id, s).unwrap();
+    }
+
+    #[test]
+    fn lager_nimmt_nur_gewaehlte_waren() {
+        let mut w = flat(40, 20);
+        let keep = w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        let mut s = keep.settings.clone();
+        s.stores = Some(vec![Good::Wood]);
+        w.configure(1, keep.id, s).unwrap();
+        let orchard = w.place_building(1, BuildingKind::Orchard, 20, 2).unwrap();
+        pause(&mut w, orchard.id);
+        set_fruit(&mut w, orchard.id, 4);
+        run(&mut w, 30.0);
+        assert_eq!(local(&w, orchard.id, Good::Fruit), 4, "kein Lager nimmt Obst");
+        w.place_building(1, BuildingKind::Storehouse, 30, 12).unwrap();
+        run(&mut w, 40.0);
+        assert_eq!(local(&w, orchard.id, Good::Fruit), 0, "jetzt ins Vorratslager");
+    }
+
+    #[test]
+    fn mindestbestand_bleibt_im_vorrat() {
+        let mut w = flat(40, 20);
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        let saw = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap();
+        let wood = central(&w, Good::Wood);
+        let mut s = saw.settings.clone();
+        s.keep_in_stock = vec![GoodAmount { good: Good::Wood, amount: wood - 2 }];
+        w.configure(1, saw.id, s).unwrap();
+        run(&mut w, 40.0);
+        assert_eq!(central(&w, Good::Wood), wood - 2, "nur die 2 über dem Mindestbestand");
+    }
+
+    #[test]
+    fn karren_sammelt_bei_mehreren_und_bleibt_im_umkreis() {
+        let mut w = flat(120, 30);
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.units.retain(|u| u.kind != UnitKind::Carrier);
+        w.place_building(1, BuildingKind::CartShed, 12, 2).unwrap();
+        let a = w.place_building(1, BuildingKind::Orchard, 24, 2).unwrap();
+        let b = w.place_building(1, BuildingKind::Orchard, 32, 2).unwrap();
+        // Weit außerhalb des Umkreises (40 Felder): wird nie angefahren.
+        let far = w.place_building(1, BuildingKind::Orchard, 100, 2).unwrap();
+        for id in [a.id, b.id, far.id] {
+            pause(&mut w, id);
+        }
+        set_fruit(&mut w, a.id, 5);
+        set_fruit(&mut w, b.id, 5);
+        set_fruit(&mut w, far.id, 12);
+        let mut most = 0;
+        for _ in 0..20 * 90 {
+            w.step(0.05);
+            let cart = w.units.iter().find(|u| u.kind == UnitKind::Cart).unwrap();
+            most = most.max(cart.carrying.map_or(0, |g| g.amount));
+        }
+        assert_eq!(most, 10, "beide Plantagen auf einer Fahrt");
+        assert_eq!(local(&w, far.id, Good::Fruit), 12);
     }
 
     #[test]

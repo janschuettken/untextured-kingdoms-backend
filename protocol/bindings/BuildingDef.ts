@@ -35,6 +35,10 @@ gather_radius: number,
  */
 releases_as: ResourceKind | null, 
 /**
+ * Wagenschuppen: der Karren fährt nur Betriebe in diesem Umkreis (Felder) an. 0 = überall.
+ */
+service_radius: number, 
+/**
  * Mauern und Türme haben keinen Eingang; alle anderen ein Feld davor, das frei bleiben muss.
  */
 no_entrance: boolean, 
