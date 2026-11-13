@@ -166,6 +166,10 @@ impl World {
         };
         let hub = self.nearest_hub(owner, u.pos)?;
         let stock = self.stocks.get(&owner)?;
+        // Große Ladungen bleiben für einen freien Karren liegen.
+        let cart_min = self.economy.def.transport.cart_min_load;
+        let cart_free = !cart
+            && self.units.iter().any(|c| c.owner == owner && c.kind == UnitKind::Cart && c.job.is_none());
         let mut best: Option<(f32, Job)> = None;
         let mut offer = |d: f32, job: Job| {
             if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
@@ -193,6 +197,9 @@ impl World {
                     .saturating_sub(Reserved::get(&reserved.pickup, (b.id, g.good)));
                 let room = stock.capacity.saturating_sub(stock.amount(g.good));
                 let amount = free.min(cap).min(room);
+                if cart_free && free >= cart_min {
+                    continue;
+                }
                 if amount >= min_load {
                     offer(
                         d,
@@ -612,18 +619,21 @@ mod tests {
                 .status,
             BuildingStatus::StorageFull
         );
-        // Lager ohne Träger (nur Karren): Bergfried kommt dazu, Träger gibt es dann auch.
+        // Bergfried mit Trägern und ein Wagenschuppen: Die große Ladung lassen
+        // die Träger für den Karren liegen, er holt alles auf einmal.
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
-        w.units.retain(|u| u.kind != UnitKind::Carrier);
         w.place_building(1, BuildingKind::CartShed, 10, 2).unwrap();
         let fruit = central(&w, Good::Fruit);
-        run(&mut w, 40.0);
-        assert_eq!(
-            central(&w, Good::Fruit),
-            fruit + cap,
-            "Karren holt alles auf einmal"
-        );
-        assert_eq!(local(&w, orchard.id, Good::Fruit) % 2, 0);
+        let mut cart_load = 0;
+        for _ in 0..20 * 40 {
+            w.step(0.05);
+            let cart = w.units.iter().find(|u| u.kind == UnitKind::Cart).unwrap();
+            cart_load = cart_load.max(cart.carrying.map_or(0, |g| g.amount));
+        }
+        assert_eq!(cart_load, cap, "Karren holt alles auf einmal");
+        assert!(central(&w, Good::Fruit) >= fruit + cap);
+        // Ohne Träger: Kleinkram lässt auch der Karren liegen.
+        w.units.retain(|u| u.kind != UnitKind::Carrier);
         // Wenig liegt herum: dafür fährt der Karren nicht.
         let min = w.economy.def.transport.cart_min_load;
         let left = local(&w, orchard.id, Good::Fruit);
