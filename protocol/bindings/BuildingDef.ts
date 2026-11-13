@@ -35,6 +35,10 @@ gather_radius: number,
  */
 releases_as: ResourceKind | null, 
 /**
+ * Mauern und Türme haben keinen Eingang; alle anderen ein Feld davor, das frei bleiben muss.
+ */
+no_entrance: boolean, 
+/**
  * Bergfried und Vorratslager: hier liegt der gemeinsame Vorrat, Träger liefern hierhin.
  */
 hub: boolean, 

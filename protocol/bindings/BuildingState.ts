@@ -13,6 +13,14 @@ export type BuildingState = { id: number, owner: number, kind: BuildingKind, x: 
  */
 level: number, settings: BuildingSettings, status: BuildingStatus, 
 /**
+ * Vierteldrehungen wie bei `place_building`. `w`/`h` sind schon gedreht.
+ */
+rotation: number, 
+/**
+ * Feld vor dem Eingang: hier holen und bringen Träger. `None` bei Mauern und Türmen.
+ */
+entrance: [number, number] | null, 
+/**
  * Waren im Gebäude selbst: Eingänge für den nächsten Durchlauf und
  * Ergebnisse, die noch abgeholt werden. Leer bei Lagern (die zählen zum Vorrat).
  */
