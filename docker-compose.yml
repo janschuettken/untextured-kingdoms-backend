@@ -1,0 +1,28 @@
+# Startet das komplette Spiel. Erwartet das Frontend-Repo direkt daneben:
+#   ./untextured-kingdoms-backend   (dieses Repo)
+#   ./untextured-kingdoms-frontend
+services:
+  server:
+    build: .
+    restart: unless-stopped
+    environment:
+      RUST_LOG: info
+
+  web:
+    build: ../untextured-kingdoms-frontend
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
