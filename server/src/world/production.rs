@@ -1,14 +1,11 @@
 //! Produktion: Betriebe arbeiten ihr gewähltes Rezept ab.
 //!
-//! Ein Durchlauf nimmt beim Start die Eingangswaren aus dem Lager des
-//! Spielers, läuft `seconds` lang und legt dann die Ergebnisse ins Lager.
+//! Ein Durchlauf nimmt beim Start die Eingangswaren aus dem eigenen Lager des
+//! Betriebs, läuft `seconds` lang und legt dann die Ergebnisse dort ab.
+//! Hin und her tragen die Träger und Karren (siehe `transport.rs`).
 //! Abbaubetriebe (Holzfäller, Steinbruch, Mine) brauchen zusätzlich ein
 //! Rohstoff-Feld in Reichweite und verbrauchen es: Ist ein Waldfeld leer,
 //! verschwindet der Wald und Einheiten können dort wieder laufen.
-//!
-//! Heute liegt alles in einem gemeinsamen Lager je Spieler. Mit dem Transport
-//! kommen später Lager je Gebäude und Träger dazu; `accept_deliveries` in
-//! den Einstellungen ist dafür schon da.
 
 use protocol::{BuildingSettings, BuildingState, BuildingStatus, ResourceKind, ServerMsg, Text};
 
@@ -28,14 +25,14 @@ impl World {
             let status = self.step_building(i, dt);
             if self.buildings[i].status != status {
                 self.buildings[i].status = status;
-                self.events.push(ServerMsg::BuildingChanged { building: self.buildings[i].clone() });
+                self.dirty_buildings.insert(self.buildings[i].id);
             }
         }
     }
 
     fn step_building(&mut self, i: usize, dt: f32) -> BuildingStatus {
         let b = &self.buildings[i];
-        let (id, owner, kind) = (b.id, b.owner, b.kind);
+        let (id, kind) = (b.id, b.kind);
         if b.settings.paused {
             return BuildingStatus::Paused;
         }
@@ -53,12 +50,12 @@ impl World {
                 if gathers && self.gather_tile(i).is_none() {
                     return BuildingStatus::NoResource;
                 }
-                let Some(stock) = self.stocks.get_mut(&owner) else { return BuildingStatus::Idle };
-                if !stock.take_all(&recipe.inputs) {
+                let Some(inv) = self.inventories.get_mut(&id) else { return BuildingStatus::Idle };
+                if !inv.take_all(&recipe.inputs) {
                     return BuildingStatus::MissingInput;
                 }
                 if !recipe.inputs.is_empty() {
-                    self.dirty_stocks.insert(owner);
+                    self.dirty_buildings.insert(id);
                 }
                 0.0
             }
@@ -69,15 +66,16 @@ impl World {
             return BuildingStatus::Working;
         }
 
-        // Fertig: Ergebnis einlagern, wenn alles hineinpasst.
-        let stock = self.stocks.get_mut(&owner).expect("Spieler hat ein Lager");
-        if recipe.outputs.iter().any(|o| stock.amount(o.good) + o.amount > stock.capacity) {
+        // Fertig: Ergebnis ins eigene Lager, wenn alles hineinpasst. Abholen
+        // ist Sache der Träger.
+        let inv = self.inventories.get_mut(&id).expect("Betrieb hat ein Lager");
+        if recipe.outputs.iter().any(|o| inv.amount(o.good) + o.amount > inv.capacity) {
             return BuildingStatus::StorageFull;
         }
         for o in &recipe.outputs {
-            stock.add(o.good, o.amount);
+            inv.add(o.good, o.amount);
         }
-        self.dirty_stocks.insert(owner);
+        self.dirty_buildings.insert(id);
         if gathers {
             if let Some(tile) = self.gather_tile(i) {
                 self.deplete(tile);
@@ -234,14 +232,15 @@ mod tests {
 
     #[test]
     fn holzfaeller_holzt_wald_ab() {
-        let mut w = world(&map(20, 8, (0, 7), &[(15, 0, 1, 1, 'W')]));
+        let mut w = world(&map(30, 10, (0, 9), &[(15, 0, 1, 1, 'W')]));
+        w.place_building(1, BuildingKind::Keep, 20, 2).unwrap();
         let before = w.stocks[&1].amount(Good::Wood);
         let b = w.place_building(1, BuildingKind::Woodcutter, 2, 2).unwrap();
         let wood_after_build = w.stocks[&1].amount(Good::Wood);
         assert_eq!(wood_after_build, before - 20);
         assert!(!w.map.nav.is_open(15, 0), "Wald blockiert");
-        // Ein Waldfeld gibt 20 Holz, ein Durchlauf dauert 6 s.
-        run(&mut w, 20.0 * 6.0 + 1.0);
+        // Ein Waldfeld gibt 20 Holz, ein Durchlauf dauert 6 s; Träger bringen es zum Bergfried.
+        run(&mut w, 20.0 * 6.0 + 20.0);
         assert_eq!(w.stocks[&1].amount(Good::Wood), wood_after_build + 20);
         assert_eq!(w.map.resources[15], ResourceKind::None);
         assert!(w.map.nav.is_open(15, 0), "abgeholzt: wieder begehbar");
@@ -253,25 +252,27 @@ mod tests {
 
     #[test]
     fn werkstatt_braucht_eingaenge_und_rezept_einstellbar() {
-        let mut w = world(&map(10, 6, (0, 5), &[]));
+        let mut w = world(&map(20, 10, (0, 9), &[]));
+        w.place_building(1, BuildingKind::Keep, 10, 0).unwrap();
         let b = w.place_building(1, BuildingKind::Bowyer, 2, 0).unwrap();
         assert_eq!(b.settings.recipe.as_deref(), Some("make_longbow"));
         // Armbrust erst ab Stufe 2.
         let mut s = b.settings.clone();
         s.recipe = Some("make_crossbow".into());
         assert_eq!(w.configure(1, b.id, s.clone()).unwrap_err().key, "error.recipe_locked");
-        run(&mut w, 10.5);
-        assert_eq!(w.stocks[&1].amount(Good::Longbow), 1);
-        // Ohne Holz bleibt er stehen.
+        run(&mut w, 25.0);
+        assert!(w.stocks[&1].amount(Good::Longbow) >= 1);
+        // Ohne Holz bleibt er stehen, sobald sein eigener Vorrat verbraucht ist.
         let wood = w.stocks[&1].amount(Good::Wood);
         w.stocks.get_mut(&1).unwrap().take_all(&[GoodAmount { good: Good::Wood, amount: wood }]);
-        run(&mut w, 11.0);
-        assert_eq!(w.buildings[0].status, BuildingStatus::MissingInput);
+        run(&mut w, 40.0);
+        let i = w.buildings.iter().position(|x| x.id == b.id).unwrap();
+        assert_eq!(w.buildings[i].status, BuildingStatus::MissingInput);
         s.recipe = Some("make_longbow".into());
         s.paused = true;
         w.configure(1, b.id, s).unwrap();
         run(&mut w, 0.1);
-        assert_eq!(w.buildings[0].status, BuildingStatus::Paused);
+        assert_eq!(w.buildings[i].status, BuildingStatus::Paused);
     }
 
     #[test]
@@ -293,7 +294,7 @@ mod tests {
         let mut w = world(&map(14, 10, (13, 9), &[]));
         let b = w.place_building(1, BuildingKind::Orchard, 0, 0).unwrap();
         run(&mut w, 26.0);
-        assert_eq!(w.stocks[&1].amount(Good::Fruit), 2);
+        assert_eq!(w.inventories[&b.id].amount(Good::Fruit), 2, "kein Lager: Obst bleibt im Betrieb");
         assert_eq!(w.release_trees(1, b.id + 99).unwrap_err().key, "error.no_building");
         w.release_trees(1, b.id).unwrap();
         assert!(w.buildings.is_empty());

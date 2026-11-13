@@ -185,6 +185,10 @@ pub struct MapCheck {
 #[ts(export)]
 pub enum UnitKind {
     King,
+    /// Träger: trägt wenig, wohnt im Bergfried oder Vorratslager.
+    Carrier,
+    /// Karren aus dem Wagenschuppen: fährt viel auf einmal.
+    Cart,
 }
 
 /// Zustand einer Einheit in einem Tick.
@@ -197,6 +201,9 @@ pub struct UnitState {
     pub x: f32,
     pub y: f32,
     pub moving: bool,
+    /// Was ein Träger oder Karren gerade transportiert.
+    #[serde(default)]
+    pub carrying: Option<Good>,
 }
 
 /// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.
@@ -296,6 +303,8 @@ pub enum BuildingKind {
     Orchard,
     PigFarm,
     CattleFarm,
+    /// Wagenschuppen: stellt einen Karren für große Ladungen.
+    CartShed,
 }
 
 /// Gruppe im Baumenü.
@@ -355,8 +364,36 @@ pub struct BuildingDef {
     /// Aufgeben hinterlässt diesen Rohstoff auf der Fläche (Obstplantage → Wald).
     #[serde(default)]
     pub releases_as: Option<ResourceKind>,
+    /// Bergfried und Vorratslager: hier liegt der gemeinsame Vorrat, Träger liefern hierhin.
+    #[serde(default)]
+    pub hub: bool,
+    /// Einheiten, die zum Gebäude gehören (Träger, Karren).
+    #[serde(default)]
+    pub spawns: Vec<UnitCount>,
     /// Mindestens eine Stufe.
     pub levels: Vec<BuildingLevel>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UnitCount {
+    pub kind: UnitKind,
+    pub count: u32,
+}
+
+/// Werte für Träger und Karren.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TransportDef {
+    pub carrier_capacity: u32,
+    /// Felder pro Sekunde.
+    pub carrier_speed: f32,
+    pub cart_capacity: u32,
+    pub cart_speed: f32,
+    /// Der Karren fährt erst ab dieser Menge los (sonst lohnt es sich nicht).
+    pub cart_min_load: u32,
+    /// So viel einer Ware passt in das Lager eines Betriebs.
+    pub building_capacity: u32,
 }
 
 /// Ein Rezept: was ein Betrieb aus welchen Waren macht.
@@ -390,6 +427,7 @@ pub struct EconomyDef {
     pub resource_amounts: Vec<ResourceAmount>,
     /// So viel schneller arbeiten Höfe auf besonders fruchtbarem Boden (anteilig).
     pub fertile_bonus_percent: u32,
+    pub transport: TransportDef,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
@@ -406,7 +444,8 @@ pub struct BuildingSettings {
     /// Welches freigeschaltete Rezept läuft. `None` = nichts herstellen.
     pub recipe: Option<String>,
     pub paused: bool,
-    /// Darf der Transport hier Waren abliefern? (wirkt, sobald es Transport gibt)
+    /// Darf der Transport hier Eingangswaren abliefern? Aus = der Betrieb
+    /// arbeitet nur mit dem, was schon in seinem Lager liegt.
     pub accept_deliveries: bool,
 }
 
@@ -423,7 +462,7 @@ pub enum BuildingStatus {
     MissingInput,
     /// Kein Rohstoff mehr in Reichweite (Wald abgeholzt, Stein erschöpft).
     NoResource,
-    /// Lager voll, das Ergebnis passt nicht hinein.
+    /// Lager des Betriebs voll, das Ergebnis passt nicht hinein (Träger fehlen?).
     StorageFull,
 }
 
@@ -443,4 +482,8 @@ pub struct BuildingState {
     pub level: u32,
     pub settings: BuildingSettings,
     pub status: BuildingStatus,
+    /// Waren im Gebäude selbst: Eingänge für den nächsten Durchlauf und
+    /// Ergebnisse, die noch abgeholt werden. Leer bei Lagern (die zählen zum Vorrat).
+    #[serde(default)]
+    pub inventory: Vec<GoodAmount>,
 }

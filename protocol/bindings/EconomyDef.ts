@@ -4,6 +4,7 @@ import type { Good } from "./Good";
 import type { GoodAmount } from "./GoodAmount";
 import type { RecipeDef } from "./RecipeDef";
 import type { ResourceAmount } from "./ResourceAmount";
+import type { TransportDef } from "./TransportDef";
 
 /**
  * Die ganze Wirtschaft als Daten (einzige Quelle: `server/data/economy.json`).
@@ -28,4 +29,4 @@ resource_amounts: Array<ResourceAmount>,
 /**
  * So viel schneller arbeiten Höfe auf besonders fruchtbarem Boden (anteilig).
  */
-fertile_bonus_percent: number, };
+fertile_bonus_percent: number, transport: TransportDef, };

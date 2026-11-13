@@ -43,7 +43,9 @@
       "w": 3,
       "h": 3,
       "max_hp": 900,
-      "levels": [{"cost": [{"good": "wood", "amount": 10}, {"good": "blocks", "amount": 10}], "recipes": []}]
+      "levels": [
+        {"cost": [{"good": "wood", "amount": 10}, {"good": "blocks", "amount": 10}], "recipes": []}
+      ]
     },
     {
       "kind": "keep",
@@ -52,6 +54,8 @@
       "h": 6,
       "max_hp": 3000,
       "max_per_player": 1,
+      "hub": true,
+      "spawns": [{"kind": "carrier", "count": 2}],
       "levels": [
         {
           "cost": [
@@ -69,7 +73,20 @@
       "w": 4,
       "h": 4,
       "max_hp": 600,
+      "hub": true,
+      "spawns": [{"kind": "carrier", "count": 3}],
       "levels": [{"cost": [{"good": "wood", "amount": 40}], "recipes": []}]
+    },
+    {
+      "kind": "cart_shed",
+      "category": "storage",
+      "w": 4,
+      "h": 4,
+      "max_hp": 500,
+      "spawns": [{"kind": "cart", "count": 1}],
+      "levels": [
+        {"cost": [{"good": "wood", "amount": 30}, {"good": "boards", "amount": 20}], "recipes": []}
+      ]
     },
     {
       "kind": "woodcutter",
@@ -443,5 +460,13 @@
     {"resource": "stone", "amount": 60},
     {"resource": "iron", "amount": 40}
   ],
-  "fertile_bonus_percent": 50
+  "fertile_bonus_percent": 50,
+  "transport": {
+    "carrier_capacity": 4,
+    "carrier_speed": 2.5,
+    "cart_capacity": 20,
+    "cart_speed": 3.5,
+    "cart_min_load": 8,
+    "building_capacity": 12
+  }
 }

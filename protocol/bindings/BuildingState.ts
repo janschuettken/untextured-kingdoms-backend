@@ -2,6 +2,7 @@
 import type { BuildingKind } from "./BuildingKind";
 import type { BuildingSettings } from "./BuildingSettings";
 import type { BuildingStatus } from "./BuildingStatus";
+import type { GoodAmount } from "./GoodAmount";
 
 /**
  * Ein Gebäude auf der Karte. Es belegt die Felder (x, y) bis (x + w - 1, y + h - 1).
@@ -10,4 +11,9 @@ export type BuildingState = { id: number, owner: number, kind: BuildingKind, x: 
 /**
  * Ausbaustufe, beginnt bei 1.
  */
-level: number, settings: BuildingSettings, status: BuildingStatus, };
+level: number, settings: BuildingSettings, status: BuildingStatus, 
+/**
+ * Waren im Gebäude selbst: Eingänge für den nächsten Durchlauf und
+ * Ergebnisse, die noch abgeholt werden. Leer bei Lagern (die zählen zum Vorrat).
+ */
+inventory: Array<GoodAmount>, };
