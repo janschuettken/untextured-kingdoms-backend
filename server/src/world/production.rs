@@ -240,7 +240,7 @@ mod tests {
         assert_eq!(wood_after_build, before - 20);
         assert!(!w.map.nav.is_open(15, 0), "Wald blockiert");
         // Ein Waldfeld gibt 20 Holz, ein Durchlauf dauert 6 s; Träger bringen es zum Bergfried.
-        run(&mut w, 20.0 * 6.0 + 20.0);
+        run(&mut w, 20.0 * 6.0 + 40.0);
         assert_eq!(w.stocks[&1].amount(Good::Wood), wood_after_build + 20);
         assert_eq!(w.map.resources[15], ResourceKind::None);
         assert!(w.map.nav.is_open(15, 0), "abgeholzt: wieder begehbar");

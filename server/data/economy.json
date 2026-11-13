@@ -463,9 +463,9 @@
   "fertile_bonus_percent": 50,
   "transport": {
     "carrier_capacity": 4,
-    "carrier_speed": 2.5,
+    "carrier_speed": 1.2,
     "cart_capacity": 20,
-    "cart_speed": 3.5,
+    "cart_speed": 2.0,
     "cart_min_load": 8,
     "building_capacity": 12
   }

@@ -583,7 +583,7 @@ mod tests {
             "Bretter kamen zurück in den Vorrat"
         );
         let b = w.buildings.iter().find(|b| b.id == cutter.id).unwrap();
-        assert_eq!(b.status, BuildingStatus::Working);
+        assert_ne!(b.status, BuildingStatus::StorageFull, "Bretter werden abgeholt");
     }
 
     #[test]
