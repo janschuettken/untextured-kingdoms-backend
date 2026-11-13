@@ -61,6 +61,8 @@ struct AppState {
     ticks: broadcast::Sender<ServerMsg>,
     /// Admin-Token und Ort von economy.json (siehe `admin.rs`).
     admin: admin::Admin,
+    /// Spieltempo in Prozent (100 = normal), vom Admin einstellbar.
+    game_speed: AtomicU32,
 }
 
 #[tokio::main]
@@ -99,6 +101,7 @@ async fn main() {
         players_online: AtomicU32::new(0),
         ticks,
         admin,
+        game_speed: AtomicU32::new(100),
     });
 
     tokio::spawn(game_loop(state.clone()));
@@ -166,7 +169,8 @@ async fn game_loop(state: Arc<AppState>) {
         tick += 1;
         let (units, stocks) = {
             let mut world = state.world.lock().unwrap();
-            world.step(1.0 / TICK_RATE as f32);
+            let speed = state.game_speed.load(Ordering::Relaxed) as f32 / 100.0;
+            world.step(speed / TICK_RATE as f32);
             // Unter dem Lock verschicken, damit neue Clients nichts doppelt oder gar nicht sehen.
             for event in world.take_events() {
                 let _ = state.ticks.send(event);
@@ -234,6 +238,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         buildings,
     };
     let _ = out_tx.send(welcome).await;
+    let _ = out_tx.send(ServerMsg::GameSpeed { percent: state.game_speed.load(Ordering::Relaxed) }).await;
 
     // Ausgehend: direkte Antworten + Ticks an diesen Client schreiben.
     let writer = tokio::spawn(async move {
@@ -317,6 +322,16 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             Ok(ClientMsg::AdminGive { goods }) => {
                 if is_admin {
                     state.world.lock().unwrap().admin_give(player_id, &goods);
+                } else {
+                    let _ = out_tx.try_send(ServerMsg::Rejected { text: protocol::Text::new("admin.denied") });
+                }
+            }
+            Ok(ClientMsg::AdminGameSpeed { percent }) => {
+                if is_admin {
+                    let percent = percent.clamp(25, 800);
+                    state.game_speed.store(percent, Ordering::Relaxed);
+                    let _ = state.ticks.send(ServerMsg::GameSpeed { percent });
+                    info!("Spieltempo {percent} %");
                 } else {
                     let _ = out_tx.try_send(ServerMsg::Rejected { text: protocol::Text::new("admin.denied") });
                 }

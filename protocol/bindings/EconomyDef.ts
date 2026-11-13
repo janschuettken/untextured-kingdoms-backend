@@ -2,6 +2,7 @@
 import type { BuildingDef } from "./BuildingDef";
 import type { Good } from "./Good";
 import type { GoodAmount } from "./GoodAmount";
+import type { MovementDef } from "./MovementDef";
 import type { RecipeDef } from "./RecipeDef";
 import type { ResourceAmount } from "./ResourceAmount";
 import type { TransportDef } from "./TransportDef";
@@ -29,4 +30,4 @@ resource_amounts: Array<ResourceAmount>,
 /**
  * So viel schneller arbeiten Höfe auf besonders fruchtbarem Boden (anteilig).
  */
-fertile_bonus_percent: number, transport: TransportDef, };
+fertile_bonus_percent: number, transport: TransportDef, movement: MovementDef, };

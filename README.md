@@ -158,7 +158,9 @@ Den Token legst du selbst fest, er steht nirgends im Code. Ohne Token ist der Ad
 - Lokal (bash): `ADMIN_TOKEN=dein-geheimes-wort cargo run -p server`
 - Docker: in `.env` die Zeile `ADMIN_TOKEN=...` setzen, dann `docker compose up -d`.
 
-Im Spiel oben rechts auf „Admin“ klicken und den Token eingeben (der Browser merkt ihn sich).
+Im Spiel oben rechts auf „Admin“ klicken und den Token eingeben (der Browser merkt ihn sich). Dort gibt es auch das
+Lauftempo (König, Träger, Karren; wird in `economy.json` gespeichert) und das Spieltempo für alle (25–800 %,
+gilt bis zum Neustart des Servers).
 Gespeichert wird nach `ECONOMY_FILE`, lokal standardmäßig `server/data/economy.json` im Repo: so lassen sich
 gute Werte einfach committen und teilen. Die vorige Fassung bleibt als `economy.json.bak` liegen. In Docker liegt die
 Datei im Volume `game_data` (`/data/economy.json`); fehlt sie, gelten die Werte aus dem Repo.

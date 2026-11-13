@@ -76,8 +76,8 @@ async fn login(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Status
 }
 
 async fn load(State(state): State<Arc<AppState>>) -> Response {
-    let text = state.world.lock().unwrap().economy.to_json();
-    ([(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")], text).into_response()
+    // Vollständig (mit allen Standardwerten), damit der Editor jedes Feld vorfindet.
+    Json(state.world.lock().unwrap().economy.def.clone()).into_response()
 }
 
 async fn save(State(state): State<Arc<AppState>>, headers: HeaderMap, body: String) -> Response {

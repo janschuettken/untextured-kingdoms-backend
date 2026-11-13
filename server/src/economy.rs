@@ -65,6 +65,9 @@ impl Economy {
         if !(t.carrier_speed > 0.0 && t.cart_speed > 0.0 && t.carrier_speed.is_finite() && t.cart_speed.is_finite()) {
             return Err("Transport: Geschwindigkeiten müssen größer als 0 sein".into());
         }
+        if !(def.movement.king_speed > 0.0 && def.movement.king_speed.is_finite()) {
+            return Err("König: Geschwindigkeit muss größer als 0 sein".into());
+        }
         if def.base_capacity == 0 {
             return Err("base_capacity muss größer als 0 sein".into());
         }

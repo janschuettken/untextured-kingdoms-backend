@@ -39,6 +39,8 @@ pub enum ClientMsg {
     AdminLogin { token: String },
     /// Nur Admin: sich selbst Waren ins Lager legen.
     AdminGive { goods: Vec<GoodAmount> },
+    /// Nur Admin: Spieltempo für alle in Prozent (100 = normal, 25 bis 800).
+    AdminGameSpeed { percent: u32 },
     /// Sichtbereich des Clients in Feldern (Rechteck, Ecken eingeschlossen).
     /// Der Server schickt Einheiten nur für diesen Bereich (plus Rand) und
     /// immer die eigenen. Ohne diese Nachricht sieht der Client alles.
@@ -105,6 +107,10 @@ pub enum ServerMsg {
     /// Antwort auf `admin_login`: angenommen oder nicht.
     AdminStatus {
         ok: bool,
+    },
+    /// Spieltempo in Prozent (100 = normal). Kommt beim Verbinden und nach jeder Änderung.
+    GameSpeed {
+        percent: u32,
     },
     /// Die Wirtschaftsdaten wurden im Balancing-Editor geändert und gelten ab sofort.
     EconomyChanged {
@@ -430,6 +436,21 @@ pub struct EconomyDef {
     /// So viel schneller arbeiten Höfe auf besonders fruchtbarem Boden (anteilig).
     pub fertile_bonus_percent: u32,
     pub transport: TransportDef,
+    #[serde(default)]
+    pub movement: MovementDef,
+}
+
+/// Lauftempo der Einheiten, die nicht transportieren (Felder pro Sekunde).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MovementDef {
+    pub king_speed: f32,
+}
+
+impl Default for MovementDef {
+    fn default() -> Self {
+        MovementDef { king_speed: 1.5 }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
