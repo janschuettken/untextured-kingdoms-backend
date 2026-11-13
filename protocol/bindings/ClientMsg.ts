@@ -3,4 +3,4 @@
 /**
  * Nachrichten vom Client an den Server.
  */
-export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", client_time: number, };
+export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", client_time: number, } | { "type": "move_units", unit_ids: Array<number>, x: number, y: number, };

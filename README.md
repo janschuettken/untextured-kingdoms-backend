@@ -13,8 +13,25 @@ Dockerfile          baut das Server-Image
 docker-compose.yml  startet das komplette Spiel (Server + Frontend mit Caddy)
 ```
 
-Aktueller Stand: Der Server erzeugt eine Karte mit Höhenstufen, schickt sie jedem neuen Client
-(`welcome`), sendet 20-mal pro Sekunde einen `tick` und beantwortet `ping` mit `pong`.
+Aktueller Stand: Der Server lädt die Karte aus `server/maps/zwei-burgen.txt`, schickt sie jedem neuen
+Client (`welcome`) und gibt jedem Spieler einen König auf einem Startfeld. Bewegungsbefehle
+(`move_units`) werden serverseitig mit A* über das Navigationsgitter ausgeführt. 20-mal pro Sekunde
+geht ein `tick` mit allen Einheiten an alle Clients.
+
+```
+server/src/map.rs    Karte aus Textdatei lesen: Höhenstufen, Rampen, Wasser, Eckhöhen
+server/src/nav.rs    Navigationsgitter (wer darf wohin) und Wegsuche (A* + Glätten)
+server/src/world.rs  Spielzustand: Einheiten, Befehle, Bewegung pro Tick
+server/maps/         Karten als Text, Legende steht oben in der Datei
+```
+
+## Karten bearbeiten
+
+Karten sind einfache Textdateien, ein Zeichen pro Feld: `0`–`9` Boden auf dieser Höhenstufe,
+`~` Wasser, `> < v ^` Rampe, die in Pfeilrichtung ansteigt. Jeder andere Höhensprung ist eine Klippe,
+über die man nicht laufen kann. `spawn x y` legt Startfelder fest. Rampen werden beim Laden geprüft;
+`cargo test` meldet zum Beispiel, wenn eine Rampe oben nicht an höheren Boden grenzt oder ein Teil der
+Karte nicht erreichbar ist.
 
 ## Ordner nebeneinander
 
