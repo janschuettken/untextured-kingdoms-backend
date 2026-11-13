@@ -27,6 +27,7 @@ Gebäudearten (`building_specs`) und alle stehenden Gebäude, danach nur Änderu
 ```
 server/src/map.rs    Karte aus Textdatei lesen: Höhenstufen, Rampen, Wasser, Eckhöhen
 server/src/nav.rs    Navigationsgitter (wer darf wohin) und Wegsuche (A* + Glätten)
+server/src/maps_api.rs  HTTP-API für den Karteneditor
 server/src/world.rs  Spielzustand: Einheiten, Gebäude, Befehle, Bewegung pro Tick
 server/src/buildings.rs  Gebäudearten mit Größe und Lebenspunkten (Balancing)
 server/maps/         Karten als Text, Legende steht oben in der Datei
@@ -34,11 +35,39 @@ server/maps/         Karten als Text, Legende steht oben in der Datei
 
 ## Karten bearbeiten
 
-Karten sind einfache Textdateien, ein Zeichen pro Feld: `0`–`9` Boden auf dieser Höhenstufe,
-`~` Wasser, `> < v ^` Rampe, die in Pfeilrichtung ansteigt. Jeder andere Höhensprung ist eine Klippe,
-über die man nicht laufen kann. `spawn x y` legt Startfelder fest. Rampen werden beim Laden geprüft;
-`cargo test` meldet zum Beispiel, wenn eine Rampe oben nicht an höheren Boden grenzt oder ein Teil der
-Karte nicht erreichbar ist.
+Am bequemsten mit dem **Karteneditor** im Browser (`/editor.html`, siehe Frontend-README). Er liest und
+schreibt dieselben Textdateien:
+
+```
+# Kommentar
+spawn 10 10
+[terrain]
+0001>>>2
+...
+[resources]
+..WW....
+```
+
+- `[terrain]`, ein Zeichen pro Feld: `0`–`9` Boden auf dieser Höhenstufe, `~` Wasser, `> < v ^` Rampe,
+  die in Pfeilrichtung ansteigt. Jeder andere Höhensprung ist eine Klippe.
+- `[resources]` (optional, gleiche Größe): `.` nichts, `W` Wald, `S` Steinbruch, `E` Eisen, `A` Acker,
+  `F` besonders fruchtbar. Wald, Stein und Eisen blockieren Einheiten, bis sie abgebaut sind.
+- `spawn x y` legt Startfelder fest.
+
+Welche Karte der Server lädt, steuert `MAP=<name>` (ohne `.txt`, Standard `zwei-burgen`), den Ordner
+`MAPS_DIR` (Standard `server/maps`). `cargo test` prüft alle Karten im Ordner.
+
+### Karten-API (für den Editor)
+
+| Methode | Pfad | Zweck |
+| --- | --- | --- |
+| GET | `/api/maps` | Kartennamen und ob Speichern erlaubt ist |
+| GET | `/api/maps/{name}` | Kartendatei als Text |
+| POST | `/api/maps/check` | Text prüfen: fertige Karte, Fehler, Hinweise |
+| PUT | `/api/maps/{name}` | Karte speichern (nur ohne Fehler) |
+
+Speichern ist im Debug-Build (`cargo run`) an und im Release-Build (Docker) aus, damit auf dem
+öffentlichen Server niemand Karten überschreibt. `MAP_EDITOR_SAVE=1` bzw. `0` überschreibt das.
 
 ## Ordner nebeneinander
 

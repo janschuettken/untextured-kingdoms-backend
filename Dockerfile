@@ -11,7 +11,9 @@ RUN cargo build --release -p server
 FROM debian:bookworm-slim
 RUN useradd --system --no-create-home game
 COPY --from=build /src/target/release/server /usr/local/bin/server
+COPY server/maps /usr/local/share/untextured-kingdoms/maps
 USER game
 ENV PORT=8080
+ENV MAPS_DIR=/usr/local/share/untextured-kingdoms/maps
 EXPOSE 8080
 CMD ["server"]

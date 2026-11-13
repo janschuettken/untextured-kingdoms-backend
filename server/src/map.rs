@@ -4,8 +4,23 @@
 //! Wasser), eine logische Höhenstufe und vier Eckhöhen. Rampen steigen
 //! gleichmäßig über ihre ganze Länge an. Überall sonst, wo zwei Felder an
 //! ihrer gemeinsamen Kante unterschiedlich hoch sind, ist eine Klippe.
+//!
+//! Aufbau der Datei:
+//! ```text
+//! # Kommentar
+//! spawn 10 10
+//! [terrain]
+//! 0001>>>2
+//! ...
+//! [resources]        (optional, gleiche Größe wie [terrain])
+//! ..WW....
+//! ```
+//! Ohne Abschnittsüberschriften ist alles `[terrain]` (altes Format).
+//!
+//! [`GameMap::load`] sammelt alle Fehler und liefert trotzdem eine Karte,
+//! damit der Editor sie anzeigen kann. Kaputte Rampen werden dabei zu Boden.
 
-use protocol::{MapInfo, TileKind};
+use protocol::{MapCheck, MapInfo, MapIssue, ResourceKind, TileKind};
 
 use crate::nav::NavGrid;
 
@@ -13,8 +28,12 @@ use crate::nav::NavGrid;
 /// so steigen Rampen dieser Längen in ganzen Schritten an.
 pub const STEPS_PER_LEVEL: u16 = 12;
 
-/// Die Standardkarte, beim Kompilieren eingebettet.
+/// Die Standardkarte, beim Kompilieren eingebettet (Rückfall, falls der
+/// Kartenordner fehlt).
 pub const DEFAULT_MAP: &str = include_str!("../maps/zwei-burgen.txt");
+
+/// Größte erlaubte Kartenseite.
+pub const MAX_SIZE: usize = 256;
 
 /// Eine geladene Karte mit allem, was der Server zur Laufzeit braucht.
 pub struct GameMap {
@@ -22,12 +41,25 @@ pub struct GameMap {
     pub height: u32,
     pub max_level: u8,
     pub tiles: Vec<TileKind>,
+    pub resources: Vec<ResourceKind>,
     pub levels: Vec<u8>,
     /// Vier Eckhöhen pro Feld: NW, NO, SO, SW (in Schritten).
     pub corners: Vec<[u16; 4]>,
     pub nav: NavGrid,
     /// Startfelder der Spieler.
     pub spawns: Vec<(u32, u32)>,
+}
+
+/// Blockiert diese Ressource das Laufen (bis sie abgebaut ist)?
+pub fn resource_blocks(r: ResourceKind) -> bool {
+    matches!(r, ResourceKind::Forest | ResourceKind::Stone | ResourceKind::Iron)
+}
+
+/// Ergebnis von [`GameMap::load`].
+pub struct LoadResult {
+    pub map: Option<GameMap>,
+    pub errors: Vec<MapIssue>,
+    pub warnings: Vec<MapIssue>,
 }
 
 /// Zeichen einer Rampe und ihre Steigungsrichtung.
@@ -41,70 +73,142 @@ fn ramp_dir(c: char) -> Option<(i32, i32)> {
     }
 }
 
+pub fn resource_from_char(c: char) -> Option<ResourceKind> {
+    Some(match c {
+        '.' => ResourceKind::None,
+        'W' => ResourceKind::Forest,
+        'S' => ResourceKind::Stone,
+        'E' => ResourceKind::Iron,
+        'A' => ResourceKind::Farmland,
+        'F' => ResourceKind::Fertile,
+        _ => return None,
+    })
+}
+
+fn issue(x: i32, y: i32, message: impl Into<String>) -> MapIssue {
+    MapIssue { x: Some(x as u32), y: Some(y as u32), message: message.into() }
+}
+
+fn general(message: impl Into<String>) -> MapIssue {
+    MapIssue { x: None, y: None, message: message.into() }
+}
+
 impl GameMap {
-    /// Liest eine Karte aus dem Textformat. Fehler beschreiben, welches Feld nicht passt.
+    /// Liest eine Karte und bricht beim ersten Fehler ab (für den Spielserver).
     pub fn parse(text: &str) -> Result<GameMap, String> {
-        let mut rows: Vec<Vec<char>> = Vec::new();
+        let r = GameMap::load(text);
+        if let Some(e) = r.errors.first() {
+            let at = match (e.x, e.y) {
+                (Some(x), Some(y)) => format!("Feld ({x}, {y}): "),
+                _ => String::new(),
+            };
+            return Err(format!("{at}{}", e.message));
+        }
+        r.map.ok_or_else(|| "Karte ist leer".into())
+    }
+
+    /// Liest eine Karte und sammelt dabei alle Fehler und Hinweise.
+    pub fn load(text: &str) -> LoadResult {
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+        let mut terrain: Vec<Vec<char>> = Vec::new();
+        let mut res_rows: Vec<(usize, Vec<char>)> = Vec::new();
         let mut spawns = Vec::new();
+        let mut section = "terrain";
+
         for (n, line) in text.lines().enumerate() {
             let line = line.trim_end();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            if let Some(rest) = line.strip_prefix("spawn ") {
-                let nums: Vec<u32> = rest
-                    .split_whitespace()
-                    .map(|s| s.parse().map_err(|_| format!("Zeile {}: ungültiger Spawn", n + 1)))
-                    .collect::<Result<_, _>>()?;
-                let [x, y] = nums[..] else {
-                    return Err(format!("Zeile {}: spawn braucht x und y", n + 1));
-                };
-                spawns.push((x, y));
+            if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                match name {
+                    "terrain" | "resources" => section = if name == "terrain" { "terrain" } else { "resources" },
+                    _ => errors.push(general(format!("Zeile {}: unbekannter Abschnitt [{name}]", n + 1))),
+                }
                 continue;
             }
-            rows.push(line.chars().collect());
+            if let Some(rest) = line.strip_prefix("spawn ") {
+                let nums: Vec<u32> = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                match nums[..] {
+                    [x, y] => spawns.push((x, y)),
+                    _ => errors.push(general(format!("Zeile {}: spawn braucht x und y", n + 1))),
+                }
+                continue;
+            }
+            match section {
+                "terrain" => terrain.push(line.chars().collect()),
+                _ => res_rows.push((n + 1, line.chars().collect())),
+            }
         }
 
-        let height = rows.len() as u32;
-        let width = rows.first().map_or(0, |r| r.len()) as u32;
-        if width == 0 || rows.iter().any(|r| r.len() as u32 != width) {
-            return Err("Alle Kartenzeilen müssen gleich lang sein".into());
+        let height = terrain.len();
+        let width = terrain.first().map_or(0, |r| r.len());
+        if width == 0 {
+            errors.push(general("Die Karte hat keine Felder"));
+            return LoadResult { map: None, errors, warnings };
         }
+        if width > MAX_SIZE || height > MAX_SIZE {
+            errors.push(general(format!("Karte ist größer als {MAX_SIZE} x {MAX_SIZE}")));
+            return LoadResult { map: None, errors, warnings };
+        }
+        if let Some(y) = terrain.iter().position(|r| r.len() != width) {
+            errors.push(general(format!(
+                "Terrain-Zeile {} hat {} statt {width} Zeichen. Alle Zeilen müssen gleich lang sein.",
+                y + 1,
+                terrain[y].len()
+            )));
+            return LoadResult { map: None, errors, warnings };
+        }
+
         let (w, h) = (width as i32, height as i32);
+        let n = width * height;
         let idx = |x: i32, y: i32| (y * w + x) as usize;
-        let at = |x: i32, y: i32| -> Option<char> {
-            (x >= 0 && y >= 0 && x < w && y < h).then(|| rows[y as usize][x as usize])
-        };
-        let ground_level = |x: i32, y: i32| at(x, y).and_then(|c| c.to_digit(10)).map(|d| d as u8);
+        let inside = |x: i32, y: i32| x >= 0 && y >= 0 && x < w && y < h;
 
-        let n = (width * height) as usize;
         let mut tiles = vec![TileKind::Ground; n];
         let mut levels = vec![0u8; n];
         let mut corners = vec![[0u16; 4]; n];
+        // Zeichen, wie sie verarbeitet werden (kaputte Felder werden ersetzt).
+        let mut chars: Vec<Vec<char>> = terrain.clone();
 
-        // 1. Boden und Wasser markieren, Zeichen prüfen.
+        // 1. Zeichen prüfen.
         for y in 0..h {
             for x in 0..w {
-                let c = rows[y as usize][x as usize];
+                let c = chars[y as usize][x as usize];
+                if !(c.is_ascii_digit() || c == '~' || ramp_dir(c).is_some()) {
+                    errors.push(issue(x, y, format!("unbekanntes Zeichen '{c}'")));
+                    chars[y as usize][x as usize] = '0';
+                }
+            }
+        }
+        let ground_level = |chars: &Vec<Vec<char>>, x: i32, y: i32| {
+            if !inside(x, y) {
+                return None;
+            }
+            chars[y as usize][x as usize].to_digit(10).map(|d| d as u8)
+        };
+
+        // 2. Boden und Wasser.
+        for y in 0..h {
+            for x in 0..w {
+                let c = chars[y as usize][x as usize];
                 let i = idx(x, y);
                 if let Some(l) = c.to_digit(10) {
                     levels[i] = l as u8;
                     corners[i] = [l as u16 * STEPS_PER_LEVEL; 4];
                 } else if c == '~' {
                     tiles[i] = TileKind::Water;
-                } else if ramp_dir(c).is_some() {
-                    tiles[i] = TileKind::Ramp;
-                } else {
-                    return Err(format!("Feld ({x}, {y}): unbekanntes Zeichen '{c}'"));
                 }
             }
         }
 
-        // 2. Rampen: jede Reihe gleicher Pfeile in Pfeilrichtung ist eine Rampe.
+        // 3. Rampen: jede Reihe gleicher Pfeile in Pfeilrichtung ist eine Rampe.
         for y in 0..h {
             for x in 0..w {
-                let c = rows[y as usize][x as usize];
+                let c = chars[y as usize][x as usize];
                 let Some((dx, dy)) = ramp_dir(c) else { continue };
+                let at = |x: i32, y: i32| inside(x, y).then(|| chars[y as usize][x as usize]);
                 // Nur am unteren Ende einer Rampe anfangen.
                 if at(x - dx, y - dy) == Some(c) {
                     continue;
@@ -113,29 +217,43 @@ impl GameMap {
                 while at(x + dx * len, y + dy * len) == Some(c) {
                     len += 1;
                 }
-                let low = ground_level(x - dx, y - dy).ok_or_else(|| {
-                    format!("Rampe bei ({x}, {y}): unteres Ende grenzt nicht an Boden")
-                })?;
                 let (hx, hy) = (x + dx * len, y + dy * len);
-                let high = ground_level(hx, hy).ok_or_else(|| {
-                    format!("Rampe bei ({x}, {y}): oberes Ende ({hx}, {hy}) grenzt nicht an Boden")
-                })?;
-                if high <= low {
-                    return Err(format!(
-                        "Rampe bei ({x}, {y}): oben (Stufe {high}) muss höher sein als unten (Stufe {low})"
-                    ));
+                let low = ground_level(&chars, x - dx, y - dy);
+                let high = ground_level(&chars, hx, hy);
+                let problem = match (low, high) {
+                    (None, _) => Some("Rampe: unteres Ende grenzt nicht an Boden".to_string()),
+                    (_, None) => Some("Rampe: oberes Ende grenzt nicht an Boden".to_string()),
+                    (Some(lo), Some(hi)) if hi <= lo => Some(format!(
+                        "Rampe: oben (Stufe {hi}) muss höher sein als unten (Stufe {lo})"
+                    )),
+                    (Some(lo), Some(hi))
+                        if !((hi - lo) as u16 * STEPS_PER_LEVEL).is_multiple_of(len as u16) =>
+                    {
+                        Some(format!(
+                            "Rampe: Länge {len} passt nicht. Pro Stufe 1, 2, 3, 4 oder 6 Felder lang."
+                        ))
+                    }
+                    _ => None,
+                };
+                if let Some(msg) = problem {
+                    errors.push(issue(x, y, msg));
+                    // Zum Weiterzeigen: Rampe wird flacher Boden auf der unteren Stufe.
+                    let l = low.or(high).unwrap_or(0);
+                    for k in 0..len {
+                        let i = idx(x + dx * k, y + dy * k);
+                        tiles[i] = TileKind::Ground;
+                        levels[i] = l;
+                        corners[i] = [l as u16 * STEPS_PER_LEVEL; 4];
+                    }
+                    continue;
                 }
-                let rise = (high - low) as u16 * STEPS_PER_LEVEL;
-                if !rise.is_multiple_of(len as u16) {
-                    return Err(format!(
-                        "Rampe bei ({x}, {y}): Länge {len} passt nicht zu {rise} Höhenschritten"
-                    ));
-                }
-                let step = rise / len as u16;
+                let (low, high) = (low.unwrap(), high.unwrap());
+                let step = (high - low) as u16 * STEPS_PER_LEVEL / len as u16;
                 for k in 0..len {
                     let i = idx(x + dx * k, y + dy * k);
                     let lo = low as u16 * STEPS_PER_LEVEL + step * k as u16;
                     let hi = lo + step;
+                    tiles[i] = TileKind::Ramp;
                     levels[i] = low;
                     // Ecken auf der ansteigenden Seite bekommen die obere Höhe.
                     corners[i] = match (dx, dy) {
@@ -148,7 +266,7 @@ impl GameMap {
             }
         }
 
-        // 3. Wasser: jede zusammenhängende Wasserfläche liegt auf der
+        // 4. Wasser: jede zusammenhängende Wasserfläche liegt auf der
         //    niedrigsten Stufe des angrenzenden Bodens.
         let mut seen = vec![false; n];
         for start in 0..n {
@@ -162,7 +280,7 @@ impl GameMap {
             while let Some(i) = stack.pop() {
                 let (x, y) = ((i as i32) % w, (i as i32) / w);
                 for (nx, ny) in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)] {
-                    if at(nx, ny).is_none() {
+                    if !inside(nx, ny) {
                         continue;
                     }
                     let j = idx(nx, ny);
@@ -186,15 +304,120 @@ impl GameMap {
             }
         }
 
-        for &(x, y) in &spawns {
-            if x >= width || y >= height || tiles[(y * width + x) as usize] == TileKind::Water {
-                return Err(format!("Spawn ({x}, {y}) liegt nicht auf begehbarem Boden"));
+        // 5. Ressourcen-Ebene.
+        let mut resources = vec![ResourceKind::None; n];
+        if !res_rows.is_empty() {
+            if res_rows.len() != height {
+                errors.push(general(format!(
+                    "[resources] hat {} Zeilen, [terrain] aber {height}",
+                    res_rows.len()
+                )));
+            }
+            for (y, (line_no, row)) in res_rows.iter().enumerate().take(height) {
+                if row.len() != width {
+                    errors.push(general(format!(
+                        "Zeile {line_no}: [resources] hat {} statt {width} Zeichen",
+                        row.len()
+                    )));
+                }
+                for (x, &c) in row.iter().enumerate().take(width) {
+                    let (xi, yi) = (x as i32, y as i32);
+                    match resource_from_char(c) {
+                        None => errors.push(issue(xi, yi, format!("unbekannte Ressource '{c}'"))),
+                        Some(ResourceKind::None) => {}
+                        Some(r) => {
+                            let i = idx(xi, yi);
+                            if tiles[i] != TileKind::Ground {
+                                errors.push(issue(xi, yi, "Ressourcen nur auf flachem Boden"));
+                            } else {
+                                resources[i] = r;
+                            }
+                        }
+                    }
+                }
             }
         }
 
+        // 6. Startfelder.
+        let mut valid_spawns = Vec::new();
+        for &(x, y) in &spawns {
+            let ok = (x as usize) < width
+                && (y as usize) < height
+                && tiles[y as usize * width + x as usize] != TileKind::Water
+                && !resource_blocks(resources[y as usize * width + x as usize]);
+            if ok {
+                valid_spawns.push((x, y));
+            } else {
+                errors.push(MapIssue {
+                    x: ((x as usize) < width).then_some(x),
+                    y: ((y as usize) < height).then_some(y),
+                    message: format!("Startfeld ({x}, {y}) liegt nicht auf begehbarem Boden"),
+                });
+            }
+        }
+        if valid_spawns.len() < 2 {
+            warnings.push(general("Weniger als zwei Startfelder: Mehrspieler geht so nicht"));
+        }
+
+        let blocked: Vec<bool> = resources.iter().map(|&r| resource_blocks(r)).collect();
+        let nav = NavGrid::build(width as u32, height as u32, &tiles, &corners, &blocked);
         let max_level = levels.iter().copied().max().unwrap_or(0);
-        let nav = NavGrid::build(width, height, &tiles, &corners);
-        Ok(GameMap { width, height, max_level, tiles, levels, corners, nav, spawns })
+        let map = GameMap {
+            width: width as u32,
+            height: height as u32,
+            max_level,
+            tiles,
+            resources,
+            levels,
+            corners,
+            nav,
+            spawns: valid_spawns,
+        };
+        warnings.extend(map.reachability_warnings());
+        LoadResult { map: Some(map), errors, warnings }
+    }
+
+    /// Begehbare Gebiete, die vom ersten Startfeld aus nicht erreichbar sind.
+    /// Eine Meldung pro abgeschnittenem Gebiet.
+    fn reachability_warnings(&self) -> Vec<MapIssue> {
+        let Some(&(sx, sy)) = self.spawns.first() else { return Vec::new() };
+        let (w, h) = (self.width as i32, self.height as i32);
+        let n = (self.width * self.height) as usize;
+        let mut region = vec![usize::MAX; n];
+        let mut regions = Vec::new(); // (Größe, Beispielfeld)
+        let flood = |start: (i32, i32), id: usize, region: &mut Vec<usize>| {
+            let mut stack = vec![start];
+            region[(start.1 * w + start.0) as usize] = id;
+            let mut size = 0;
+            while let Some((x, y)) = stack.pop() {
+                size += 1;
+                for &(dx, dy) in &crate::nav::DIRS {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if self.nav.can_step(x, y, dx, dy) && region[(ny * w + nx) as usize] == usize::MAX {
+                        region[(ny * w + nx) as usize] = id;
+                        stack.push((nx, ny));
+                    }
+                }
+            }
+            size
+        };
+        flood((sx as i32, sy as i32), 0, &mut region);
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) as usize;
+                if region[i] == usize::MAX && self.nav.is_open(x, y) {
+                    let id = regions.len() + 1;
+                    let size = flood((x, y), id, &mut region);
+                    regions.push((size, (x, y)));
+                }
+            }
+        }
+        regions
+            .into_iter()
+            .map(|(size, (x, y))| {
+                issue(x, y, format!("{size} Feld(er) hier sind vom ersten Startfeld aus nicht erreichbar"))
+            })
+            .collect()
     }
 
     /// Bodenhöhe in Stufen an einer beliebigen Position (für Hochgelände-Boni später).
@@ -217,9 +440,21 @@ impl GameMap {
             max_level: self.max_level,
             steps_per_level: STEPS_PER_LEVEL,
             tiles: self.tiles.clone(),
+            resources: self.resources.clone(),
             levels: self.levels.clone(),
             corners: self.corners.iter().flatten().copied().collect(),
             nav: self.nav.dirs.clone(),
+        }
+    }
+}
+
+impl LoadResult {
+    pub fn into_check(self) -> MapCheck {
+        MapCheck {
+            spawns: self.map.as_ref().map(|m| m.spawns.clone()).unwrap_or_default(),
+            map: self.map.map(|m| m.info()),
+            errors: self.errors,
+            warnings: self.warnings,
         }
     }
 }
@@ -230,9 +465,24 @@ mod tests {
 
     #[test]
     fn standardkarte_ist_gueltig() {
-        let map = GameMap::parse(DEFAULT_MAP).expect("Karte lädt");
+        let r = GameMap::load(DEFAULT_MAP);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+        let map = r.map.unwrap();
         assert_eq!((map.width, map.height), (64, 64));
         assert!(map.spawns.len() >= 2);
+    }
+
+    #[test]
+    fn alle_karten_im_ordner_sind_gueltig() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/maps");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "txt") {
+                let r = GameMap::load(&std::fs::read_to_string(&path).unwrap());
+                assert!(r.errors.is_empty(), "{}: {:?}", path.display(), r.errors);
+            }
+        }
     }
 
     #[test]
@@ -254,9 +504,46 @@ mod tests {
     }
 
     #[test]
+    fn fehler_werden_gesammelt_und_karte_bleibt_sichtbar() {
+        let r = GameMap::load("0>>>0\n0x000\n");
+        assert_eq!(r.errors.len(), 2);
+        assert_eq!((r.errors[0].x, r.errors[0].y), (Some(1), Some(1)), "Zeichen zuerst");
+        let map = r.map.expect("Karte trotzdem da");
+        assert_eq!(map.tiles[1], TileKind::Ground, "kaputte Rampe wird Boden");
+    }
+
+    #[test]
     fn wasser_liegt_auf_umgebender_stufe() {
         let map = GameMap::parse("111\n1~1\n111\n").unwrap();
         assert_eq!(map.levels[4], 1);
         assert_eq!(map.corners[4], [12; 4]);
+    }
+
+    #[test]
+    fn ressourcen_und_wald_blockiert() {
+        let text = "spawn 0 0\nspawn 3 0\n[terrain]\n0000\n0000\n[resources]\n.WA.\n.WEF\n";
+        let r = GameMap::load(text);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        let map = r.map.unwrap();
+        assert_eq!(map.resources[1], ResourceKind::Forest);
+        assert_eq!(map.resources[2], ResourceKind::Farmland);
+        assert_eq!(map.resources[6], ResourceKind::Iron);
+        assert_eq!(map.resources[7], ResourceKind::Fertile);
+        assert!(!map.nav.is_open(1, 0), "Wald ist nicht begehbar");
+        assert!(!map.nav.is_open(2, 1), "Eisen auch nicht");
+        assert!(map.nav.is_open(2, 0), "Acker schon");
+        // Die Waldwand teilt die Karte: rechts ist abgeschnitten.
+        assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+
+        // Abholzen gibt das Feld wieder frei.
+        let mut map = map;
+        map.nav.set_blocked(1, 0, false);
+        assert!(map.nav.can_step(0, 0, 1, 0));
+    }
+
+    #[test]
+    fn ressourcen_nur_auf_boden() {
+        let r = GameMap::load("[terrain]\n0~\n[resources]\n.W\n");
+        assert!(r.errors.iter().any(|e| e.x == Some(1)));
     }
 }

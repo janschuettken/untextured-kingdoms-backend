@@ -49,7 +49,14 @@ fn edge(c: &[u16; 4], dx: i32, dy: i32) -> [u16; 2] {
 }
 
 impl NavGrid {
-    pub fn build(width: u32, height: u32, tiles: &[TileKind], corners: &[[u16; 4]]) -> NavGrid {
+    /// `blocked`: Felder, die von Anfang an blockiert sind (Wald, Felsen).
+    pub fn build(
+        width: u32,
+        height: u32,
+        tiles: &[TileKind],
+        corners: &[[u16; 4]],
+        blocked: &[bool],
+    ) -> NavGrid {
         let (w, h) = (width as i32, height as i32);
         let inside = |x: i32, y: i32| x >= 0 && y >= 0 && x < w && y < h;
         let idx = |x: i32, y: i32| (y * w + x) as usize;
@@ -81,8 +88,23 @@ impl NavGrid {
                 dirs[idx(x, y)] = bits;
             }
         }
-        let n = dirs.len();
-        NavGrid { width, height, terrain: dirs.clone(), dirs, blocked: vec![0; n] }
+        // Anfangs-Blockaden (z. B. Wald aus der Karte) über die Blockiert-Ebene,
+        // damit sie später per `set_blocked(.., false)` wieder freigegeben werden können.
+        let mut nav = NavGrid {
+            width,
+            height,
+            terrain: dirs.clone(),
+            dirs,
+            blocked: blocked.iter().map(|&b| b as u8).collect(),
+        };
+        if blocked.iter().any(|&b| b) {
+            for y in 0..h {
+                for x in 0..w {
+                    nav.recompute(x, y);
+                }
+            }
+        }
+        nav
     }
 
     /// Feld blockieren (`true`) oder wieder freigeben. Mehrfaches Blockieren

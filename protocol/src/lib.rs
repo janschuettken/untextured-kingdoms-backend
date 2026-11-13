@@ -94,6 +94,8 @@ pub struct MapInfo {
     pub steps_per_level: u16,
     /// Pro Feld zeilenweise, Länge = width * height.
     pub tiles: Vec<TileKind>,
+    /// Ressource pro Feld (Wald, Stein, ...). Wald, Stein und Eisen blockieren das Laufen.
+    pub resources: Vec<ResourceKind>,
     /// Logische Höhenstufe pro Feld (bei Rampen die untere Stufe).
     pub levels: Vec<u8>,
     /// Vier Eckhöhen pro Feld in Schritten, Reihenfolge NW, NO, SO, SW
@@ -104,6 +106,49 @@ pub struct MapInfo {
     /// 4 = West, 5 = NW, 6 = Nord, 7 = NO. 0 heißt: Feld ist nicht begehbar
     /// oder komplett eingeschlossen.
     pub nav: Vec<u8>,
+}
+
+/// Ressource auf einem Feld. In der Kartendatei die Ebene `[resources]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ResourceKind {
+    /// `.` nichts
+    None,
+    /// `W` Wald: blockiert Einheiten, bis er abgeholzt ist.
+    Forest,
+    /// `S` Steinbruch (Felsen, blockiert Einheiten)
+    Stone,
+    /// `E` Eisenvorkommen (Felsen, blockiert Einheiten)
+    Iron,
+    /// `A` Ackerboden
+    Farmland,
+    /// `F` besonders fruchtbarer Boden
+    Fertile,
+}
+
+/// Ein Problem in einer Karte, optional mit dem betroffenen Feld.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MapIssue {
+    pub x: Option<u32>,
+    pub y: Option<u32>,
+    pub message: String,
+}
+
+/// Ergebnis der Kartenprüfung (für den Karteneditor, `POST /api/maps/check`).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MapCheck {
+    /// Die Karte, so gut sie sich lesen ließ. Fehlt nur, wenn das Format
+    /// grundsätzlich kaputt ist (z. B. Zeilen unterschiedlich lang).
+    pub map: Option<MapInfo>,
+    /// Startfelder (x, y).
+    pub spawns: Vec<(u32, u32)>,
+    /// Fehler: so lässt sich die Karte nicht spielen oder speichern.
+    pub errors: Vec<MapIssue>,
+    /// Hinweise: spielbar, aber wahrscheinlich ungewollt.
+    pub warnings: Vec<MapIssue>,
 }
 
 /// Art einer Einheit.

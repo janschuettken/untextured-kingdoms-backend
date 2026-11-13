@@ -2,6 +2,7 @@
 
 mod buildings;
 mod map;
+mod maps_api;
 mod nav;
 mod world;
 
@@ -52,7 +53,16 @@ async fn main() {
         .init();
 
     let (ticks, _) = broadcast::channel(64);
-    let game_map = map::GameMap::parse(map::DEFAULT_MAP).expect("Standardkarte ist gültig");
+    // Karte aus dem Kartenordner laden: MAP=name (ohne .txt), Standard "zwei-burgen".
+    let store = Arc::new(maps_api::MapStore::from_env());
+    let map_name = std::env::var("MAP").unwrap_or_else(|_| "zwei-burgen".into());
+    let map_text = store.read(&map_name).unwrap_or_else(|| {
+        warn!("Karte {map_name} nicht in {} gefunden, nehme eingebaute Standardkarte", store.dir.display());
+        map::DEFAULT_MAP.to_string()
+    });
+    let game_map = map::GameMap::parse(&map_text)
+        .unwrap_or_else(|e| panic!("Karte {map_name} ist ungültig: {e}"));
+    info!("Karte {map_name} geladen ({} x {})", game_map.width, game_map.height);
     let state = Arc::new(AppState {
         map: game_map.info(),
         world: Mutex::new(World::new(game_map)),
@@ -66,7 +76,8 @@ async fn main() {
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .route("/health", get(|| async { "ok" }))
-        .with_state(state);
+        .with_state(state)
+        .merge(maps_api::router(store));
 
     let port: u16 = std::env::var("PORT")
         .ok()
