@@ -4,6 +4,7 @@ import type { BuildingKind } from "./BuildingKind";
 import type { BuildingLevel } from "./BuildingLevel";
 import type { Placement } from "./Placement";
 import type { ResourceKind } from "./ResourceKind";
+import type { UnitCount } from "./UnitCount";
 
 /**
  * Feste Eigenschaften einer Gebäudeart.
@@ -33,6 +34,14 @@ gather_radius: number,
  * Aufgeben hinterlässt diesen Rohstoff auf der Fläche (Obstplantage → Wald).
  */
 releases_as: ResourceKind | null, 
+/**
+ * Bergfried und Vorratslager: hier liegt der gemeinsame Vorrat, Träger liefern hierhin.
+ */
+hub: boolean, 
+/**
+ * Einheiten, die zum Gebäude gehören (Träger, Karren).
+ */
+spawns: Array<UnitCount>, 
 /**
  * Mindestens eine Stufe.
  */

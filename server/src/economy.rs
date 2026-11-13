@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use protocol::{BuildingDef, BuildingKind, EconomyDef, GoodAmount, RecipeDef, ResourceKind};
+use protocol::{BuildingDef, BuildingKind, EconomyDef, GoodAmount, RecipeDef, ResourceKind, UnitKind};
 
 pub const ECONOMY_JSON: &str = include_str!("../data/economy.json");
 
@@ -27,6 +27,9 @@ impl Economy {
             }
             if b.levels.is_empty() || b.w == 0 || b.h == 0 {
                 return Err(format!("Gebäude {:?} braucht Größe und mindestens eine Stufe", b.kind));
+            }
+            if b.spawns.iter().any(|s| !matches!(s.kind, UnitKind::Carrier | UnitKind::Cart)) {
+                return Err(format!("Gebäude {:?}: nur Träger und Karren gehören zu einem Gebäude", b.kind));
             }
         }
         let mut ids = HashMap::new();
@@ -84,7 +87,8 @@ mod tests {
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 21);
+        assert_eq!(eco.def.buildings.len(), 22);
+        assert!(eco.def.buildings.iter().any(|b| b.hub), "ohne Lager kein Transport");
     }
 
     #[test]

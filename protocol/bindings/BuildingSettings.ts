@@ -9,6 +9,7 @@ export type BuildingSettings = {
  */
 recipe: string | null, paused: boolean, 
 /**
- * Darf der Transport hier Waren abliefern? (wirkt, sobald es Transport gibt)
+ * Darf der Transport hier Eingangswaren abliefern? Aus = der Betrieb
+ * arbeitet nur mit dem, was schon in seinem Lager liegt.
  */
 accept_deliveries: boolean, };

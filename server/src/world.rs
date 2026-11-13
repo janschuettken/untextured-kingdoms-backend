@@ -10,7 +10,9 @@ use protocol::{
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod production;
+mod transport;
 use production::Work;
+use transport::Job;
 
 /// Laufgeschwindigkeit des Königs in Feldern pro Sekunde.
 const KING_SPEED: f32 = 3.0;
@@ -25,6 +27,25 @@ pub struct Unit {
     /// Wohin die Einheit zuletzt geschickt wurde (für neue Wegsuche, wenn
     /// plötzlich ein Gebäude im Weg steht).
     target: Option<(f32, f32)>,
+    /// Träger und Karren: das Gebäude, zu dem sie gehören.
+    home: Option<u32>,
+    /// Laufender Transportauftrag.
+    job: Option<Job>,
+    /// Ladung von Träger oder Karren.
+    carrying: Option<GoodAmount>,
+    /// Sekunden bis zur nächsten Auftragssuche.
+    cooldown: f32,
+}
+
+impl Unit {
+    fn new(id: u32, owner: u32, kind: UnitKind, pos: (f32, f32)) -> Unit {
+        Unit { id, owner, kind, pos, path: Vec::new(), target: None, home: None, job: None, carrying: None, cooldown: 0.0 }
+    }
+
+    /// Träger und Karren gehorchen keinen Befehlen, sie arbeiten von selbst.
+    fn is_transport(&self) -> bool {
+        matches!(self.kind, UnitKind::Carrier | UnitKind::Cart)
+    }
 }
 
 pub struct World {
@@ -36,8 +57,12 @@ pub struct World {
     next_unit_id: u32,
     next_building_id: u32,
     pub economy: Economy,
-    /// Lager je Spieler.
+    /// Gemeinsamer Vorrat je Spieler (liegt im Bergfried und in den Vorratslagern).
     stocks: HashMap<u32, Stock>,
+    /// Eigenes kleines Lager je Betrieb (Gebäude-Id): Eingänge und fertige Waren.
+    inventories: HashMap<u32, Stock>,
+    /// Gebäude, deren Status oder Lager sich geändert hat (gehen gesammelt raus).
+    dirty_buildings: BTreeSet<u32>,
     /// Spieler, deren Lager sich seit dem letzten Senden geändert hat.
     dirty_stocks: BTreeSet<u32>,
     /// Wie viel jedes Feld noch hergibt (Wald, Stein, Eisen).
@@ -69,6 +94,8 @@ impl World {
             next_building_id: 1,
             economy,
             stocks: HashMap::new(),
+            inventories: HashMap::new(),
+            dirty_buildings: BTreeSet::new(),
             dirty_stocks: BTreeSet::new(),
             resource_left,
             work: HashMap::new(),
@@ -122,14 +149,7 @@ impl World {
             stock.add(g.good, g.amount);
         }
         self.stocks.insert(player, stock);
-        self.units.push(Unit {
-            id,
-            owner: player,
-            kind: UnitKind::King,
-            pos: (x as f32 + 0.5, y as f32 + 0.5),
-            path: Vec::new(),
-            target: None,
-        });
+        self.units.push(Unit::new(id, player, UnitKind::King, (x as f32 + 0.5, y as f32 + 0.5)));
     }
 
     /// Spieler geht: seine Einheiten und Gebäude verschwinden.
@@ -197,7 +217,8 @@ impl World {
             let (ux, uy) = (p.0.floor() as i64, p.1.floor() as i64);
             ux >= x as i64 && uy >= y as i64 && ux < (x + w) as i64 && uy < (y + h) as i64
         };
-        if self.units.iter().any(|u| covers(u.pos)) {
+        // Träger weichen aus, alle anderen Einheiten stehen im Weg.
+        if self.units.iter().any(|u| !u.is_transport() && covers(u.pos)) {
             return Err(Text::new("error.unit_in_way"));
         }
         self.pay(player, &cost)?;
@@ -220,6 +241,7 @@ impl World {
             level: 1,
             settings,
             status,
+            inventory: Vec::new(),
         };
         self.next_building_id += 1;
         for ty in y..y + h {
@@ -229,8 +251,17 @@ impl World {
             }
         }
         self.buildings.push(b.clone());
+        if !def.hub {
+            self.inventories.insert(b.id, Stock::new(self.economy.def.transport.building_capacity));
+        }
         if kind == BuildingKind::Storehouse {
             self.update_capacity(player);
+        }
+        self.make_room(&b);
+        for s in &def.spawns {
+            for n in 0..s.count {
+                self.spawn_transport(&b, s.kind, n);
+            }
         }
         self.replan_all();
         Ok(b)
@@ -295,10 +326,21 @@ impl World {
         Ok(())
     }
 
+    /// Gebäude entfernen. Was in ihm lag und was seine Träger tragen, kommt in den Vorrat.
     fn remove_building(&mut self, id: u32) {
         let Some(pos) = self.buildings.iter().position(|b| b.id == id) else { return };
         let b = self.buildings.remove(pos);
         self.work.remove(&id);
+        self.dirty_buildings.remove(&id);
+        let mut back: Vec<GoodAmount> = self.inventories.remove(&id).map(|s| s.state().goods).unwrap_or_default();
+        back.extend(self.units.iter().filter(|u| u.home == Some(id)).filter_map(|u| u.carrying));
+        self.units.retain(|u| u.home != Some(id));
+        if let Some(stock) = self.stocks.get_mut(&b.owner) {
+            for g in back {
+                stock.add(g.good, g.amount);
+            }
+            self.dirty_stocks.insert(b.owner);
+        }
         for ty in b.y..b.y + b.h {
             for tx in b.x..b.x + b.w {
                 self.occupied[(ty * self.map.width + tx) as usize] = 0;
@@ -326,7 +368,7 @@ impl World {
             target.1.clamp(0.0, self.map.height as f32 - 0.01),
         );
         for unit in self.units.iter_mut() {
-            if unit.owner == player && unit_ids.contains(&unit.id) {
+            if unit.owner == player && !unit.is_transport() && unit_ids.contains(&unit.id) {
                 unit.path = self.map.nav.waypoints(unit.pos, target);
                 unit.target = Some(target);
             }
@@ -336,8 +378,16 @@ impl World {
     /// Einen Spieltakt von `dt` Sekunden simulieren.
     pub fn step(&mut self, dt: f32) {
         self.step_production(dt);
+        self.step_transport(dt);
+        let t = &self.economy.def.transport;
+        let (carrier, cart) = (t.carrier_speed, t.cart_speed);
         for unit in self.units.iter_mut() {
-            let mut budget = KING_SPEED * dt;
+            let speed = match unit.kind {
+                UnitKind::King => KING_SPEED,
+                UnitKind::Carrier => carrier,
+                UnitKind::Cart => cart,
+            };
+            let mut budget = speed * dt;
             while budget > 0.0 {
                 let Some(&next) = unit.path.first() else { break };
                 let (dx, dy) = (next.0 - unit.pos.0, next.1 - unit.pos.1);
@@ -353,6 +403,16 @@ impl World {
                 }
             }
         }
+        self.flush_buildings();
+    }
+
+    /// Geänderte Gebäude (Status, Lager) an alle Clients melden.
+    fn flush_buildings(&mut self) {
+        for id in std::mem::take(&mut self.dirty_buildings) {
+            let Some(b) = self.buildings.iter_mut().find(|b| b.id == id) else { continue };
+            b.inventory = self.inventories.get(&id).map(|s| s.state().goods).unwrap_or_default();
+            self.events.push(ServerMsg::BuildingChanged { building: b.clone() });
+        }
     }
 
     pub fn snapshot(&self) -> Vec<UnitState> {
@@ -365,6 +425,7 @@ impl World {
                 x: u.pos.0,
                 y: u.pos.1,
                 moving: !u.path.is_empty(),
+                carrying: u.carrying.map(|g| g.good),
             })
             .collect()
     }
