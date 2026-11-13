@@ -399,8 +399,8 @@ mod tests {
     }
 
     fn flat_world() -> World {
-        let row = "0".repeat(12);
-        let text = format!("spawn 1 1\n{}", format!("{row}\n").repeat(12));
+        let row = "0".repeat(24);
+        let text = format!("spawn 1 1\n{}", format!("{row}\n").repeat(24));
         let mut world = World::new(GameMap::parse(&text).unwrap(), eco());
         world.spawn_player(1);
         world
@@ -420,11 +420,11 @@ mod tests {
 
         let mut flat = flat_world();
         let b = flat.place_building(1, BuildingKind::Tower, 4, 4).unwrap();
-        assert_eq!((b.w, b.h), (2, 2));
+        assert_eq!((b.w, b.h), (3, 3));
         assert!(flat.place_building(1, BuildingKind::Wall, 5, 5).is_err(), "überlappt");
         assert!(!flat.map.nav.is_open(5, 5));
-        flat.place_building(1, BuildingKind::Keep, 7, 7).unwrap();
-        assert!(flat.place_building(1, BuildingKind::Keep, 0, 7).is_err(), "nur ein Bergfried");
+        flat.place_building(1, BuildingKind::Keep, 10, 10).unwrap();
+        assert!(flat.place_building(1, BuildingKind::Keep, 0, 12).is_err(), "nur ein Bergfried");
         assert!(flat.demolish(2, b.id).is_err(), "fremdes Gebäude");
         flat.demolish(1, b.id).unwrap();
         assert!(flat.map.nav.is_open(5, 5));
