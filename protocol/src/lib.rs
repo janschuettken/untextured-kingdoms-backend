@@ -35,6 +35,10 @@ pub enum ClientMsg {
     ConfigureBuilding { building_id: u32, settings: BuildingSettings },
     /// Obstplantage aufgeben: ihre Bäume werden zu Wald, den man abholzen kann.
     ReleaseTrees { building_id: u32 },
+    /// Als Admin anmelden (Token aus der Server-Umgebung `ADMIN_TOKEN`).
+    AdminLogin { token: String },
+    /// Nur Admin: sich selbst Waren ins Lager legen.
+    AdminGive { goods: Vec<GoodAmount> },
     /// Sichtbereich des Clients in Feldern (Rechteck, Ecken eingeschlossen).
     /// Der Server schickt Einheiten nur für diesen Bereich (plus Rand) und
     /// immer die eigenen. Ohne diese Nachricht sieht der Client alles.
@@ -97,6 +101,14 @@ pub enum ServerMsg {
     /// Ein Befehl dieses Clients wurde abgelehnt (z. B. kein Platz zum Bauen).
     Rejected {
         text: Text,
+    },
+    /// Antwort auf `admin_login`: angenommen oder nicht.
+    AdminStatus {
+        ok: bool,
+    },
+    /// Die Wirtschaftsdaten wurden im Balancing-Editor geändert und gelten ab sofort.
+    EconomyChanged {
+        economy: EconomyDef,
     },
 }
 

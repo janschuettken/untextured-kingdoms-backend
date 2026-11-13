@@ -128,6 +128,35 @@ impl World {
         }
     }
 
+    /// Neue Wirtschaftsdaten aus dem Balancing-Editor übernehmen. Stehende
+    /// Gebäude bleiben; Lagergrößen passen sich an, Rezepte, die es nicht mehr
+    /// gibt, laufen nicht weiter.
+    pub fn set_economy(&mut self, economy: Economy) {
+        self.economy = economy;
+        let cap = self.economy.def.transport.building_capacity;
+        for inv in self.inventories.values_mut() {
+            inv.capacity = cap;
+        }
+        let players: Vec<u32> = self.stocks.keys().copied().collect();
+        for p in players {
+            self.update_capacity(p);
+        }
+        for b in &self.buildings {
+            self.dirty_buildings.insert(b.id);
+        }
+    }
+
+    /// Admin: Waren direkt ins Lager legen (höchstens bis zur Kapazität).
+    pub fn admin_give(&mut self, player: u32, goods: &[GoodAmount]) {
+        let Some(stock) = self.stocks.get_mut(&player) else { return };
+        for g in goods {
+            if self.economy.def.goods.contains(&g.good) {
+                stock.add(g.good, g.amount);
+            }
+        }
+        self.dirty_stocks.insert(player);
+    }
+
     /// Neuer Spieler: bekommt einen König auf einem freien Startfeld.
     pub fn spawn_player(&mut self, player: u32) {
         let taken: Vec<(u32, u32)> = self

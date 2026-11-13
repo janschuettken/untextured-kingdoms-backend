@@ -1,2 +1,4 @@
 /target
 .env
+server/data/*.bak
+server/data/*.tmp

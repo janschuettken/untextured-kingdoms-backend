@@ -7,6 +7,10 @@ services:
     restart: unless-stopped
     environment:
       RUST_LOG: info
+      # Admin-Menü und Balancing-Editor: Token in .env setzen, leer = aus.
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+    volumes:
+      - game_data:/data
 
   web:
     build: ../untextured-kingdoms-frontend
@@ -24,5 +28,6 @@ services:
       - caddy_config:/config
 
 volumes:
+  game_data:
   caddy_data:
   caddy_config:

@@ -36,4 +36,4 @@ units: Array<UnitState>,
 /**
  * Einheiten, die verschwunden oder aus dem Bild gelaufen sind.
  */
-gone: Array<number>, } | { "type": "pong", client_time: number, } | { "type": "building_placed", building: BuildingState, } | { "type": "building_removed", building_id: number, } | { "type": "building_changed", building: BuildingState, } | { "type": "resource_changed", x: number, y: number, resource: ResourceKind, } | { "type": "stock", stock: StockState, } | { "type": "rejected", text: Text, };
+gone: Array<number>, } | { "type": "pong", client_time: number, } | { "type": "building_placed", building: BuildingState, } | { "type": "building_removed", building_id: number, } | { "type": "building_changed", building: BuildingState, } | { "type": "resource_changed", x: number, y: number, resource: ResourceKind, } | { "type": "stock", stock: StockState, } | { "type": "rejected", text: Text, } | { "type": "admin_status", ok: boolean, } | { "type": "economy_changed", economy: EconomyDef, };
