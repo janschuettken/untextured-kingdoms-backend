@@ -52,5 +52,6 @@ hub: boolean,
 spawns: Array<UnitCount>, 
 /**
  * Mindestens eine Stufe.
+ * Arbeiter, die der Betrieb braucht (sie wohnen in Häusern und essen).
  */
-levels: Array<BuildingLevel>, };
+workers: number, levels: Array<BuildingLevel>, };

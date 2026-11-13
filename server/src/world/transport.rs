@@ -150,7 +150,9 @@ impl World {
                         continue;
                     }
                     u.cooldown = IDLE_WAIT;
-                    if let Some(job) = self.find_job(k, &reserved, &index) {
+                    // Ohne Wohnung wird nicht gearbeitet.
+                    let job = if self.idle_units.contains(&u.id) { None } else { self.find_job(k, &reserved, &index) };
+                    if let Some(job) = job {
                         reserved.add(self.units[k].owner, &job);
                         self.start(k, job, &index);
                     } else {
@@ -207,7 +209,7 @@ impl World {
         } else {
             self.units
                 .iter()
-                .filter(|c| c.owner == owner && c.kind == UnitKind::Cart && c.job.is_none())
+                .filter(|c| c.owner == owner && c.kind == UnitKind::Cart && c.job.is_none() && !self.idle_units.contains(&c.id))
                 .map(|c| self.service_area(c.home))
                 .collect()
         };
@@ -579,7 +581,7 @@ mod tests {
         let text = format!("spawn 0 {}\n{}", h - 1, format!("{row}\n").repeat(h));
         let mut world = World::new(
             GameMap::parse(&text).unwrap(),
-            Economy::parse(crate::economy::ECONOMY_JSON).unwrap(),
+            Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people(),
         );
         world.spawn_player(1);
         world

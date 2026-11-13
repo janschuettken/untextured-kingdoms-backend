@@ -17,6 +17,16 @@ pub struct Economy {
 }
 
 impl Economy {
+    /// Für Tests, die nichts mit Bewohnern zu tun haben: niemand braucht eine Wohnung.
+    #[cfg(test)]
+    pub fn without_people(mut self) -> Economy {
+        for b in &mut self.def.buildings {
+            b.workers = 0;
+        }
+        self.def.population.per_transport = 0;
+        self
+    }
+
     /// Liest und prüft die Wirtschaftsdaten.
     pub fn parse(json: &str) -> Result<Economy, String> {
         let def: EconomyDef = serde_json::from_str(json).map_err(|e| format!("economy.json: {e}"))?;
@@ -70,6 +80,16 @@ impl Economy {
         }
         if def.base_capacity == 0 {
             return Err("base_capacity muss größer als 0 sein".into());
+        }
+        let pop = &def.population;
+        if !(pop.meal_seconds >= 0.0 && pop.meal_seconds.is_finite()) {
+            return Err("Bewohner: meal_seconds darf nicht negativ sein (0 = essen nie)".into());
+        }
+        if !(1..=100).contains(&pop.hungry_speed_percent) {
+            return Err("Bewohner: hungry_speed_percent muss zwischen 1 und 100 liegen".into());
+        }
+        if !pop.food.iter().all(|g| def.goods.contains(g)) {
+            return Err("Bewohner: ein Essen steht nicht in goods".into());
         }
         let goods = |list: &[GoodAmount]| list.iter().all(|g| def.goods.contains(&g.good));
         if !def.buildings.iter().all(|b| b.levels.iter().all(|l| goods(&l.cost)))
@@ -206,7 +226,7 @@ mod tests {
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 22);
+        assert_eq!(eco.def.buildings.len(), 23);
         assert!(eco.def.buildings.iter().any(|b| b.hub), "ohne Lager kein Transport");
     }
 

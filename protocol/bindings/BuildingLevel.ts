@@ -12,4 +12,8 @@ cost: Array<GoodAmount>,
 /**
  * Rezepte, die diese Stufe freischaltet (zusätzlich zu den vorigen).
  */
-recipes: Array<string>, };
+recipes: Array<string>, 
+/**
+ * So viele Bewohner passen auf dieser Stufe hinein (Wohnhäuser).
+ */
+housing: number, };

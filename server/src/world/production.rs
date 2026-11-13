@@ -36,6 +36,9 @@ impl World {
         if b.settings.paused {
             return BuildingStatus::Paused;
         }
+        if self.unstaffed.contains(&id) {
+            return BuildingStatus::NoWorkers;
+        }
         let Some(recipe) = b.settings.recipe.as_ref().and_then(|r| self.economy.recipe(r)).cloned() else {
             return BuildingStatus::Idle;
         };
@@ -60,7 +63,7 @@ impl World {
                 0.0
             }
         };
-        let elapsed = elapsed + dt * self.speed(i);
+        let elapsed = elapsed + dt * self.speed(i) * self.hunger_factor(self.buildings[i].owner);
         self.work.get_mut(&id).expect("eben angelegt").elapsed = Some(elapsed);
         if elapsed < recipe.seconds {
             return BuildingStatus::Working;
@@ -208,7 +211,7 @@ mod tests {
     use crate::{economy::Economy, map::GameMap};
 
     fn world(text: &str) -> World {
-        let mut w = World::new(GameMap::parse(text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap());
+        let mut w = World::new(GameMap::parse(text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
         w.spawn_player(1);
         w
     }

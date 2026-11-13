@@ -48,6 +48,13 @@ Der Karren fährt nur Betriebe im Umkreis seines Schuppens an (`service_radius`)
 Betrieben nacheinander ein, wenn einer allein nicht genug hat. Träger und Karren nehmen keine Befehle an und weichen neuen Gebäuden aus. Bauen bezahlt man vorerst
 direkt aus dem Vorrat.
 
+Bewohner (`server/src/world/people.rs`): Betriebe brauchen Arbeiter (`workers`), Träger und Karren je
+`population.per_transport` Bewohner. Platz gibt es nur in Wohnhäusern (`housing` je Stufe: Stufe 1 = 4, Stufe 2 = 8).
+Zuerst bekommen Träger und Karren eine Wohnung, dann die Betriebe in Bau-Reihenfolge; wer keine hat, arbeitet nicht
+(Status `no_workers`). Alle `meal_seconds` isst jeder arbeitende Bewohner eine Einheit aus `population.food`; reicht es
+nicht, arbeiten und laufen alle mit `hungry_speed_percent` Tempo. Man kann auch gleich auf einer höheren Stufe bauen
+(`place_building.level`), das kostet alle Stufen bis dahin zusammen.
+
 Texte: Der Server schickt nie fertige Sätze, sondern Schlüssel mit Platzhaltern (`Text { key, args }`, z. B.
 `error.not_enough` mit `good` und `need`). Übersetzt wird im Client (Deutsch und Englisch).
 

@@ -1,14 +1,15 @@
 //! Spielzustand: Einheiten und Gebäude auf der Karte.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use protocol::{
-    BuildingKind, BuildingSettings, BuildingState, BuildingStatus, GoodAmount, ResourceKind, ServerMsg, StockState, Text,
+    BuildingKind, BuildingSettings, BuildingState, BuildingStatus, GoodAmount, PeopleState, ResourceKind, ServerMsg, StockState, Text,
     TileKind, UnitKind, UnitState,
 };
 
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
+mod people;
 mod production;
 mod transport;
 use production::Work;
@@ -70,10 +71,15 @@ pub struct World {
     work: HashMap<u32, Work>,
     /// Änderungen für alle Clients (Gebäudestatus, Rohstoffe), siehe `take_events`.
     events: Vec<ServerMsg>,
+    /// Bewohner je Spieler (Wohnplätze, Arbeiter, Hunger).
+    people: HashMap<u32, PeopleState>,
+    meal_timer: HashMap<u32, f32>,
+    /// Betriebe ohne Arbeiter (keine Wohnung frei).
+    unstaffed: HashSet<u32>,
+    /// Träger und Karren ohne Wohnung: sie warten zu Hause.
+    idle_units: HashSet<u32>,
 }
 
-/// Feld vor dem Eingang einer Grundfläche (x, y, w, h), mittig an der Vorderseite.
-/// Kann außerhalb der Karte liegen (dann negativ oder zu groß).
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
 pub fn level_cost(def: &protocol::BuildingDef, level: u8) -> Vec<GoodAmount> {
     let mut sum: Vec<GoodAmount> = Vec::new();
@@ -86,6 +92,8 @@ pub fn level_cost(def: &protocol::BuildingDef, level: u8) -> Vec<GoodAmount> {
     sum
 }
 
+/// Feld vor dem Eingang einer Grundfläche (x, y, w, h), mittig an der Vorderseite.
+/// Kann außerhalb der Karte liegen (dann negativ oder zu groß).
 fn entrance_tile(x: u32, y: u32, w: u32, h: u32, rotation: u8) -> (i64, i64) {
     let (x, y, w, h) = (x as i64, y as i64, w as i64, h as i64);
     match rotation % 4 {
@@ -124,6 +132,10 @@ impl World {
             resource_left,
             work: HashMap::new(),
             events: Vec::new(),
+            people: HashMap::new(),
+            meal_timer: HashMap::new(),
+            unstaffed: HashSet::new(),
+            idle_units: HashSet::new(),
         }
     }
 
@@ -133,7 +145,9 @@ impl World {
     }
 
     pub fn stock_state(&self, player: u32) -> StockState {
-        self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0 })
+        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, people: Default::default() });
+        state.people = self.people.get(&player).cloned().unwrap_or_default();
+        state
     }
 
     /// Lager, die sich geändert haben, seit dem letzten Aufruf.
@@ -214,6 +228,8 @@ impl World {
             self.remove_building(id);
         }
         self.stocks.remove(&player);
+        self.people.remove(&player);
+        self.meal_timer.remove(&player);
         ids
     }
 
@@ -471,16 +487,18 @@ impl World {
 
     /// Einen Spieltakt von `dt` Sekunden simulieren.
     pub fn step(&mut self, dt: f32) {
+        self.step_people(dt);
         self.step_production(dt);
         self.step_transport(dt);
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
         let king = self.economy.def.movement.king_speed;
+        let hungry: HashMap<u32, f32> = self.stocks.keys().map(|&p| (p, self.hunger_factor(p))).collect();
         for unit in self.units.iter_mut() {
             let speed = match unit.kind {
                 UnitKind::King => king,
-                UnitKind::Carrier => carrier,
-                UnitKind::Cart => cart,
+                UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
+                UnitKind::Cart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
             };
             let mut budget = speed * dt;
             while budget > 0.0 {
@@ -551,7 +569,7 @@ mod tests {
     }
 
     fn eco() -> Economy {
-        Economy::parse(crate::economy::ECONOMY_JSON).unwrap()
+        Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people()
     }
 
     fn flat_world() -> World {
