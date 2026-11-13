@@ -9,6 +9,8 @@
 //! Quadrat von (x, y) bis (x + 1, y + 1), seine Mitte ist (x + 0.5, y + 0.5).
 //! `y` zählt zeilenweise nach unten (wie in der Kartendatei).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -25,11 +27,15 @@ pub enum ClientMsg {
     /// Gebäude bauen. (x, y) ist das Feld oben links der Grundfläche.
     /// Der Server prüft Untergrund, Platz und Besitz.
     PlaceBuilding { kind: BuildingKind, x: u32, y: u32 },
-    /// Eigenes Gebäude abreißen.
+    /// Eigenes Gebäude abreißen. Ein Teil der Baukosten kommt zurück.
     DemolishBuilding { building_id: u32 },
+    /// Eigenes Gebäude auf die nächste Stufe ausbauen.
+    UpgradeBuilding { building_id: u32 },
 }
 
 /// Nachrichten vom Server an den Client.
+// `welcome` ist groß, kommt aber nur einmal pro Verbindung.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
@@ -38,8 +44,11 @@ pub enum ServerMsg {
         player_id: u32,
         tick_rate: u32,
         map: MapInfo,
-        /// Was es zu bauen gibt (Größe usw.), damit der Client nichts doppelt pflegt.
-        building_specs: Vec<BuildingSpec>,
+        /// Waren, Gebäude, Stufen und Rezepte aus `server/data/economy.json`.
+        /// So pflegt der Client nichts doppelt und kann die Produktionsketten anzeigen.
+        economy: EconomyDef,
+        /// Eigener Lagerbestand zu Beginn.
+        stock: StockState,
         /// Alle Gebäude, die schon stehen. Danach kommen nur noch Änderungen.
         buildings: Vec<BuildingState>,
     },
@@ -60,9 +69,17 @@ pub enum ServerMsg {
     BuildingRemoved {
         building_id: u32,
     },
+    /// Ein Gebäude hat sich geändert (z. B. ausgebaut).
+    BuildingChanged {
+        building: BuildingState,
+    },
+    /// Eigener Lagerbestand hat sich geändert (geht nur an diesen Spieler).
+    Stock {
+        stock: StockState,
+    },
     /// Ein Befehl dieses Clients wurde abgelehnt (z. B. kein Platz zum Bauen).
     Rejected {
-        reason: String,
+        text: Text,
     },
 }
 
@@ -171,8 +188,73 @@ pub struct UnitState {
     pub moving: bool,
 }
 
+/// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.
+/// Der Server schickt nie fertige Sätze, so bleibt das Spiel mehrsprachig.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Text {
+    /// z. B. `error.not_flat`; die Übersetzungen liegen im Client.
+    pub key: String,
+    /// Platzhalter im Text, z. B. `{"max": "1"}` für `{max}`.
+    pub args: BTreeMap<String, String>,
+}
+
+impl Text {
+    pub fn new(key: &str) -> Text {
+        Text { key: key.into(), args: BTreeMap::new() }
+    }
+    pub fn arg(mut self, name: &str, value: impl ToString) -> Text {
+        self.args.insert(name.into(), value.to_string());
+        self
+    }
+}
+
+/// Eine Ware: Rohstoff, Zwischenprodukt oder Ausrüstung.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Good {
+    Wood,
+    Boards,
+    Stone,
+    /// Quader vom Steinmetz, für hohe Mauern, Türme und den Bergfried.
+    Blocks,
+    IronOre,
+    Iron,
+    Grain,
+    Flour,
+    Bread,
+    Meat,
+    Leather,
+    Spear,
+    Longbow,
+    Crossbow,
+    Sword,
+    Armor,
+    LightArmor,
+    Saddle,
+}
+
+/// Menge einer Ware.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GoodAmount {
+    pub good: Good,
+    pub amount: u32,
+}
+
+/// Lagerbestand eines Spielers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct StockState {
+    /// Nur Waren, von denen etwas da ist.
+    pub goods: Vec<GoodAmount>,
+    /// Höchstmenge je Ware (wächst mit Vorratslagern).
+    pub capacity: u32,
+}
+
 /// Art eines Gebäudes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum BuildingKind {
@@ -183,19 +265,95 @@ pub enum BuildingKind {
     Tower,
     /// Bergfried: Hauptturm der Burg.
     Keep,
-    /// Vorratslager für Holz, Stein, Eisen und Nahrung.
+    /// Vorratslager: mehr Platz für Waren.
     Storehouse,
+    Woodcutter,
+    Sawmill,
+    Quarry,
+    Stonemason,
+    Mine,
+    Smelter,
+    Smithy,
+    SpearMaker,
+    Bowyer,
+    Tannery,
+    Farm,
+    Mill,
+    Bakery,
+    PigFarm,
+    CattleFarm,
+}
+
+/// Gruppe im Baumenü.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum BuildingCategory {
+    Fortification,
+    Storage,
+    Raw,
+    Workshop,
+    Food,
+}
+
+/// Eine Ausbaustufe. Stufe 1 ist das Bauen selbst.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BuildingLevel {
+    /// Kosten für das Bauen (Stufe 1) bzw. den Ausbau auf diese Stufe.
+    pub cost: Vec<GoodAmount>,
+    /// Rezepte, die diese Stufe freischaltet (zusätzlich zu den vorigen).
+    #[serde(default)]
+    pub recipes: Vec<String>,
 }
 
 /// Feste Eigenschaften einer Gebäudeart.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct BuildingSpec {
+pub struct BuildingDef {
     pub kind: BuildingKind,
+    pub category: BuildingCategory,
     /// Grundfläche in Feldern.
     pub w: u32,
     pub h: u32,
     pub max_hp: u32,
+    /// Höchstens so viele pro Spieler.
+    #[serde(default)]
+    pub max_per_player: Option<u32>,
+    /// Rohstoff-Felder, an denen dieser Betrieb arbeitet (z. B. Wald).
+    #[serde(default)]
+    pub gathers: Vec<ResourceKind>,
+    /// Mindestens eine Stufe.
+    pub levels: Vec<BuildingLevel>,
+}
+
+/// Ein Rezept: was ein Betrieb aus welchen Waren macht.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RecipeDef {
+    pub id: String,
+    pub building: BuildingKind,
+    #[serde(default)]
+    pub inputs: Vec<GoodAmount>,
+    pub outputs: Vec<GoodAmount>,
+    /// Dauer eines Durchlaufs.
+    pub seconds: f32,
+}
+
+/// Die ganze Wirtschaft als Daten (einzige Quelle: `server/data/economy.json`).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct EconomyDef {
+    pub goods: Vec<Good>,
+    pub buildings: Vec<BuildingDef>,
+    pub recipes: Vec<RecipeDef>,
+    pub start_stock: Vec<GoodAmount>,
+    /// Lagerplatz je Ware ohne Vorratslager.
+    pub base_capacity: u32,
+    /// Zusätzlicher Platz je Ware pro Vorratslager.
+    pub storehouse_capacity: u32,
+    /// So viel Prozent der Bau- und Ausbaukosten gibt es beim Abriss zurück.
+    pub demolish_refund_percent: u32,
 }
 
 /// Ein Gebäude auf der Karte. Es belegt die Felder (x, y) bis (x + w - 1, y + h - 1).
@@ -210,4 +368,6 @@ pub struct BuildingState {
     pub w: u32,
     pub h: u32,
     pub hp: u32,
+    /// Ausbaustufe, beginnt bei 1.
+    pub level: u32,
 }

@@ -1,12 +1,14 @@
 //! Autoritativer Spielserver: feste Tick-Rate, Clients per WebSocket.
 
-mod buildings;
+mod economy;
 mod map;
 mod maps_api;
 mod nav;
+mod stock;
 mod world;
 
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     sync::{
         atomic::{AtomicU32, Ordering},
@@ -39,6 +41,8 @@ struct AppState {
     world: Mutex<World>,
     next_player_id: AtomicU32,
     players_online: AtomicU32,
+    /// Direkter Kanal zu jedem Client (für Nachrichten nur an einen Spieler).
+    clients: Mutex<HashMap<u32, tokio::sync::mpsc::Sender<ServerMsg>>>,
     /// Jeder Tick wird an alle verbundenen Clients verteilt.
     ticks: broadcast::Sender<ServerMsg>,
 }
@@ -65,7 +69,11 @@ async fn main() {
     info!("Karte {map_name} geladen ({} x {})", game_map.width, game_map.height);
     let state = Arc::new(AppState {
         map: game_map.info(),
-        world: Mutex::new(World::new(game_map)),
+        world: Mutex::new(World::new(
+            game_map,
+            economy::Economy::parse(economy::ECONOMY_JSON).expect("economy.json ist gültig"),
+        )),
+        clients: Mutex::new(HashMap::new()),
         next_player_id: AtomicU32::new(1),
         players_online: AtomicU32::new(0),
         ticks,
@@ -97,11 +105,19 @@ async fn game_loop(state: Arc<AppState>) {
     loop {
         interval.tick().await;
         tick += 1;
-        let units = {
+        let (units, stocks) = {
             let mut world = state.world.lock().unwrap();
             world.step(1.0 / TICK_RATE as f32);
-            world.snapshot()
+            (world.snapshot(), world.take_dirty_stocks())
         };
+        if !stocks.is_empty() {
+            let clients = state.clients.lock().unwrap();
+            for (player, stock) in stocks {
+                if let Some(tx) = clients.get(&player) {
+                    let _ = tx.try_send(ServerMsg::Stock { stock });
+                }
+            }
+        }
         // Fehler heißt nur: gerade niemand verbunden.
         let _ = state.ticks.send(ServerMsg::Tick {
             tick,
@@ -120,21 +136,23 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     state.players_online.fetch_add(1, Ordering::Relaxed);
     // Gebäudestand und Abo im selben Lock holen: so geht keine Änderung
     // verloren und keine kommt doppelt an.
-    let (buildings, mut ticks) = {
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<ServerMsg>(64);
+    let (buildings, economy, stock, mut ticks) = {
         let mut world = state.world.lock().unwrap();
         world.spawn_player(player_id);
-        (world.buildings.clone(), state.ticks.subscribe())
+        state.clients.lock().unwrap().insert(player_id, out_tx.clone());
+        (world.buildings.clone(), world.economy.def.clone(), world.stock_state(player_id), state.ticks.subscribe())
     };
     info!("Spieler {player_id} verbunden");
 
     let (mut tx, mut rx) = socket.split();
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<ServerMsg>(64);
 
     let welcome = ServerMsg::Welcome {
         player_id,
         tick_rate: TICK_RATE,
         map: state.map.clone(),
-        building_specs: buildings::all_specs(),
+        economy,
+        stock,
         buildings,
     };
     let _ = out_tx.send(welcome).await;
@@ -170,14 +188,21 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 match world.place_building(player_id, kind, x, y) {
                     // Noch unter dem Lock verschicken, damit die Reihenfolge stimmt.
                     Ok(building) => drop(state.ticks.send(ServerMsg::BuildingPlaced { building })),
-                    Err(reason) => drop(out_tx.try_send(ServerMsg::Rejected { reason })),
+                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                 }
             }
             Ok(ClientMsg::DemolishBuilding { building_id }) => {
                 let mut world = state.world.lock().unwrap();
                 match world.demolish(player_id, building_id) {
                     Ok(()) => drop(state.ticks.send(ServerMsg::BuildingRemoved { building_id })),
-                    Err(reason) => drop(out_tx.try_send(ServerMsg::Rejected { reason })),
+                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                }
+            }
+            Ok(ClientMsg::UpgradeBuilding { building_id }) => {
+                let mut world = state.world.lock().unwrap();
+                match world.upgrade(player_id, building_id) {
+                    Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
+                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                 }
             }
             Err(e) => warn!("Ungültige Nachricht von {player_id}: {e}"),
@@ -185,6 +210,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     }
 
     writer.abort();
+    state.clients.lock().unwrap().remove(&player_id);
     {
         let mut world = state.world.lock().unwrap();
         for building_id in world.remove_player(player_id) {
