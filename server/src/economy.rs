@@ -52,6 +52,25 @@ impl Economy {
                 }
             }
         }
+        if let Some(r) = def.recipes.iter().find(|r| !(r.seconds > 0.0 && r.seconds.is_finite())) {
+            return Err(format!("Rezept {}: Dauer muss größer als 0 sein", r.id));
+        }
+        if let Some(r) = def.recipes.iter().find(|r| r.outputs.is_empty()) {
+            return Err(format!("Rezept {}: braucht mindestens ein Ergebnis", r.id));
+        }
+        let t = &def.transport;
+        if t.carrier_capacity == 0 || t.cart_capacity == 0 || t.building_capacity == 0 {
+            return Err("Transport: Kapazitäten müssen größer als 0 sein".into());
+        }
+        if !(t.carrier_speed > 0.0 && t.cart_speed > 0.0 && t.carrier_speed.is_finite() && t.cart_speed.is_finite()) {
+            return Err("Transport: Geschwindigkeiten müssen größer als 0 sein".into());
+        }
+        if !(def.movement.king_speed > 0.0 && def.movement.king_speed.is_finite()) {
+            return Err("König: Geschwindigkeit muss größer als 0 sein".into());
+        }
+        if def.base_capacity == 0 {
+            return Err("base_capacity muss größer als 0 sein".into());
+        }
         let goods = |list: &[GoodAmount]| list.iter().all(|g| def.goods.contains(&g.good));
         if !def.buildings.iter().all(|b| b.levels.iter().all(|l| goods(&l.cost)))
             || !def.recipes.iter().all(|r| goods(&r.inputs) && goods(&r.outputs))
@@ -60,6 +79,25 @@ impl Economy {
             return Err("Eine Ware wird benutzt, steht aber nicht in goods".into());
         }
         Ok(Economy { def, buildings })
+    }
+
+    /// Wirtschaftsdaten aus einer Datei. Fehlt sie, gelten die eingebauten Werte.
+    pub fn load(path: &std::path::Path) -> Result<Economy, String> {
+        match std::fs::read_to_string(path) {
+            Ok(text) => Economy::parse(&text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Economy::parse(ECONOMY_JSON),
+            Err(e) => Err(format!("{}: {e}", path.display())),
+        }
+    }
+
+    /// Als JSON im Stil der Datei: kurze Teile auf einer Zeile, sonst eingerückt.
+    pub fn to_json(&self) -> String {
+        let mut value = serde_json::to_value(&self.def).expect("serialisierbar");
+        tidy(&mut value);
+        let mut out = String::new();
+        write_json(&mut out, &value, 0, 0, 0);
+        out.push('\n');
+        out
     }
 
     /// Wie viel ein Feld mit diesem Rohstoff anfangs hergibt (0 = unbegrenzt bzw. nichts zum Abbauen).
@@ -73,6 +111,87 @@ impl Economy {
 
     pub fn recipe(&self, id: &str) -> Option<&RecipeDef> {
         self.def.recipes.iter().find(|r| r.id == id)
+    }
+}
+
+/// Zeilen höchstens so lang, sonst wird umgebrochen.
+const JSON_WIDTH: usize = 100;
+
+fn write_json(out: &mut String, v: &serde_json::Value, indent: usize, depth: usize, prefix: usize) {
+    use serde_json::Value;
+    let compact = compact_json(v);
+    if depth >= 2 && indent + prefix + compact.len() < JSON_WIDTH {
+        out.push_str(&compact);
+        return;
+    }
+    let pad = " ".repeat(indent + 2);
+    match v {
+        Value::Object(m) if !m.is_empty() => {
+            out.push_str("{\n");
+            for (i, (k, x)) in m.iter().enumerate() {
+                let key = serde_json::to_string(k).expect("Schlüssel");
+                out.push_str(&format!("{pad}{key}: "));
+                write_json(out, x, indent + 2, depth + 1, key.len() + 2);
+                out.push_str(if i + 1 < m.len() { ",\n" } else { "\n" });
+            }
+            out.push_str(&" ".repeat(indent));
+            out.push('}');
+        }
+        Value::Array(a) if !a.is_empty() => {
+            out.push_str("[\n");
+            for (i, x) in a.iter().enumerate() {
+                out.push_str(&pad);
+                write_json(out, x, indent + 2, depth + 1, 0);
+                out.push_str(if i + 1 < a.len() { ",\n" } else { "\n" });
+            }
+            out.push_str(&" ".repeat(indent));
+            out.push(']');
+        }
+        _ => out.push_str(&compact),
+    }
+}
+
+/// Für eine gut lesbare Datei: leere Standardwerte weglassen und Kommazahlen
+/// so kurz schreiben, wie sie als f32 gemeint sind (1.2 statt 1.2000000476837158).
+fn tidy(v: &mut serde_json::Value) {
+    use serde_json::Value;
+    match v {
+        Value::Object(m) => {
+            m.retain(|k, x| match x {
+                Value::Null => false,
+                Value::Array(a) if a.is_empty() => !matches!(k.as_str(), "gathers" | "spawns"),
+                Value::Bool(false) => k != "hub",
+                Value::Number(n) if n.as_u64() == Some(0) => k != "gather_radius",
+                _ => true,
+            });
+            m.values_mut().for_each(tidy);
+        }
+        Value::Array(a) => a.iter_mut().for_each(tidy),
+        Value::Number(n) if n.is_f64() => {
+            let f = n.as_f64().unwrap_or_default() as f32;
+            *v = if f.fract() == 0.0 && f.abs() < 1e9 {
+                Value::from(f as i64)
+            } else {
+                serde_json::from_str(&format!("{f}")).unwrap_or(Value::Null)
+            };
+        }
+        _ => {}
+    }
+}
+
+/// Eine Zeile mit `, ` und `: ` wie in der Datei.
+fn compact_json(v: &serde_json::Value) -> String {
+    use serde_json::Value;
+    match v {
+        Value::Object(m) => {
+            let items: Vec<String> = m
+                .iter()
+                .map(|(k, x)| format!("{}: {}", serde_json::to_string(k).expect("Schlüssel"), compact_json(x)))
+                .collect();
+            format!("{{{}}}", items.join(", "))
+        }
+        Value::Array(a) => format!("[{}]", a.iter().map(compact_json).collect::<Vec<_>>().join(", ")),
+        _ => v.to_string(),
     }
 }
 
@@ -109,6 +228,15 @@ mod tests {
             let cost = &eco.building(kind).unwrap().levels[0].cost;
             assert!(cost.iter().any(|g| g.good == protocol::Good::Boards), "{kind:?} braucht Bretter");
         }
+    }
+
+    #[test]
+    fn speichern_und_wieder_laden_ergibt_dasselbe() {
+        let eco = Economy::parse(ECONOMY_JSON).unwrap();
+        let text = eco.to_json();
+        let again = Economy::parse(&text).unwrap();
+        assert_eq!(again.to_json(), text);
+        assert!(text.lines().all(|l| l.len() <= 120), "kurze Zeilen");
     }
 
     #[test]

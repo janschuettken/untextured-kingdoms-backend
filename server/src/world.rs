@@ -14,9 +14,6 @@ mod transport;
 use production::Work;
 use transport::Job;
 
-/// Laufgeschwindigkeit des Königs in Feldern pro Sekunde.
-const KING_SPEED: f32 = 1.5; // Felder pro Sekunde, also gut 4 m/s
-
 pub struct Unit {
     pub id: u32,
     pub owner: u32,
@@ -126,6 +123,35 @@ impl World {
             s.capacity = cap;
             self.dirty_stocks.insert(player);
         }
+    }
+
+    /// Neue Wirtschaftsdaten aus dem Balancing-Editor übernehmen. Stehende
+    /// Gebäude bleiben; Lagergrößen passen sich an, Rezepte, die es nicht mehr
+    /// gibt, laufen nicht weiter.
+    pub fn set_economy(&mut self, economy: Economy) {
+        self.economy = economy;
+        let cap = self.economy.def.transport.building_capacity;
+        for inv in self.inventories.values_mut() {
+            inv.capacity = cap;
+        }
+        let players: Vec<u32> = self.stocks.keys().copied().collect();
+        for p in players {
+            self.update_capacity(p);
+        }
+        for b in &self.buildings {
+            self.dirty_buildings.insert(b.id);
+        }
+    }
+
+    /// Admin: Waren direkt ins Lager legen (höchstens bis zur Kapazität).
+    pub fn admin_give(&mut self, player: u32, goods: &[GoodAmount]) {
+        let Some(stock) = self.stocks.get_mut(&player) else { return };
+        for g in goods {
+            if self.economy.def.goods.contains(&g.good) {
+                stock.add(g.good, g.amount);
+            }
+        }
+        self.dirty_stocks.insert(player);
     }
 
     /// Neuer Spieler: bekommt einen König auf einem freien Startfeld.
@@ -381,9 +407,10 @@ impl World {
         self.step_transport(dt);
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
+        let king = self.economy.def.movement.king_speed;
         for unit in self.units.iter_mut() {
             let speed = match unit.kind {
-                UnitKind::King => KING_SPEED,
+                UnitKind::King => king,
                 UnitKind::Carrier => carrier,
                 UnitKind::Cart => cart,
             };

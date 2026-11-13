@@ -146,6 +146,26 @@ cargo run -p server
 Den Client startest du im Frontend-Repo mit `npm run dev` (siehe dort).
 Gesundheitscheck: <http://localhost:8080/health> liefert `ok`.
 
+## Admin und Balancing
+
+Mit einem Admin-Token gibt es im Spiel ein Admin-Menü (Waren geben) und den Balancing-Editor
+(`/balance.html` im Frontend), in dem man alle Werte aus `economy.json` ändert: Kosten, Stufen, Rezepte,
+Zeiten, Lager, Transport. Gespeichert wird auf dem Server, geprüft wie beim Start, und es gilt sofort für alle.
+
+Den Token legst du selbst fest, er steht nirgends im Code. Ohne Token ist der Admin aus.
+
+- Lokal (PowerShell): `$env:ADMIN_TOKEN = "dein-geheimes-wort"; cargo run -p server`
+- Lokal (bash): `ADMIN_TOKEN=dein-geheimes-wort cargo run -p server`
+- Docker: in `.env` die Zeile `ADMIN_TOKEN=...` setzen, dann `docker compose up -d`.
+
+Im Spiel oben rechts auf „Admin“ klicken und den Token eingeben (der Browser merkt ihn sich). Dort gibt es auch das
+Lauftempo (König, Träger, Karren; wird in `economy.json` gespeichert) und das Spieltempo für alle (25–800 %,
+gilt bis zum Neustart des Servers).
+Gespeichert wird nach `ECONOMY_FILE`, lokal standardmäßig `server/data/economy.json` im Repo: so lassen sich
+gute Werte einfach committen und teilen. Die vorige Fassung bleibt als `economy.json.bak` liegen. In Docker liegt die
+Datei im Volume `game_data` (`/data/economy.json`); fehlt sie, gelten die Werte aus dem Repo.
+Schnittstelle: siehe `server/src/admin.rs`.
+
 ## Protokoll ändern
 
 Nachrichten werden nur in `protocol/src/lib.rs` definiert. Ablauf bei einer Änderung:

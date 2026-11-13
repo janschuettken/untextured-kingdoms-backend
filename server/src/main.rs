@@ -1,5 +1,6 @@
 //! Autoritativer Spielserver: feste Tick-Rate, Clients per WebSocket.
 
+mod admin;
 mod economy;
 mod map;
 mod mapgen;
@@ -58,6 +59,10 @@ struct AppState {
     clients: Mutex<HashMap<u32, Client>>,
     /// Ereignisse für alle (Gebäude, Ressourcen). Ticks gehen pro Client.
     ticks: broadcast::Sender<ServerMsg>,
+    /// Admin-Token und Ort von economy.json (siehe `admin.rs`).
+    admin: admin::Admin,
+    /// Spieltempo in Prozent (100 = normal), vom Admin einstellbar.
+    game_speed: AtomicU32,
 }
 
 #[tokio::main]
@@ -80,16 +85,23 @@ async fn main() {
     let game_map = map::GameMap::parse(&map_text)
         .unwrap_or_else(|e| panic!("Karte {map_name} ist ungültig: {e}"));
     info!("Karte {map_name} geladen ({} x {})", game_map.width, game_map.height);
+    let admin = admin::Admin::from_env();
+    let economy = economy::Economy::load(&admin.economy_file).unwrap_or_else(|e| {
+        warn!("Wirtschaftsdaten ungültig ({e}), nehme die eingebauten");
+        economy::Economy::parse(economy::ECONOMY_JSON).expect("eingebaute economy.json ist gültig")
+    });
+    if !admin.enabled() {
+        info!("Kein ADMIN_TOKEN gesetzt: Admin-Menü und Balancing-Speichern sind aus");
+    }
     let state = Arc::new(AppState {
-        world: Mutex::new(World::new(
-            game_map,
-            economy::Economy::parse(economy::ECONOMY_JSON).expect("economy.json ist gültig"),
-        )),
+        world: Mutex::new(World::new(game_map, economy)),
         clients: Mutex::new(HashMap::new()),
         map_name: map_name.clone(),
         next_player_id: AtomicU32::new(1),
         players_online: AtomicU32::new(0),
         ticks,
+        admin,
+        game_speed: AtomicU32::new(100),
     });
 
     tokio::spawn(game_loop(state.clone()));
@@ -98,8 +110,9 @@ async fn main() {
         .route("/ws", get(ws_handler))
         .route("/health", get(|| async { "ok" }))
         .route("/api/maps/current", get(current_map))
-        .with_state(state)
-        .merge(maps_api::router(store));
+        .with_state(state.clone())
+        .merge(maps_api::router(store))
+        .merge(admin::router(state));
 
     let port: u16 = std::env::var("PORT")
         .ok()
@@ -156,7 +169,8 @@ async fn game_loop(state: Arc<AppState>) {
         tick += 1;
         let (units, stocks) = {
             let mut world = state.world.lock().unwrap();
-            world.step(1.0 / TICK_RATE as f32);
+            let speed = state.game_speed.load(Ordering::Relaxed) as f32 / 100.0;
+            world.step(speed / TICK_RATE as f32);
             // Unter dem Lock verschicken, damit neue Clients nichts doppelt oder gar nicht sehen.
             for event in world.take_events() {
                 let _ = state.ticks.send(event);
@@ -224,6 +238,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         buildings,
     };
     let _ = out_tx.send(welcome).await;
+    let _ = out_tx.send(ServerMsg::GameSpeed { percent: state.game_speed.load(Ordering::Relaxed) }).await;
 
     // Ausgehend: direkte Antworten + Ticks an diesen Client schreiben.
     let writer = tokio::spawn(async move {
@@ -243,6 +258,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     });
 
     // Eingehend: Nachrichten des Clients verarbeiten.
+    let mut is_admin = false;
     while let Some(Ok(msg)) = rx.next().await {
         let Message::Text(text) = msg else { continue };
         match serde_json::from_str::<ClientMsg>(&text) {
@@ -297,6 +313,27 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 match world.upgrade(player_id, building_id) {
                     Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
                     Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                }
+            }
+            Ok(ClientMsg::AdminLogin { token }) => {
+                is_admin = state.admin.check(&token);
+                let _ = out_tx.send(ServerMsg::AdminStatus { ok: is_admin }).await;
+            }
+            Ok(ClientMsg::AdminGive { goods }) => {
+                if is_admin {
+                    state.world.lock().unwrap().admin_give(player_id, &goods);
+                } else {
+                    let _ = out_tx.try_send(ServerMsg::Rejected { text: protocol::Text::new("admin.denied") });
+                }
+            }
+            Ok(ClientMsg::AdminGameSpeed { percent }) => {
+                if is_admin {
+                    let percent = percent.clamp(25, 800);
+                    state.game_speed.store(percent, Ordering::Relaxed);
+                    let _ = state.ticks.send(ServerMsg::GameSpeed { percent });
+                    info!("Spieltempo {percent} %");
+                } else {
+                    let _ = out_tx.try_send(ServerMsg::Rejected { text: protocol::Text::new("admin.denied") });
                 }
             }
             Err(e) => warn!("Ungültige Nachricht von {player_id}: {e}"),
