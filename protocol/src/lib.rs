@@ -35,6 +35,9 @@ pub enum ClientMsg {
         y: u32,
         #[serde(default)]
         rotation: u8,
+        /// Gleich auf dieser Stufe bauen (0 oder 1 = erste Stufe). Kostet alle Stufen bis dahin.
+        #[serde(default)]
+        level: u8,
     },
     /// Eigenes Gebäude abreißen. Ein Teil der Baukosten kommt zurück.
     DemolishBuilding { building_id: u32 },
