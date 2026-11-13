@@ -74,6 +74,18 @@ pub struct World {
 
 /// Feld vor dem Eingang einer Grundfläche (x, y, w, h), mittig an der Vorderseite.
 /// Kann außerhalb der Karte liegen (dann negativ oder zu groß).
+/// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
+pub fn level_cost(def: &protocol::BuildingDef, level: u8) -> Vec<GoodAmount> {
+    let mut sum: Vec<GoodAmount> = Vec::new();
+    for c in def.levels.iter().take(level.max(1) as usize).flat_map(|l| &l.cost) {
+        match sum.iter_mut().find(|s| s.good == c.good) {
+            Some(s) => s.amount += c.amount,
+            None => sum.push(*c),
+        }
+    }
+    sum
+}
+
 fn entrance_tile(x: u32, y: u32, w: u32, h: u32, rotation: u8) -> (i64, i64) {
     let (x, y, w, h) = (x as i64, y as i64, w as i64, h as i64);
     match rotation % 4 {
@@ -211,7 +223,7 @@ impl World {
     /// Gebäude noch eine Einheit überdecken.
     #[cfg(test)]
     pub fn place_building(&mut self, player: u32, kind: BuildingKind, x: u32, y: u32) -> Result<BuildingState, Refusal> {
-        self.place_building_rotated(player, kind, x, y, 0)
+        self.place_building_rotated(player, kind, x, y, 0, 1)
     }
 
     /// Wie `place_building`, gedreht um `rotation` Vierteldrehungen (siehe Protokoll).
@@ -224,12 +236,17 @@ impl World {
         x: u32,
         y: u32,
         rotation: u8,
+        level: u8,
     ) -> Result<BuildingState, Refusal> {
         let def = self.economy.building(kind).ok_or_else(|| Text::new("error.unknown_building"))?.clone();
         let rotation = rotation % 4;
+        let level = level.max(1);
+        if level as usize > def.levels.len() {
+            return Err(Text::new("error.max_level"));
+        }
         let (w, h) = if rotation % 2 == 1 { (def.h, def.w) } else { (def.w, def.h) };
         let max_hp = def.max_hp;
-        let cost = def.levels[0].cost.clone();
+        let cost = level_cost(&def, level);
         if let Some(max) = def.max_per_player {
             let have = self.buildings.iter().filter(|b| b.owner == player && b.kind == kind).count();
             if have >= max as usize {
@@ -239,7 +256,7 @@ impl World {
         if x.checked_add(w).is_none_or(|r| r > self.map.width) || y.checked_add(h).is_none_or(|b| b > self.map.height) {
             return Err(Text::new("error.outside_map"));
         }
-        let level = self.map.levels[(y * self.map.width + x) as usize];
+        let height = self.map.levels[(y * self.map.width + x) as usize];
         for ty in y..y + h {
             for tx in x..x + w {
                 let i = (ty * self.map.width + tx) as usize;
@@ -248,7 +265,7 @@ impl World {
                     TileKind::Ramp => return Err(Text::new("error.on_ramp")),
                     TileKind::Ground => {}
                 }
-                if self.map.levels[i] != level {
+                if self.map.levels[i] != height {
                     return Err(Text::new("error.not_flat"));
                 }
                 if self.occupied[i] != 0 {
@@ -309,7 +326,7 @@ impl World {
             w,
             h,
             hp: max_hp,
-            level: 1,
+            level: level as u32,
             settings,
             status,
             rotation,
@@ -587,10 +604,10 @@ mod tests {
         assert_eq!(w.upgrade(1, b.id).unwrap().level, 2);
         assert_eq!(w.upgrade(1, b.id).unwrap_err().key, "error.max_level");
         assert_eq!(w.upgrade(2, b.id).unwrap_err().key, "error.not_yours");
-        let boards = w.stocks[&1].amount(Good::Boards);
+        let boards = w.stocks[&1].amount(protocol::Good::Boards);
         w.demolish(1, b.id).unwrap();
         // Hälfte von Stufe 1 (20 Bretter) und Stufe 2 (30 Bretter) zurück.
-        assert_eq!(w.stocks[&1].amount(Good::Boards), boards + 10 + 15);
+        assert_eq!(w.stocks[&1].amount(protocol::Good::Boards), boards + 10 + 15);
         assert!(!w.take_dirty_stocks().is_empty());
         assert!(w.take_dirty_stocks().is_empty(), "nur einmal melden");
     }
@@ -617,7 +634,7 @@ mod tests {
         w.place_building(1, BuildingKind::Wall, 5, 8).unwrap();
         // Eingang an den Kartenrand: geht nicht. Gedreht (Eingang links) schon.
         assert_eq!(w.place_building(1, BuildingKind::Sawmill, 12, 20).unwrap_err().key, "error.entrance_blocked");
-        let r = w.place_building_rotated(1, BuildingKind::Sawmill, 12, 20, 1).unwrap();
+        let r = w.place_building_rotated(1, BuildingKind::Sawmill, 12, 20, 1, 1).unwrap();
         assert_eq!((r.rotation, r.entrance), (1, Some((11, 22))));
         // Tower ohne Eingang darf direkt anschließen.
         let t = w.place_building(1, BuildingKind::Tower, 16, 20).unwrap();
@@ -627,6 +644,22 @@ mod tests {
         assert_eq!(entrance_tile(5, 5, 3, 3, 2), (6, 4));
         w.demolish(1, b.id).unwrap();
         w.place_building(1, BuildingKind::Wall, 6, 8).unwrap();
+    }
+
+    #[test]
+    fn gleich_hoehere_stufe_bauen() {
+        let mut w = flat_world();
+        let def = w.economy.building(BuildingKind::Bowyer).unwrap().clone();
+        let cost = level_cost(&def, 2);
+        let boards = cost.iter().find(|c| c.good == protocol::Good::Boards).unwrap().amount;
+        assert_eq!(boards, def.levels[0].cost.iter().chain(&def.levels[1].cost).filter(|c| c.good == protocol::Good::Boards).map(|c| c.amount).sum::<u32>());
+        w.admin_give(1, &cost);
+        let before = w.stock_state(1).goods.iter().find(|g| g.good == protocol::Good::Boards).unwrap().amount;
+        let b = w.place_building_rotated(1, BuildingKind::Bowyer, 4, 4, 0, 2).unwrap();
+        assert_eq!(b.level, 2);
+        let after = w.stock_state(1).goods.iter().find(|g| g.good == protocol::Good::Boards).map_or(0, |g| g.amount);
+        assert_eq!(before - after, boards);
+        assert_eq!(w.place_building_rotated(1, BuildingKind::Bowyer, 12, 4, 0, 3).unwrap_err().key, "error.max_level");
     }
 
     #[test]
