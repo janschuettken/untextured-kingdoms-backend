@@ -20,7 +20,7 @@
 //! [`GameMap::load`] sammelt alle Fehler und liefert trotzdem eine Karte,
 //! damit der Editor sie anzeigen kann. Kaputte Rampen werden dabei zu Boden.
 
-use protocol::{MapCheck, MapInfo, MapIssue, ResourceKind, TileKind};
+use protocol::{MapCheck, MapInfo, MapIssue, ResourceKind, Text, TileKind};
 
 use crate::nav::NavGrid;
 
@@ -85,12 +85,12 @@ pub fn resource_from_char(c: char) -> Option<ResourceKind> {
     })
 }
 
-fn issue(x: i32, y: i32, message: impl Into<String>) -> MapIssue {
-    MapIssue { x: Some(x as u32), y: Some(y as u32), message: message.into() }
+fn issue(x: i32, y: i32, text: Text) -> MapIssue {
+    MapIssue { x: Some(x as u32), y: Some(y as u32), text }
 }
 
-fn general(message: impl Into<String>) -> MapIssue {
-    MapIssue { x: None, y: None, message: message.into() }
+fn general(text: Text) -> MapIssue {
+    MapIssue { x: None, y: None, text }
 }
 
 impl GameMap {
@@ -102,7 +102,8 @@ impl GameMap {
                 (Some(x), Some(y)) => format!("Feld ({x}, {y}): "),
                 _ => String::new(),
             };
-            return Err(format!("{at}{}", e.message));
+            let args: Vec<String> = e.text.args.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            return Err(format!("{at}{} {}", e.text.key, args.join(" ")));
         }
         r.map.ok_or_else(|| "Karte ist leer".into())
     }
@@ -124,7 +125,7 @@ impl GameMap {
             if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
                 match name {
                     "terrain" | "resources" => section = if name == "terrain" { "terrain" } else { "resources" },
-                    _ => errors.push(general(format!("Zeile {}: unbekannter Abschnitt [{name}]", n + 1))),
+                    _ => errors.push(general(Text::new("map.unknown_section").arg("line", n + 1).arg("name", name))),
                 }
                 continue;
             }
@@ -132,7 +133,7 @@ impl GameMap {
                 let nums: Vec<u32> = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
                 match nums[..] {
                     [x, y] => spawns.push((x, y)),
-                    _ => errors.push(general(format!("Zeile {}: spawn braucht x und y", n + 1))),
+                    _ => errors.push(general(Text::new("map.spawn_args").arg("line", n + 1))),
                 }
                 continue;
             }
@@ -145,19 +146,17 @@ impl GameMap {
         let height = terrain.len();
         let width = terrain.first().map_or(0, |r| r.len());
         if width == 0 {
-            errors.push(general("Die Karte hat keine Felder"));
+            errors.push(general(Text::new("map.empty")));
             return LoadResult { map: None, errors, warnings };
         }
         if width > MAX_SIZE || height > MAX_SIZE {
-            errors.push(general(format!("Karte ist größer als {MAX_SIZE} x {MAX_SIZE}")));
+            errors.push(general(Text::new("map.too_big").arg("max", MAX_SIZE)));
             return LoadResult { map: None, errors, warnings };
         }
         if let Some(y) = terrain.iter().position(|r| r.len() != width) {
-            errors.push(general(format!(
-                "Terrain-Zeile {} hat {} statt {width} Zeichen. Alle Zeilen müssen gleich lang sein.",
-                y + 1,
-                terrain[y].len()
-            )));
+            errors.push(general(
+                Text::new("map.row_length").arg("row", y + 1).arg("len", terrain[y].len()).arg("width", width),
+            ));
             return LoadResult { map: None, errors, warnings };
         }
 
@@ -177,7 +176,7 @@ impl GameMap {
             for x in 0..w {
                 let c = chars[y as usize][x as usize];
                 if !(c.is_ascii_digit() || c == '~' || ramp_dir(c).is_some()) {
-                    errors.push(issue(x, y, format!("unbekanntes Zeichen '{c}'")));
+                    errors.push(issue(x, y, Text::new("map.unknown_char").arg("char", c)));
                     chars[y as usize][x as usize] = '0';
                 }
             }
@@ -221,17 +220,15 @@ impl GameMap {
                 let low = ground_level(&chars, x - dx, y - dy);
                 let high = ground_level(&chars, hx, hy);
                 let problem = match (low, high) {
-                    (None, _) => Some("Rampe: unteres Ende grenzt nicht an Boden".to_string()),
-                    (_, None) => Some("Rampe: oberes Ende grenzt nicht an Boden".to_string()),
-                    (Some(lo), Some(hi)) if hi <= lo => Some(format!(
-                        "Rampe: oben (Stufe {hi}) muss höher sein als unten (Stufe {lo})"
-                    )),
+                    (None, _) => Some(Text::new("map.ramp_no_low")),
+                    (_, None) => Some(Text::new("map.ramp_no_high")),
+                    (Some(lo), Some(hi)) if hi <= lo => {
+                        Some(Text::new("map.ramp_not_higher").arg("high", hi).arg("low", lo))
+                    }
                     (Some(lo), Some(hi))
                         if !((hi - lo) as u16 * STEPS_PER_LEVEL).is_multiple_of(len as u16) =>
                     {
-                        Some(format!(
-                            "Rampe: Länge {len} passt nicht. Pro Stufe 1, 2, 3, 4 oder 6 Felder lang."
-                        ))
+                        Some(Text::new("map.ramp_length").arg("len", len))
                     }
                     _ => None,
                 };
@@ -308,27 +305,25 @@ impl GameMap {
         let mut resources = vec![ResourceKind::None; n];
         if !res_rows.is_empty() {
             if res_rows.len() != height {
-                errors.push(general(format!(
-                    "[resources] hat {} Zeilen, [terrain] aber {height}",
-                    res_rows.len()
-                )));
+                errors.push(general(
+                    Text::new("map.res_rows").arg("rows", res_rows.len()).arg("height", height),
+                ));
             }
             for (y, (line_no, row)) in res_rows.iter().enumerate().take(height) {
                 if row.len() != width {
-                    errors.push(general(format!(
-                        "Zeile {line_no}: [resources] hat {} statt {width} Zeichen",
-                        row.len()
-                    )));
+                    errors.push(general(
+                        Text::new("map.res_row_length").arg("line", line_no).arg("len", row.len()).arg("width", width),
+                    ));
                 }
                 for (x, &c) in row.iter().enumerate().take(width) {
                     let (xi, yi) = (x as i32, y as i32);
                     match resource_from_char(c) {
-                        None => errors.push(issue(xi, yi, format!("unbekannte Ressource '{c}'"))),
+                        None => errors.push(issue(xi, yi, Text::new("map.unknown_resource").arg("char", c))),
                         Some(ResourceKind::None) => {}
                         Some(r) => {
                             let i = idx(xi, yi);
                             if tiles[i] != TileKind::Ground {
-                                errors.push(issue(xi, yi, "Ressourcen nur auf flachem Boden"));
+                                errors.push(issue(xi, yi, Text::new("map.resource_not_flat")));
                             } else {
                                 resources[i] = r;
                             }
@@ -351,12 +346,12 @@ impl GameMap {
                 errors.push(MapIssue {
                     x: ((x as usize) < width).then_some(x),
                     y: ((y as usize) < height).then_some(y),
-                    message: format!("Startfeld ({x}, {y}) liegt nicht auf begehbarem Boden"),
+                    text: Text::new("map.spawn_invalid").arg("x", x).arg("y", y),
                 });
             }
         }
         if valid_spawns.len() < 2 {
-            warnings.push(general("Weniger als zwei Startfelder: Mehrspieler geht so nicht"));
+            warnings.push(general(Text::new("map.few_spawns")));
         }
 
         let blocked: Vec<bool> = resources.iter().map(|&r| resource_blocks(r)).collect();
@@ -415,7 +410,7 @@ impl GameMap {
         regions
             .into_iter()
             .map(|(size, (x, y))| {
-                issue(x, y, format!("{size} Feld(er) hier sind vom ersten Startfeld aus nicht erreichbar"))
+                issue(x, y, Text::new("map.unreachable").arg("count", size))
             })
             .collect()
     }

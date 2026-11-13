@@ -150,7 +150,8 @@ pub enum ResourceKind {
 pub struct MapIssue {
     pub x: Option<u32>,
     pub y: Option<u32>,
-    pub message: String,
+    /// Übersetzbarer Text, Schlüssel `map.*`.
+    pub text: Text,
 }
 
 /// Ergebnis der Kartenprüfung (für den Karteneditor, `POST /api/maps/check`).
