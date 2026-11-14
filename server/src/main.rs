@@ -109,7 +109,8 @@ async fn main() {
         )
         .init();
 
-    let (ticks, _) = broadcast::channel(64);
+    // Großzügig: pro Tick können viele Gebäude melden (Lager, Status).
+    let (ticks, _) = broadcast::channel(4096);
     // Karte aus dem Kartenordner laden: MAP=name (ohne .txt), Standard "zwei-burgen".
     let store = Arc::new(maps_api::MapStore::from_env());
     let map_name = std::env::var("MAP").unwrap_or_else(|_| "zwei-burgen".into());
@@ -335,14 +336,24 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, wanted: Option<u
     let _ = out_tx.send(ServerMsg::GameSpeed { percent: state.game_speed.load(Ordering::Relaxed) }).await;
 
     // Ausgehend: direkte Antworten + Ticks an diesen Client schreiben.
-    let writer = tokio::spawn(async move {
+    let mut writer = tokio::spawn(async move {
         loop {
             let msg = tokio::select! {
                 // Direkte Nachrichten zuerst, damit `welcome` vor allem anderen ankommt.
                 biased;
                 Some(m) = out_rx.recv() => m,
-                Ok(m) = ticks.recv() => m,
-                else => break,
+                r = ticks.recv() => match r {
+                    Ok(m) => m,
+                    // Zu langsam gelesen: Ereignisse (gebaut, abgerissen …) sind verloren
+                    // und der Client wäre dauerhaft falsch. Verbindung schließen, der
+                    // Client verbindet neu und bekommt mit `welcome` den ganzen Stand.
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("Spieler {player_id}: {n} Ereignisse verpasst, trenne zum Neuladen");
+                        let _ = tx.send(Message::Close(None)).await;
+                        break;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
             };
             let text = serde_json::to_string(&msg).expect("serialisierbar");
             if tx.send(Message::Text(text.into())).await.is_err() {
@@ -352,128 +363,137 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, wanted: Option<u
     });
 
     // Eingehend: Nachrichten des Clients verarbeiten.
-    let mut is_admin = false;
-    while let Some(Ok(msg)) = rx.next().await {
-        let Message::Text(text) = msg else { continue };
-        match serde_json::from_str::<ClientMsg>(&text) {
-            Ok(ClientMsg::Hello { name }) => info!("Spieler {player_id} heißt {name}"),
-            Ok(ClientMsg::Ping { client_time }) => {
-                let _ = out_tx.send(ServerMsg::Pong { client_time }).await;
-            }
-            Ok(ClientMsg::View { x0, y0, x1, y1 }) => {
-                if let Some(c) = state.clients.lock().unwrap().get_mut(&player_id) {
-                    c.view = Some((x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)));
+    let reader = async {
+        let mut is_admin = false;
+        while let Some(Ok(msg)) = rx.next().await {
+            let Message::Text(text) = msg else { continue };
+            match serde_json::from_str::<ClientMsg>(&text) {
+                Ok(ClientMsg::Hello { name }) => info!("Spieler {player_id} heißt {name}"),
+                Ok(ClientMsg::Ping { client_time }) => {
+                    let _ = out_tx.send(ServerMsg::Pong { client_time }).await;
                 }
-            }
-            Ok(ClientMsg::MoveUnits { unit_ids, x, y }) => {
-                state.world.lock().unwrap().order_move(player_id, &unit_ids, (x, y));
-            }
-            Ok(ClientMsg::PlaceBuilding { kind, x, y, rotation, level }) => {
-                let mut world = state.world.lock().unwrap();
-                match world.place_building_rotated(player_id, kind, x, y, rotation, level) {
-                    // Noch unter dem Lock verschicken, damit die Reihenfolge stimmt.
-                    Ok(building) => {
-                        // Erst die Mauerstücke, die einem Tor oder Turm weichen mussten.
-                        for event in world.take_events() {
-                            let _ = state.ticks.send(event);
+                Ok(ClientMsg::View { x0, y0, x1, y1 }) => {
+                    if let Some(c) = state.clients.lock().unwrap().get_mut(&player_id) {
+                        c.view = Some((x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)));
+                    }
+                }
+                Ok(ClientMsg::MoveUnits { unit_ids, x, y }) => {
+                    state.world.lock().unwrap().order_move(player_id, &unit_ids, (x, y));
+                }
+                Ok(ClientMsg::PlaceBuilding { kind, x, y, rotation, level }) => {
+                    let mut world = state.world.lock().unwrap();
+                    match world.place_building_rotated(player_id, kind, x, y, rotation, level) {
+                        // Noch unter dem Lock verschicken, damit die Reihenfolge stimmt.
+                        Ok(building) => {
+                            // Erst die Mauerstücke, die einem Tor oder Turm weichen mussten.
+                            for event in world.take_events() {
+                                let _ = state.ticks.send(event);
+                            }
+                            let _ = state.ticks.send(ServerMsg::BuildingPlaced { building });
                         }
-                        let _ = state.ticks.send(ServerMsg::BuildingPlaced { building });
+                        Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                     }
-                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                 }
-            }
-            Ok(ClientMsg::DemolishBuilding { building_id }) => {
-                let mut world = state.world.lock().unwrap();
-                match world.demolish(player_id, building_id) {
-                    Ok(()) => drop(state.ticks.send(ServerMsg::BuildingRemoved { building_id })),
-                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                Ok(ClientMsg::DemolishBuilding { building_id }) => {
+                    let mut world = state.world.lock().unwrap();
+                    match world.demolish(player_id, building_id) {
+                        Ok(()) => drop(state.ticks.send(ServerMsg::BuildingRemoved { building_id })),
+                        Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                    }
                 }
-            }
-            Ok(ClientMsg::ConfigureBuilding { building_id, settings }) => {
-                let mut world = state.world.lock().unwrap();
-                match world.configure(player_id, building_id, settings) {
-                    Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
-                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                Ok(ClientMsg::ConfigureBuilding { building_id, settings }) => {
+                    let mut world = state.world.lock().unwrap();
+                    match world.configure(player_id, building_id, settings) {
+                        Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
+                        Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                    }
                 }
-            }
-            Ok(ClientMsg::ReleaseTrees { building_id }) => {
-                let mut world = state.world.lock().unwrap();
-                match world.release_trees(player_id, building_id) {
-                    Ok(()) => {
-                        let _ = state.ticks.send(ServerMsg::BuildingRemoved { building_id });
-                        for event in world.take_events() {
-                            let _ = state.ticks.send(event);
+                Ok(ClientMsg::ReleaseTrees { building_id }) => {
+                    let mut world = state.world.lock().unwrap();
+                    match world.release_trees(player_id, building_id) {
+                        Ok(()) => {
+                            let _ = state.ticks.send(ServerMsg::BuildingRemoved { building_id });
+                            for event in world.take_events() {
+                                let _ = state.ticks.send(event);
+                            }
                         }
+                        Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                     }
-                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                 }
-            }
-            Ok(ClientMsg::MoveBuilding { building_id, x, y, rotation }) => {
-                let mut world = state.world.lock().unwrap();
-                match world.move_building(player_id, building_id, x, y, rotation) {
-                    // Für die Clients: alt weg, neu da (Belegung, Anschlüsse der Mauern).
-                    Ok(building) => {
-                        let _ = state.ticks.send(ServerMsg::BuildingRemoved { building_id });
-                        let _ = state.ticks.send(ServerMsg::BuildingPlaced { building });
+                Ok(ClientMsg::MoveBuilding { building_id, x, y, rotation }) => {
+                    let mut world = state.world.lock().unwrap();
+                    match world.move_building(player_id, building_id, x, y, rotation) {
+                        // Für die Clients: alt weg, neu da (Belegung, Anschlüsse der Mauern).
+                        Ok(building) => {
+                            let _ = state.ticks.send(ServerMsg::BuildingRemoved { building_id });
+                            let _ = state.ticks.send(ServerMsg::BuildingPlaced { building });
+                        }
+                        Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                     }
-                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                 }
-            }
-            Ok(ClientMsg::UpgradeBuilding { building_id }) => {
-                let mut world = state.world.lock().unwrap();
-                match world.upgrade(player_id, building_id) {
-                    Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
-                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                Ok(ClientMsg::UpgradeBuilding { building_id }) => {
+                    let mut world = state.world.lock().unwrap();
+                    match world.upgrade(player_id, building_id) {
+                        Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
+                        Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                    }
                 }
-            }
-            Ok(ClientMsg::WatchUnit { unit_id }) => {
-                if let Some(c) = state.clients.lock().unwrap().get_mut(&player_id) {
-                    c.watch = unit_id;
-                    c.watch_sent = None;
+                Ok(ClientMsg::WatchUnit { unit_id }) => {
+                    if let Some(c) = state.clients.lock().unwrap().get_mut(&player_id) {
+                        c.watch = unit_id;
+                        c.watch_sent = None;
+                    }
                 }
-            }
-            Ok(ClientMsg::TrainUnits { building_id, kind, count }) => {
-                let mut world = state.world.lock().unwrap();
-                match world.train(player_id, building_id, kind, count) {
-                    Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
-                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                Ok(ClientMsg::TrainUnits { building_id, kind, count }) => {
+                    let mut world = state.world.lock().unwrap();
+                    match world.train(player_id, building_id, kind, count) {
+                        Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
+                        Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                    }
                 }
-            }
-            Ok(ClientMsg::CancelTraining { building_id }) => {
-                let mut world = state.world.lock().unwrap();
-                match world.cancel_training(player_id, building_id) {
-                    Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
-                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                Ok(ClientMsg::CancelTraining { building_id }) => {
+                    let mut world = state.world.lock().unwrap();
+                    match world.cancel_training(player_id, building_id) {
+                        Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
+                        Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                    }
                 }
-            }
-            Ok(ClientMsg::Trade { good, amount, sell }) => {
-                if let Err(text) = state.world.lock().unwrap().trade(player_id, good, amount, sell) {
-                    let _ = out_tx.try_send(ServerMsg::Rejected { text });
+                Ok(ClientMsg::Trade { good, amount, sell }) => {
+                    if let Err(text) = state.world.lock().unwrap().trade(player_id, good, amount, sell) {
+                        let _ = out_tx.try_send(ServerMsg::Rejected { text });
+                    }
                 }
-            }
-            Ok(ClientMsg::AdminLogin { token }) => {
-                is_admin = state.admin.check(&token);
-                let _ = out_tx.send(ServerMsg::AdminStatus { ok: is_admin }).await;
-            }
-            Ok(ClientMsg::AdminGive { goods, taler }) => {
-                if is_admin {
-                    state.world.lock().unwrap().admin_give(player_id, &goods, taler);
-                } else {
-                    let _ = out_tx.try_send(ServerMsg::Rejected { text: protocol::Text::new("admin.denied") });
+                Ok(ClientMsg::AdminLogin { token }) => {
+                    is_admin = state.admin.check(&token);
+                    let _ = out_tx.send(ServerMsg::AdminStatus { ok: is_admin }).await;
                 }
-            }
-            Ok(ClientMsg::AdminGameSpeed { percent }) => {
-                if is_admin {
-                    let percent = percent.clamp(25, 800);
-                    state.game_speed.store(percent, Ordering::Relaxed);
-                    let _ = state.ticks.send(ServerMsg::GameSpeed { percent });
-                    info!("Spieltempo {percent} %");
-                } else {
-                    let _ = out_tx.try_send(ServerMsg::Rejected { text: protocol::Text::new("admin.denied") });
+                Ok(ClientMsg::AdminGive { goods, taler }) => {
+                    if is_admin {
+                        state.world.lock().unwrap().admin_give(player_id, &goods, taler);
+                    } else {
+                        let _ = out_tx.try_send(ServerMsg::Rejected { text: protocol::Text::new("admin.denied") });
+                    }
                 }
+                Ok(ClientMsg::AdminGameSpeed { percent }) => {
+                    if is_admin {
+                        let percent = percent.clamp(25, 800);
+                        state.game_speed.store(percent, Ordering::Relaxed);
+                        let _ = state.ticks.send(ServerMsg::GameSpeed { percent });
+                        info!("Spieltempo {percent} %");
+                    } else {
+                        let _ = out_tx.try_send(ServerMsg::Rejected { text: protocol::Text::new("admin.denied") });
+                    }
+                }
+                Err(e) => warn!("Ungültige Nachricht von {player_id}: {e}"),
             }
-            Err(e) => warn!("Ungültige Nachricht von {player_id}: {e}"),
         }
+    };
+    // Endet der Schreiber (Verbindung tot oder absichtlich getrennt), ist auch
+    // Schluss mit Lesen: sonst bliebe der Spieler bei halb offenen Verbindungen
+    // "online" und ein Neuverbinden bekäme einen neuen Spieler.
+    tokio::select! {
+        _ = reader => {}
+        _ = &mut writer => {}
     }
 
     writer.abort();
