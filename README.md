@@ -74,6 +74,19 @@ Tore und Wehrgänge (`server/src/world/gate.rs`): Ein Tor ist 3x1 Felder, der mi
 Ab `walkway_from_level` laufen eigene Einheiten oben auf dem Gebäude (Mauer und hohe Mauer ab Stufe 2, Turm und Tor
 immer); hinauf geht es nur über die Treppe eines Tores ab `stairs_from_level` (Stufe 2), vom Feld vor oder hinter dem
 Durchgang. Einheiten haben dafür `on_wall`; Wege über Mauer und Treppen plant `World::plan`.
+Tore und Türme (`on_walls`) darf man direkt auf eigene Mauern setzen; die Mauerstücke darunter werden dabei
+abgerissen (mit der üblichen Rückerstattung). Türme gibt es zweimal: den Turm (3x3, `garrison` 12) und den hohen Turm
+(2x2, viel höher, `garrison` 4). `garrison` begrenzt, wie viele Einheiten oben stehen; wer nicht mehr hinaufpasst,
+stellt sich unten neben den Turm.
+
+Lagerbestand je Lager (`server/src/world/storage.rs`): Der Vorrat (`stocks`) bleibt die Summe, die oben angezeigt
+wird. Zusätzlich führt jedes Lager Buch, was bei ihm liegt (`BuildingState.inventory` bei Lagern). Träger und
+Arbeiter buchen beim Ablegen und Holen um; was sonst den Vorrat ändert (Bauen, Markt, Essen), gleicht
+`balance_hubs` jeden Tick aus. Der Bergfried fasst `base_capacity`, jedes Vorratslager `storehouse_capacity` je Ware;
+ist ein Lager voll, geht der Rest ins nächste.
+
+Versetzen (`move_building`): Eigene Gebäude lassen sich gegen eine Gebühr umsetzen, `move_cost_percent` der Baukosten
+bis zu seiner Stufe (aufgerundet). Stufe, Einstellungen und Inhalt bleiben.
 
 Texte: Der Server schickt nie fertige Sätze, sondern Schlüssel mit Platzhaltern (`Text { key, args }`, z. B.
 `error.not_enough` mit `good` und `need`). Übersetzt wird im Client (Deutsch und Englisch).

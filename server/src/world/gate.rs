@@ -371,7 +371,7 @@ fn path_len(from: (f32, f32), pts: &[(f32, f32)]) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use protocol::{BuildingKind, GateMode, Good, GoodAmount, UnitKind};
+    use protocol::{BuildingKind, GateMode, Good, GoodAmount, ServerMsg, UnitKind};
 
     use crate::map::GameMap;
     use crate::world::{Unit, World};
@@ -522,6 +522,43 @@ mod tests {
         run(&mut w, 60.0);
         assert!(w.units[k].on_wall, "über den Turm hinauf");
         assert!((w.units[k].pos.0 - 2.5).abs() < 0.01, "{:?}", w.units[k].pos);
+    }
+
+    #[test]
+    fn tor_und_turm_direkt_auf_die_mauer() {
+        let mut w = walled(1, 1);
+        w.take_events();
+        let walls = w.buildings.len();
+        // Tor auf drei Mauerstücke, hoher Turm (2x2) halb auf die Mauer.
+        w.place_building_rotated(1, BuildingKind::Gate, 15, 10, 0, 1).unwrap();
+        w.place_building_rotated(1, BuildingKind::HighTower, 20, 10, 0, 1).unwrap();
+        let removed = w.take_events().iter().filter(|e| matches!(e, ServerMsg::BuildingRemoved { .. })).count();
+        assert_eq!(removed, 5, "drei Mauerstücke unterm Tor, zwei unterm Turm");
+        assert_eq!(w.buildings.len(), walls - 5 + 2);
+        // Andere Gebäude dürfen nicht auf die Mauer.
+        assert!(w.place_building_rotated(1, BuildingKind::Staircase, 3, 10, 0, 1).is_err());
+        assert!(w.place_building_rotated(1, BuildingKind::House, 2, 9, 0, 1).is_err());
+    }
+
+    #[test]
+    fn hoher_turm_hat_wenig_platz() {
+        let mut w = walled(2, 1);
+        w.place_building_rotated(1, BuildingKind::HighTower, 20, 10, 0, 2).unwrap();
+        let ids: Vec<u32> = (0..6).map(|i| {
+            let id = 900 + i;
+            w.units.push(Unit::new(id, 1, UnitKind::King, (14.5 + i as f32, 16.5)));
+            id
+        }).collect();
+        w.order_move(1, &ids, (20.5, 10.5));
+        run(&mut w, 60.0);
+        let up = w.units.iter().filter(|u| ids.contains(&u.id) && u.on_wall).count();
+        let max = w.economy.building(BuildingKind::HighTower).unwrap().garrison as usize;
+        assert_eq!(up, max, "nur {max} passen hinauf");
+        // Wer nicht hinaufpasst, steht unten am Turm.
+        for u in w.units.iter().filter(|u| ids.contains(&u.id) && !u.on_wall) {
+            assert!(w.map.nav.is_open(u.pos.0.floor() as i32, u.pos.1.floor() as i32), "{:?}", u.pos);
+            assert!((u.pos.0 - 20.5).abs() < 4.0 && (u.pos.1 - 10.5).abs() < 4.0, "{:?}", u.pos);
+        }
     }
 
     #[test]

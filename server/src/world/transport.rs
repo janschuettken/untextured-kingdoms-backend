@@ -262,7 +262,7 @@ impl World {
                 continue;
             }
             for i in inputs.iter().filter(|i| moves(i.good)) {
-                let Some(hub) = self.nearest_hub(owner, u.pos, i.good) else { continue };
+                let Some(hub) = self.nearest_hub_having(owner, u.pos, i.good) else { continue };
                 let want = (i.amount * 2).min(inv.capacity);
                 let have = inv.amount(i.good) + Reserved::get(&reserved.incoming, (b.id, i.good));
                 let keep = b.settings.keep_in_stock.iter().find(|g| g.good == i.good).map_or(0, |g| g.amount);
@@ -357,6 +357,7 @@ impl World {
                             amount: n,
                         }]);
                         self.dirty_stocks.insert(owner);
+                        self.hub_take(at, job.good, n);
                         n
                     }
                 };
@@ -401,6 +402,7 @@ impl World {
                         };
                         let fits = stock.add(load.good, load.amount);
                         self.dirty_stocks.insert(owner);
+                        self.hub_add(at, load.good, fits);
                         load.amount - fits
                     }
                     JobKind::Supply { to } => {

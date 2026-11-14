@@ -31,6 +31,8 @@ pub struct SaveGame {
     work: HashMap<u32, Work>,
     people: HashMap<u32, PeopleState>,
     meal_timer: HashMap<u32, f32>,
+    #[serde(default)]
+    hub_goods: HashMap<u32, super::storage::HubGoods>,
     next_unit_id: u32,
     next_building_id: u32,
 }
@@ -51,6 +53,7 @@ impl World {
             work: self.work.clone(),
             people: self.people.clone(),
             meal_timer: self.meal_timer.clone(),
+            hub_goods: self.hub_goods.clone(),
             next_unit_id: self.next_unit_id,
             next_building_id: self.next_building_id,
         }
@@ -89,6 +92,7 @@ impl World {
         w.work = save.work;
         w.people = save.people;
         w.meal_timer = save.meal_timer;
+        w.hub_goods = save.hub_goods;
         w.next_unit_id = save.next_unit_id;
         w.next_building_id = save.next_building_id;
         // Ältere Stände: Herstellungsbetriebe hatten noch keine eigenen Arbeiter.

@@ -34,6 +34,7 @@ impl World {
                         let stock = self.stocks.get_mut(&owner).expect("Spieler hat einen Vorrat");
                         let fits = stock.add(load.good, load.amount);
                         self.dirty_stocks.insert(owner);
+                        self.hub_add(hub, load.good, fits);
                         if fits < load.amount {
                             // Passt nicht ganz: Rest wieder mit zurücknehmen.
                             self.units[k].carrying = Some(GoodAmount { good: load.good, amount: load.amount - fits });
@@ -50,6 +51,7 @@ impl World {
                         let got = load.amount.min(stock.amount(load.good));
                         if got > 0 && stock.take_all(&[GoodAmount { good: load.good, amount: got }]) {
                             self.dirty_stocks.insert(owner);
+                            self.hub_take(hub, load.good, got);
                             self.units[k].carrying = Some(GoodAmount { good: load.good, amount: got });
                         }
                     }
@@ -129,7 +131,7 @@ impl World {
             return true;
         }
         if let Some(load) = self.missing_input(bi) {
-            if let Some(hub) = self.nearest_hub(owner, pos, load.good) {
+            if let Some(hub) = self.nearest_hub_having(owner, pos, load.good) {
                 if self.walk_to(k, hub) {
                     self.units[k].gather = Some(Gather::Fetch(hub));
                     return false;

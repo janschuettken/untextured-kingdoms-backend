@@ -66,4 +66,12 @@ stairs_from_level: number,
 /**
  * Tor: im Modus „automatisch“ schließt es, sobald fremde Einheiten so nah (Felder) sind.
  */
-gate_radius: number, levels: Array<BuildingLevel>, };
+gate_radius: number, 
+/**
+ * So viele Einheiten finden oben Platz. 0 = so viele, wie draufpassen.
+ */
+garrison: number, 
+/**
+ * Darf direkt auf eigene Mauern gesetzt werden; die Mauer darunter wird abgerissen.
+ */
+on_walls: boolean, levels: Array<BuildingLevel>, };
