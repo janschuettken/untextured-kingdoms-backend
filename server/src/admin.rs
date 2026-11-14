@@ -1,9 +1,10 @@
 //! Admin: Token-Prüfung und Balancing-Schnittstelle.
 //!
 //! Der Admin-Token kommt aus der Umgebungsvariable `ADMIN_TOKEN`. Ist sie
-//! nicht gesetzt, gibt es keinen Admin: Waren geben und Speichern sind dann aus.
+//! nicht gesetzt (vorerst der Normalfall), ist jeder Admin, ganz ohne Anmeldung.
+//! Ist sie gesetzt, muss man den Token eingeben.
 //!
-//! - `GET  /api/admin`    `{ "enabled": bool }`: gibt es überhaupt einen Admin?
+//! - `GET  /api/admin`    `{ "enabled": true, "open": bool }`: `open` = ohne Anmeldung
 //! - `POST /api/admin`    Token prüfen (Kopfzeile `X-Admin-Token`), 204 oder 401
 //! - `GET  /api/economy`  die geltenden Wirtschaftsdaten als JSON
 //! - `PUT  /api/economy`  nur Admin: neue Daten prüfen, in die Datei schreiben und
@@ -39,13 +40,14 @@ impl Admin {
         Admin { token, economy_file }
     }
 
-    pub fn enabled(&self) -> bool {
-        self.token.is_some()
+    /// Ohne `ADMIN_TOKEN` braucht es keine Anmeldung.
+    pub fn open(&self) -> bool {
+        self.token.is_none()
     }
 
     /// Stimmt der Token? Vergleich ohne früh abzubrechen, damit die Laufzeit nichts verrät.
     pub fn check(&self, given: &str) -> bool {
-        let Some(token) = &self.token else { return false };
+        let Some(token) = &self.token else { return true };
         let (a, b) = (token.as_bytes(), given.as_bytes());
         let mut diff = a.len() ^ b.len();
         for (i, &x) in a.iter().enumerate() {
@@ -55,7 +57,7 @@ impl Admin {
     }
 
     fn allows(&self, headers: &HeaderMap) -> bool {
-        headers.get("x-admin-token").and_then(|v| v.to_str().ok()).is_some_and(|t| self.check(t))
+        self.open() || headers.get("x-admin-token").and_then(|v| v.to_str().ok()).is_some_and(|t| self.check(t))
     }
 }
 
@@ -68,7 +70,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 async fn status(State(state): State<Arc<AppState>>) -> Response {
-    Json(serde_json::json!({ "enabled": state.admin.enabled() })).into_response()
+    Json(serde_json::json!({ "enabled": true, "open": state.admin.open() })).into_response()
 }
 
 async fn login(State(state): State<Arc<AppState>>, headers: HeaderMap) -> StatusCode {
@@ -121,6 +123,7 @@ mod tests {
         assert!(!admin.check("gehei"));
         assert!(!admin.check(""));
         let none = Admin { token: None, economy_file: PathBuf::new() };
-        assert!(!none.check(""), "ohne ADMIN_TOKEN gibt es keinen Admin");
+        assert!(none.check(""), "ohne ADMIN_TOKEN ist jeder Admin");
+        assert!(none.allows(&HeaderMap::new()));
     }
 }

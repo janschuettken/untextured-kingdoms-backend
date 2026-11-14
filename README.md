@@ -163,17 +163,19 @@ Gesundheitscheck: <http://localhost:8080/health> liefert `ok`.
 
 ## Admin und Balancing
 
-Mit einem Admin-Token gibt es im Spiel ein Admin-Menü (Waren geben) und den Balancing-Editor
+Im Spiel gibt es ein Admin-Menü (Waren und Taler geben, Tempo) und den Balancing-Editor
 (`/balance.html` im Frontend), in dem man alle Werte aus `economy.json` ändert: Kosten, Stufen, Rezepte,
 Zeiten, Lager, Transport. Gespeichert wird auf dem Server, geprüft wie beim Start, und es gilt sofort für alle.
 
-Den Token legst du selbst fest, er steht nirgends im Code. Ohne Token ist der Admin aus.
+Vorerst braucht es dafür keine Anmeldung: Ohne `ADMIN_TOKEN` ist jeder Admin (Login kommt später). Wer den Server
+öffentlich laufen lässt und das nicht will, setzt einen Token; dann muss man ihn im Admin-Menü eingeben. Den Token legst
+du selbst fest, er steht nirgends im Code.
 
 - Lokal (PowerShell): `$env:ADMIN_TOKEN = "dein-geheimes-wort"; cargo run -p server`
 - Lokal (bash): `ADMIN_TOKEN=dein-geheimes-wort cargo run -p server`
 - Docker: in `.env` die Zeile `ADMIN_TOKEN=...` setzen, dann `docker compose up -d`.
 
-Im Spiel oben rechts auf „Admin“ klicken und den Token eingeben (der Browser merkt ihn sich). Dort gibt es auch das
+Im Spiel oben rechts auf „Admin“ klicken (mit Token: ihn eingeben, der Browser merkt ihn sich). Dort gibt es auch das
 Lauftempo (König, Träger, Karren; wird in `economy.json` gespeichert) und das Spieltempo für alle (25–800 %,
 gilt bis zum Neustart des Servers).
 Gespeichert wird nach `ECONOMY_FILE`, lokal standardmäßig `server/data/economy.json` im Repo: so lassen sich

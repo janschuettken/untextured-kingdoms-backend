@@ -90,8 +90,8 @@ async fn main() {
         warn!("Wirtschaftsdaten ungültig ({e}), nehme die eingebauten");
         economy::Economy::parse(economy::ECONOMY_JSON).expect("eingebaute economy.json ist gültig")
     });
-    if !admin.enabled() {
-        info!("Kein ADMIN_TOKEN gesetzt: Admin-Menü und Balancing-Speichern sind aus");
+    if admin.open() {
+        warn!("Kein ADMIN_TOKEN gesetzt: jeder darf Admin-Menü und Balancing-Editor benutzen");
     }
     let state = Arc::new(AppState {
         world: Mutex::new(World::new(game_map, economy)),
