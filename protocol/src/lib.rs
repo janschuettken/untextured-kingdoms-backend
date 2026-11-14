@@ -47,10 +47,16 @@ pub enum ClientMsg {
     ConfigureBuilding { building_id: u32, settings: BuildingSettings },
     /// Obstplantage aufgeben: ihre Bäume werden zu Wald, den man abholzen kann.
     ReleaseTrees { building_id: u32 },
+    /// Am Markt handeln: `sell` = verkaufen, sonst kaufen. Bezahlt wird in Talern.
+    Trade { good: Good, amount: u32, sell: bool },
     /// Als Admin anmelden (Token aus der Server-Umgebung `ADMIN_TOKEN`).
     AdminLogin { token: String },
     /// Nur Admin: sich selbst Waren ins Lager legen.
-    AdminGive { goods: Vec<GoodAmount> },
+    AdminGive {
+        goods: Vec<GoodAmount>,
+        #[serde(default)]
+        taler: u32,
+    },
     /// Nur Admin: Spieltempo für alle in Prozent (100 = normal, 25 bis 800).
     AdminGameSpeed { percent: u32 },
     /// Sichtbereich des Clients in Feldern (Rechteck, Ecken eingeschlossen).
@@ -292,6 +298,9 @@ pub struct StockState {
     pub capacity: u32,
     #[serde(default)]
     pub people: PeopleState,
+    /// Geld des Spielers.
+    #[serde(default)]
+    pub taler: u32,
 }
 
 /// Art eines Gebäudes.
@@ -329,6 +338,8 @@ pub enum BuildingKind {
     CartShed,
     /// Wohnhaus: Platz für Arbeiter und Träger.
     House,
+    /// Markt: Waren gegen Taler kaufen und verkaufen.
+    Market,
 }
 
 /// Gruppe im Baumenü.
@@ -469,6 +480,8 @@ pub struct EconomyDef {
     pub movement: MovementDef,
     #[serde(default)]
     pub population: PopulationDef,
+    #[serde(default)]
+    pub market: MarketDef,
 }
 
 /// Lauftempo der Einheiten, die nicht transportieren (Felder pro Sekunde).
@@ -496,6 +509,27 @@ impl Default for PopulationDef {
     fn default() -> Self {
         PopulationDef { food: vec![Good::Bread, Good::Meat, Good::Fruit], meal_seconds: 60.0, hungry_speed_percent: 50, per_transport: 1 }
     }
+}
+
+/// Taler und Markt.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MarketDef {
+    /// Taler zu Spielbeginn.
+    pub start_taler: u32,
+    /// So viele Taler zahlt jeder satte Bewohner pro Mahlzeit an Steuern.
+    pub tax_per_meal: u32,
+    /// Preise je Ware. Fehlt eine Ware, kann man sie nicht handeln.
+    pub prices: Vec<Price>,
+}
+
+/// Preis einer Ware am Markt: so viel zahlt man beim Kauf, so viel bekommt man beim Verkauf.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Price {
+    pub good: Good,
+    pub buy: u32,
+    pub sell: u32,
 }
 
 /// Bewohner eines Spielers, wie im Vorrat angezeigt.

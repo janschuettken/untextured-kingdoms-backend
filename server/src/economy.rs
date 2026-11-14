@@ -91,6 +91,17 @@ impl Economy {
         if !pop.food.iter().all(|g| def.goods.contains(g)) {
             return Err("Bewohner: ein Essen steht nicht in goods".into());
         }
+        for (i, p) in def.market.prices.iter().enumerate() {
+            if !def.goods.contains(&p.good) {
+                return Err("Markt: ein Preis gehört zu einer Ware, die nicht in goods steht".into());
+            }
+            if def.market.prices[..i].iter().any(|q| q.good == p.good) {
+                return Err("Markt: eine Ware hat zwei Preise".into());
+            }
+            if p.sell > p.buy {
+                return Err("Markt: Verkaufspreis darf nicht über dem Kaufpreis liegen (sonst gibt es Geld aus dem Nichts)".into());
+            }
+        }
         let goods = |list: &[GoodAmount]| list.iter().all(|g| def.goods.contains(&g.good));
         if !def.buildings.iter().all(|b| b.levels.iter().all(|l| goods(&l.cost)))
             || !def.recipes.iter().all(|r| goods(&r.inputs) && goods(&r.outputs))
@@ -226,7 +237,7 @@ mod tests {
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 23);
+        assert_eq!(eco.def.buildings.len(), 24);
         assert!(eco.def.buildings.iter().any(|b| b.hub), "ohne Lager kein Transport");
     }
 

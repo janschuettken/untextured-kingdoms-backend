@@ -55,6 +55,11 @@ Zuerst bekommen Träger und Karren eine Wohnung, dann die Betriebe in Bau-Reihen
 nicht, arbeiten und laufen alle mit `hungry_speed_percent` Tempo. Man kann auch gleich auf einer höheren Stufe bauen
 (`place_building.level`), das kostet alle Stufen bis dahin zusammen.
 
+Taler und Markt (`server/src/world/market.rs`): Jeder Spieler startet mit `market.start_taler`. Satte Bewohner zahlen
+pro Mahlzeit `market.tax_per_meal` Taler Steuern. Mit einem eigenen Markt (mit Arbeiter) kauft und verkauft man Waren
+zu den festen Preisen aus `market.prices` (`trade`); vorerst ein gemeinsamer Markt, die Ware geht direkt in den Vorrat.
+Kosten fürs Heer in Talern folgen, sobald es Truppen gibt.
+
 Texte: Der Server schickt nie fertige Sätze, sondern Schlüssel mit Platzhaltern (`Text { key, args }`, z. B.
 `error.not_enough` mit `good` und `need`). Übersetzt wird im Client (Deutsch und Englisch).
 

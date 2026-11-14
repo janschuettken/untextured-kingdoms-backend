@@ -9,6 +9,7 @@ use protocol::{
 
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
+mod market;
 mod people;
 mod production;
 mod transport;
@@ -145,7 +146,7 @@ impl World {
     }
 
     pub fn stock_state(&self, player: u32) -> StockState {
-        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, people: Default::default() });
+        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, people: Default::default(), taler: 0 });
         state.people = self.people.get(&player).cloned().unwrap_or_default();
         state
     }
@@ -185,8 +186,9 @@ impl World {
     }
 
     /// Admin: Waren direkt ins Lager legen (höchstens bis zur Kapazität).
-    pub fn admin_give(&mut self, player: u32, goods: &[GoodAmount]) {
+    pub fn admin_give(&mut self, player: u32, goods: &[GoodAmount], taler: u32) {
         let Some(stock) = self.stocks.get_mut(&player) else { return };
+        stock.taler = stock.taler.saturating_add(taler);
         for g in goods {
             if self.economy.def.goods.contains(&g.good) {
                 stock.add(g.good, g.amount);
@@ -215,6 +217,7 @@ impl World {
         for g in &self.economy.def.start_stock {
             stock.add(g.good, g.amount);
         }
+        stock.taler = self.economy.def.market.start_taler;
         self.stocks.insert(player, stock);
         self.units.push(Unit::new(id, player, UnitKind::King, (x as f32 + 0.5, y as f32 + 0.5)));
     }
@@ -671,7 +674,7 @@ mod tests {
         let cost = level_cost(&def, 2);
         let boards = cost.iter().find(|c| c.good == protocol::Good::Boards).unwrap().amount;
         assert_eq!(boards, def.levels[0].cost.iter().chain(&def.levels[1].cost).filter(|c| c.good == protocol::Good::Boards).map(|c| c.amount).sum::<u32>());
-        w.admin_give(1, &cost);
+        w.admin_give(1, &cost, 0);
         let before = w.stock_state(1).goods.iter().find(|g| g.good == protocol::Good::Boards).unwrap().amount;
         let b = w.place_building_rotated(1, BuildingKind::Bowyer, 4, 4, 0, 2).unwrap();
         assert_eq!(b.level, 2);

@@ -108,6 +108,18 @@
       ]
     },
     {
+      "kind": "market",
+      "category": "storage",
+      "w": 5,
+      "h": 5,
+      "max_hp": 400,
+      "max_per_player": 1,
+      "workers": 1,
+      "levels": [
+        {"cost": [{"good": "wood", "amount": 40}, {"good": "boards", "amount": 30}], "recipes": []}
+      ]
+    },
+    {
       "kind": "woodcutter",
       "category": "raw",
       "w": 3,
@@ -509,5 +521,30 @@
     "meal_seconds": 60,
     "hungry_speed_percent": 50,
     "per_transport": 1
+  },
+  "market": {
+    "start_taler": 100,
+    "tax_per_meal": 1,
+    "prices": [
+      {"good": "wood", "buy": 3, "sell": 1},
+      {"good": "boards", "buy": 6, "sell": 3},
+      {"good": "stone", "buy": 4, "sell": 2},
+      {"good": "blocks", "buy": 8, "sell": 4},
+      {"good": "iron_ore", "buy": 6, "sell": 3},
+      {"good": "iron", "buy": 14, "sell": 7},
+      {"good": "grain", "buy": 3, "sell": 1},
+      {"good": "flour", "buy": 5, "sell": 2},
+      {"good": "bread", "buy": 8, "sell": 4},
+      {"good": "fruit", "buy": 4, "sell": 2},
+      {"good": "meat", "buy": 8, "sell": 4},
+      {"good": "leather", "buy": 10, "sell": 5},
+      {"good": "spear", "buy": 12, "sell": 6},
+      {"good": "longbow", "buy": 18, "sell": 9},
+      {"good": "crossbow", "buy": 36, "sell": 18},
+      {"good": "sword", "buy": 36, "sell": 18},
+      {"good": "armor", "buy": 50, "sell": 25},
+      {"good": "light_armor", "buy": 24, "sell": 12},
+      {"good": "saddle", "buy": 24, "sell": 12}
+    ]
   }
 }

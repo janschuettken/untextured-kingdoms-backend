@@ -22,11 +22,13 @@ pub struct Stock {
     goods: BTreeMap<Good, VecDeque<Batch>>,
     /// Höchstmenge je Ware.
     pub capacity: u32,
+    /// Geld, ohne Obergrenze.
+    pub taler: u32,
 }
 
 impl Stock {
     pub fn new(capacity: u32) -> Stock {
-        Stock { goods: BTreeMap::new(), capacity }
+        Stock { goods: BTreeMap::new(), capacity, taler: 0 }
     }
 
     pub fn amount(&self, good: Good) -> u32 {
@@ -82,7 +84,7 @@ impl Stock {
             .map(|&good| GoodAmount { good, amount: self.amount(good) })
             .filter(|g| g.amount > 0)
             .collect();
-        StockState { goods, capacity: self.capacity, people: Default::default() }
+        StockState { goods, capacity: self.capacity, people: Default::default(), taler: self.taler }
     }
 }
 
