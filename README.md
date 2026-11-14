@@ -85,7 +85,7 @@ Arbeiter buchen beim Ablegen und Holen um; was sonst den Vorrat ändert (Bauen, 
 `balance_hubs` jeden Tick aus. Der Bergfried fasst `base_capacity`, jedes Vorratslager `storehouse_capacity` je Ware;
 ist ein Lager voll, geht der Rest ins nächste.
 
-Das erste Lager eines Spielers (Bergfried oder Vorratslager) ist gratis; reißt man das letzte ab, gibt es dafür
+Gebäude mit `first_free` (heute das Vorratslager) kosten beim ersten Mal nichts; reißt man das letzte ab, gibt es dafür
 nichts zurück.
 
 Versetzen (`move_building`): Eigene Gebäude lassen sich gegen eine Gebühr umsetzen, `move_cost_percent` der Baukosten

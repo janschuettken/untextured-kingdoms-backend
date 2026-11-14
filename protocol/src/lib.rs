@@ -494,6 +494,9 @@ pub struct BuildingDef {
     /// Darf direkt auf eigene Mauern gesetzt werden; die Mauer darunter wird abgerissen.
     #[serde(default)]
     pub on_walls: bool,
+    /// Das erste Gebäude dieser Art je Spieler kostet nichts.
+    #[serde(default)]
+    pub first_free: bool,
     pub levels: Vec<BuildingLevel>,
 }
 

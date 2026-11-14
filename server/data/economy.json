@@ -215,7 +215,8 @@
       "no_entrance": false,
       "hub": true,
       "workers": 0,
-      "levels": [{"cost": [{"good": "wood", "amount": 40}], "recipes": [], "housing": 0}]
+      "levels": [{"cost": [{"good": "wood", "amount": 40}], "recipes": [], "housing": 0}],
+      "first_free": true
     },
     {
       "kind": "cart_shed",
@@ -567,13 +568,21 @@
       "workers": 0,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 40}, {"good": "boards", "amount": 20}, {"good": "stone", "amount": 20}],
+          "cost": [
+            {"good": "wood", "amount": 40},
+            {"good": "boards", "amount": 20},
+            {"good": "stone", "amount": 20}
+          ],
           "recipes": [],
           "housing": 0,
           "trains": ["spearman", "archer"]
         },
         {
-          "cost": [{"good": "boards", "amount": 30}, {"good": "stone", "amount": 40}, {"good": "iron", "amount": 10}],
+          "cost": [
+            {"good": "boards", "amount": 30},
+            {"good": "stone", "amount": 40},
+            {"good": "iron", "amount": 10}
+          ],
           "recipes": [],
           "housing": 0,
           "trains": ["crossbowman", "swordsman"]
@@ -788,11 +797,69 @@
     ]
   },
   "units": [
-    {"kind": "spearman", "cost": [{"good": "spear", "amount": 1}], "taler": 10, "seconds": 20, "speed": 1.4, "hp": 60, "attack": 8, "range": 1.5, "upkeep": 1},
-    {"kind": "archer", "cost": [{"good": "longbow", "amount": 1}], "taler": 15, "seconds": 25, "speed": 1.4, "hp": 40, "attack": 6, "range": 8, "upkeep": 1},
-    {"kind": "crossbowman", "cost": [{"good": "crossbow", "amount": 1}, {"good": "light_armor", "amount": 1}], "taler": 25, "seconds": 30, "speed": 1.2, "hp": 55, "attack": 12, "range": 7, "upkeep": 2},
-    {"kind": "swordsman", "cost": [{"good": "sword", "amount": 1}, {"good": "armor", "amount": 1}], "taler": 30, "seconds": 35, "speed": 1.1, "hp": 110, "attack": 12, "range": 1, "upkeep": 2},
-    {"kind": "knight", "cost": [{"good": "sword", "amount": 1}, {"good": "armor", "amount": 1}, {"good": "saddle", "amount": 1}], "taler": 60, "seconds": 45, "speed": 2.4, "hp": 140, "attack": 16, "range": 1, "upkeep": 4}
+    {
+      "kind": "spearman",
+      "cost": [{"good": "spear", "amount": 1}],
+      "taler": 10,
+      "seconds": 20,
+      "speed": 1.4,
+      "hp": 60,
+      "attack": 8,
+      "range": 1.5,
+      "upkeep": 1
+    },
+    {
+      "kind": "archer",
+      "cost": [{"good": "longbow", "amount": 1}],
+      "taler": 15,
+      "seconds": 25,
+      "speed": 1.4,
+      "hp": 40,
+      "attack": 6,
+      "range": 8,
+      "upkeep": 1
+    },
+    {
+      "kind": "crossbowman",
+      "cost": [{"good": "crossbow", "amount": 1}, {"good": "light_armor", "amount": 1}],
+      "taler": 25,
+      "seconds": 30,
+      "speed": 1.2,
+      "hp": 55,
+      "attack": 12,
+      "range": 7,
+      "upkeep": 2
+    },
+    {
+      "kind": "swordsman",
+      "cost": [{"good": "sword", "amount": 1}, {"good": "armor", "amount": 1}],
+      "taler": 30,
+      "seconds": 35,
+      "speed": 1.1,
+      "hp": 110,
+      "attack": 12,
+      "range": 1,
+      "upkeep": 2
+    },
+    {
+      "kind": "knight",
+      "cost": [
+        {"good": "sword", "amount": 1},
+        {"good": "armor", "amount": 1},
+        {"good": "saddle", "amount": 1}
+      ],
+      "taler": 60,
+      "seconds": 45,
+      "speed": 2.4,
+      "hp": 140,
+      "attack": 16,
+      "range": 1,
+      "upkeep": 4
+    }
   ],
-  "army": {"upkeep_seconds": 60, "unpaid_speed_percent": 60, "queue_max": 10}
+  "army": {
+    "upkeep_seconds": 60,
+    "unpaid_speed_percent": 60,
+    "queue_max": 10
+  }
 }
