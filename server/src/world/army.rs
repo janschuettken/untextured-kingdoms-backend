@@ -6,7 +6,7 @@
 //! Auftrag; wer einen Auftrag streicht oder die Kaserne abreißt, bekommt die
 //! Kosten der noch nicht fertigen Soldaten ganz zurück.
 
-use protocol::{ArmyState, BuildingKind, BuildingState, GoodAmount, Text, UnitKind};
+use protocol::{ArmyState, BuildingState, GoodAmount, Text, UnitKind};
 
 use super::{Refusal, Unit, World};
 
@@ -218,7 +218,7 @@ impl World {
     /// Kasernen dieses Spielers (für Tests und Anzeige).
     #[cfg(test)]
     fn barracks(&self, player: u32) -> Vec<&BuildingState> {
-        self.buildings.iter().filter(|b| b.owner == player && b.kind == BuildingKind::Barracks).collect()
+        self.buildings.iter().filter(|b| b.owner == player && b.kind == protocol::BuildingKind::Barracks).collect()
     }
 }
 
