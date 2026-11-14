@@ -255,6 +255,7 @@ mod tests {
     #[test]
     fn mit_traegern_bleibt_der_arbeiter_am_betrieb() {
         let mut w = flat();
+        w.worker_carries_default = false; // hier tragen die Träger
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
         w.place_building(1, BuildingKind::CartShed, 12, 12).unwrap();
         let saw = w.place_building(1, BuildingKind::Sawmill, 25, 2).unwrap();
@@ -265,5 +266,6 @@ mod tests {
             assert!(w.units[worker].carrying.is_none(), "Träger tragen, nicht der Arbeiter");
         }
         assert!(w.stocks[&1].amount(Good::Boards) > boards);
+        assert!(w.snapshot()[worker].inside, "Arbeiter ist im Sägewerk, außen nicht zu sehen");
     }
 }

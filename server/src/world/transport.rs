@@ -642,6 +642,7 @@ mod tests {
     #[test]
     fn wagenschuppen_bewegt_nur_ausgewaehlte_waren() {
         let mut w = flat(40, 20);
+        w.worker_carries_default = false; // hier tragen die Träger
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
         let s = shed(&mut w, 10, 12, 1);
         let mut set = w.buildings.iter().find(|b| b.id == s).unwrap().settings.clone();
@@ -662,6 +663,7 @@ mod tests {
     #[test]
     fn traeger_holen_ab_und_beliefern() {
         let mut w = flat(40, 20);
+        w.worker_carries_default = false; // hier tragen die Träger
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
         let cutter = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap();
         shed(&mut w, 10, 12, 1);
@@ -699,6 +701,7 @@ mod tests {
     #[test]
     fn ohne_lager_staut_es_sich_und_karren_faehrt_erst_ab_mindestmenge() {
         let mut w = flat(40, 20);
+        w.worker_carries_default = false; // hier tragen die Träger
         let orchard = w.place_building(1, BuildingKind::Orchard, 30, 2).unwrap();
         // Kein Lager: Obst bleibt liegen, bis das eigene Lager voll ist.
         run(&mut w, 25.0 * 7.0 + 5.0);
@@ -759,6 +762,7 @@ mod tests {
     #[test]
     fn lager_nimmt_nur_gewaehlte_waren() {
         let mut w = flat(40, 20);
+        w.worker_carries_default = false; // hier tragen die Träger
         let keep = w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
         let mut s = keep.settings.clone();
         s.stores = Some(vec![Good::Wood]);
@@ -791,6 +795,7 @@ mod tests {
     #[test]
     fn karren_sammelt_bei_mehreren_und_bleibt_im_umkreis() {
         let mut w = flat(120, 30);
+        w.worker_carries_default = false; // hier tragen die Träger
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
         shed(&mut w, 12, 2, 2);
         w.units.retain(|u| u.kind != UnitKind::Carrier);
