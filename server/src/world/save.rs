@@ -73,7 +73,9 @@ impl World {
             for ty in b.y..b.y + b.h {
                 for tx in b.x..b.x + b.w {
                     w.occupied[(ty * w.map.width + tx) as usize] = b.id;
-                    w.map.nav.set_blocked(tx as i32, ty as i32, true);
+                    if super::gate::blocks(b, tx, ty) {
+                        w.map.nav.set_blocked(tx as i32, ty as i32, true);
+                    }
                 }
             }
             if let Some((ex, ey)) = b.entrance {

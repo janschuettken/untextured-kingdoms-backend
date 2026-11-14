@@ -54,4 +54,16 @@ spawns: Array<UnitCount>,
  * Mindestens eine Stufe.
  * Arbeiter, die der Betrieb braucht (sie wohnen in Häusern und essen).
  */
-workers: number, levels: Array<BuildingLevel>, };
+workers: number, 
+/**
+ * Ab dieser Stufe können eigene Einheiten oben auf dem Gebäude laufen (Wehrgang). 0 = nie.
+ */
+walkway_from_level: number, 
+/**
+ * Tor: ab dieser Stufe führt eine Treppe im Tor auf den Wehrgang. 0 = nie.
+ */
+stairs_from_level: number, 
+/**
+ * Tor: im Modus „automatisch“ schließt es, sobald fremde Einheiten so nah (Felder) sind.
+ */
+gate_radius: number, levels: Array<BuildingLevel>, };

@@ -9,4 +9,8 @@ export type UnitState = { id: number, owner: number, kind: UnitKind, x: number, 
 /**
  * Was ein Träger oder Karren gerade transportiert.
  */
-carrying: Good | null, };
+carrying: Good | null, 
+/**
+ * Läuft oben auf der Mauer (Wehrgang) statt am Boden.
+ */
+on_wall: boolean, };
