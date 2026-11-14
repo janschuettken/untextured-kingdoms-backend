@@ -357,6 +357,10 @@ pub enum BuildingKind {
     Market,
     /// Tor in der Mauer: der mittlere Durchgang lässt sich öffnen und schließen.
     Gate,
+    /// Holzmauer: billige Mauer aus Pfählen, hält weniger aus.
+    Palisade,
+    /// Treppenhaus an der Mauer: von hier steigen Einheiten auf den Wehrgang.
+    Staircase,
 }
 
 /// Gruppe im Baumenü.
@@ -605,7 +609,8 @@ pub struct BuildingSettings {
     /// Darf der Transport hier Eingangswaren abliefern? Aus = der Betrieb
     /// arbeitet nur mit dem, was schon in seinem Lager liegt.
     pub accept_deliveries: bool,
-    /// Nur Lager: welche Waren hier eingelagert werden. `None` = alle.
+    /// Lager: welche Waren hier eingelagert werden. Wagenschuppen: welche Waren
+    /// seine Träger und Karren bewegen. `None` = alle.
     #[serde(default)]
     pub stores: Option<Vec<Good>>,
     /// Mindestbestand im Vorrat: von diesen Waren bekommt der Betrieb nur, was

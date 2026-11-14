@@ -87,9 +87,15 @@
           "cost": [{"good": "wood", "amount": 10}, {"good": "blocks", "amount": 10}],
           "recipes": [],
           "housing": 0
+        },
+        {
+          "cost": [{"good": "wood", "amount": 10}, {"good": "boards", "amount": 6}],
+          "recipes": [],
+          "housing": 0
         }
       ],
-      "walkway_from_level": 1
+      "walkway_from_level": 1,
+      "stairs_from_level": 2
     },
     {
       "kind": "gate",
@@ -110,6 +116,38 @@
         },
         {
           "cost": [{"good": "wood", "amount": 10}, {"good": "boards", "amount": 6}],
+          "recipes": [],
+          "housing": 0
+        }
+      ]
+    },
+    {
+      "kind": "palisade",
+      "category": "fortification",
+      "w": 1,
+      "h": 1,
+      "max_hp": 150,
+      "no_entrance": true,
+      "workers": 0,
+      "walkway_from_level": 2,
+      "levels": [
+        {"cost": [{"good": "wood", "amount": 3}], "recipes": [], "housing": 0},
+        {"cost": [{"good": "wood", "amount": 2}], "recipes": [], "housing": 0}
+      ]
+    },
+    {
+      "kind": "staircase",
+      "category": "fortification",
+      "w": 1,
+      "h": 1,
+      "max_hp": 300,
+      "no_entrance": true,
+      "workers": 0,
+      "walkway_from_level": 1,
+      "stairs_from_level": 1,
+      "levels": [
+        {
+          "cost": [{"good": "stone", "amount": 6}, {"good": "wood", "amount": 6}],
           "recipes": [],
           "housing": 0
         }
@@ -168,6 +206,18 @@
         },
         {
           "cost": [{"good": "wood", "amount": 10}, {"good": "boards", "amount": 20}],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [{"kind": "cart", "count": 1}]
+        },
+        {
+          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 30}],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [{"kind": "cart", "count": 1}]
+        },
+        {
+          "cost": [{"good": "boards", "amount": 40}, {"good": "blocks", "amount": 15}],
           "recipes": [],
           "housing": 0,
           "spawns": [{"kind": "cart", "count": 1}]
