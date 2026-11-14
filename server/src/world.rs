@@ -564,17 +564,54 @@ impl World {
             target.1.clamp(0.0, self.map.height as f32 - 0.01),
         );
         let target_wall = self.is_walkway(player, target);
-        for k in 0..self.units.len() {
+        let chosen: Vec<usize> =
+            (0..self.units.len()).filter(|&k| self.units[k].owner == player && !self.units[k].is_civilian() && unit_ids.contains(&self.units[k].id)).collect();
+        let spots = if target_wall { vec![target; chosen.len()] } else { self.formation(target, chosen.len()) };
+        for (&k, &spot) in chosen.iter().zip(&spots) {
             let u = &self.units[k];
-            if u.owner == player && !u.is_civilian() && unit_ids.contains(&u.id) {
-                let (path, layers) = self.plan(player, u.pos, u.on_wall, target, target_wall);
-                let u = &mut self.units[k];
-                u.path = path;
-                u.layers = layers;
-                u.target = Some(target);
-                u.target_wall = target_wall;
+            let (path, layers) = self.plan(player, u.pos, u.on_wall, spot, target_wall);
+            let u = &mut self.units[k];
+            u.path = path;
+            u.layers = layers;
+            u.target = Some(spot);
+            u.target_wall = target_wall;
+        }
+    }
+
+    /// Ziele für eine Gruppe: ein Quadrat aus Feldern um den Zielpunkt, damit
+    /// nicht alle auf einem Fleck stehen. Felder, die nicht begehbar sind oder
+    /// auf einer anderen Höhe liegen, werden übersprungen.
+    fn formation(&self, target: (f32, f32), n: usize) -> Vec<(f32, f32)> {
+        if n <= 1 {
+            return vec![target; n];
+        }
+        let level = |x: i32, y: i32| self.map.levels[(y as u32 * self.map.width + x as u32) as usize];
+        let (cx, cy) = (target.0.floor() as i32, target.1.floor() as i32);
+        let home = level(cx, cy);
+        let mut spots = Vec::with_capacity(n);
+        // Ringe um das Zielfeld, innen zuerst.
+        'rings: for r in 0..(n as i32 + 2) {
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    if dx.abs().max(dy.abs()) != r {
+                        continue;
+                    }
+                    let (x, y) = (cx + dx, cy + dy);
+                    if !self.map.nav.is_open(x, y) || level(x, y) != home {
+                        continue;
+                    }
+                    let frac = (target.0 - cx as f32, target.1 - cy as f32);
+                    spots.push((x as f32 + frac.0, y as f32 + frac.1));
+                    if spots.len() == n {
+                        break 'rings;
+                    }
+                }
             }
         }
+        while spots.len() < n {
+            spots.push(target);
+        }
+        spots
     }
 
     /// Einen Spieltakt von `dt` Sekunden simulieren.
@@ -786,6 +823,25 @@ mod tests {
         let after = w.stock_state(1).goods.iter().find(|g| g.good == protocol::Good::Boards).map_or(0, |g| g.amount);
         assert_eq!(before - after, boards);
         assert_eq!(w.place_building_rotated(1, BuildingKind::Bowyer, 12, 4, 0, 3).unwrap_err().key, "error.max_level");
+    }
+
+    #[test]
+    fn gruppe_verteilt_sich_um_das_ziel() {
+        let mut w = flat_world();
+        let ids: Vec<u32> = (0..5).map(|n| {
+            let id = 500 + n;
+            w.units.push(Unit::new(id, 1, UnitKind::Spearman, (2.5 + n as f32, 20.5)));
+            id
+        }).collect();
+        w.order_move(1, &ids, (12.5, 12.5));
+        for _ in 0..20 * 30 {
+            w.step(0.05);
+        }
+        let mut tiles: Vec<(i32, i32)> = w.units.iter().filter(|u| ids.contains(&u.id)).map(|u| (u.pos.0 as i32, u.pos.1 as i32)).collect();
+        tiles.sort();
+        tiles.dedup();
+        assert_eq!(tiles.len(), 5, "jeder auf eigenem Feld");
+        assert!(tiles.iter().all(|&(x, y)| (x - 12).abs() <= 1 && (y - 12).abs() <= 1));
     }
 
     #[test]
