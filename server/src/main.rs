@@ -47,6 +47,9 @@ struct Client {
     view: Option<(f32, f32, f32, f32)>,
     /// Was der Client von jeder Einheit zuletzt bekommen hat.
     known: HashMap<u32, UnitState>,
+    /// Beobachtete Einheit (Weg anzeigen) und der zuletzt geschickte Weg.
+    watch: Option<u32>,
+    watch_sent: Option<Vec<(f32, f32)>>,
 }
 
 struct AppState {
@@ -167,7 +170,7 @@ async fn game_loop(state: Arc<AppState>) {
     loop {
         interval.tick().await;
         tick += 1;
-        let (units, stocks) = {
+        let (units, stocks, paths) = {
             let mut world = state.world.lock().unwrap();
             let speed = state.game_speed.load(Ordering::Relaxed) as f32 / 100.0;
             world.step(speed / TICK_RATE as f32);
@@ -175,7 +178,10 @@ async fn game_loop(state: Arc<AppState>) {
             for event in world.take_events() {
                 let _ = state.ticks.send(event);
             }
-            (world.snapshot(), world.take_dirty_stocks())
+            let watched: Vec<u32> = state.clients.lock().unwrap().values().filter_map(|c| c.watch).collect();
+            let paths: HashMap<u32, Vec<(f32, f32)>> =
+                watched.into_iter().filter_map(|id| world.unit_path(id).map(|p| (id, p))).collect();
+            (world.snapshot(), world.take_dirty_stocks(), paths)
         };
         let players_online = state.players_online.load(Ordering::Relaxed);
         let mut clients = state.clients.lock().unwrap();
@@ -185,6 +191,14 @@ async fn game_loop(state: Arc<AppState>) {
             }
         }
         for (&player, client) in clients.iter_mut() {
+            if let Some(id) = client.watch {
+                let path = paths.get(&id).cloned().unwrap_or_default();
+                if client.watch_sent.as_ref() != Some(&path)
+                    && client.tx.try_send(ServerMsg::UnitPath { unit_id: id, path: path.clone() }).is_ok()
+                {
+                    client.watch_sent = Some(path);
+                }
+            }
             let (send, gone) = tick_for(player, client, &units);
             // Kommt der Client nicht hinterher, fällt der Tick aus; was er
             // nicht bekommen hat, geht dann mit dem nächsten Tick raus.
@@ -214,7 +228,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let (map, buildings, economy, stock, mut ticks) = {
         let mut world = state.world.lock().unwrap();
         world.spawn_player(player_id);
-        let client = Client { tx: out_tx.clone(), view: None, known: HashMap::new() };
+        let client = Client { tx: out_tx.clone(), view: None, known: HashMap::new(), watch: None, watch_sent: None };
         state.clients.lock().unwrap().insert(player_id, client);
         (
             // Die Karte selbst holt der Client über /api/maps/current.
@@ -313,6 +327,12 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 match world.upgrade(player_id, building_id) {
                     Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
                     Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                }
+            }
+            Ok(ClientMsg::WatchUnit { unit_id }) => {
+                if let Some(c) = state.clients.lock().unwrap().get_mut(&player_id) {
+                    c.watch = unit_id;
+                    c.watch_sent = None;
                 }
             }
             Ok(ClientMsg::Trade { good, amount, sell }) => {

@@ -45,6 +45,10 @@ impl World {
         let Some(def) = self.economy.building(kind).cloned() else { return BuildingStatus::Idle };
         let gathers = !def.gathers.is_empty();
 
+        // Abbaubetriebe: die Arbeiter machen die Arbeit (siehe `gather.rs`).
+        if gathers {
+            return self.gather_status.get(&id).copied().unwrap_or(BuildingStatus::Working);
+        }
         let elapsed = self.work.entry(id).or_default().elapsed;
         let elapsed = match elapsed {
             Some(e) => e,
@@ -107,7 +111,7 @@ impl World {
     }
 
     /// Nächstes Feld mit abbaubarem Rohstoff in Reichweite des Gebäudes.
-    fn gather_tile(&self, i: usize) -> Option<usize> {
+    pub(super) fn gather_tile(&self, i: usize) -> Option<usize> {
         let b = &self.buildings[i];
         let def = self.economy.building(b.kind)?;
         let r = def.gather_radius as i64;
@@ -131,7 +135,7 @@ impl World {
     }
 
     /// Ein Feld um eine Einheit abbauen. Leer: Rohstoff verschwindet, Feld wird frei.
-    fn deplete(&mut self, t: usize) {
+    pub(super) fn deplete(&mut self, t: usize) {
         self.resource_left[t] = self.resource_left[t].saturating_sub(1);
         if self.resource_left[t] == 0 {
             self.set_resource(t, ResourceKind::None);
@@ -246,14 +250,15 @@ mod tests {
         let wood_after_build = w.stocks[&1].amount(Good::Wood);
         assert_eq!(wood_after_build, before - 20);
         assert!(!w.map.nav.is_open(15, 0), "Wald blockiert");
-        // Ein Waldfeld gibt 20 Holz, ein Durchlauf dauert 6 s; Träger bringen es zum Bergfried.
-        run(&mut w, 20.0 * 6.0 + 70.0);
+        // Ein Waldfeld gibt 20 Holz. Der Arbeiter läuft je Stück hin (≈10 Felder), arbeitet 6 s
+        // und trägt es zurück; Träger bringen es zum Bergfried.
+        run(&mut w, 20.0 * 26.0 + 80.0);
         assert_eq!(w.stocks[&1].amount(Good::Wood), wood_after_build + 20);
         assert_eq!(w.map.resources[15], ResourceKind::None);
         assert!(w.map.nav.is_open(15, 0), "abgeholzt: wieder begehbar");
         let events = w.take_events();
         assert!(events.iter().any(|e| matches!(e, ServerMsg::ResourceChanged { x: 15, y: 0, .. })));
-        run(&mut w, 1.0);
+        run(&mut w, 60.0);
         assert_eq!(w.buildings.iter().find(|x| x.id == b.id).unwrap().status, BuildingStatus::NoResource);
     }
 

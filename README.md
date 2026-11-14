@@ -55,6 +55,12 @@ Zuerst bekommen Träger und Karren eine Wohnung, dann die Betriebe in Bau-Reihen
 nicht, arbeiten und laufen alle mit `hungry_speed_percent` Tempo. Man kann auch gleich auf einer höheren Stufe bauen
 (`place_building.level`), das kostet alle Stufen bis dahin zusammen.
 
+Abbau (`server/src/world/gather.rs`): Holzfäller, Steinbruch und Mine haben Arbeiter (`UnitKind::Worker`, Anzahl =
+`workers`). Ein Arbeiter läuft zum nächsten Rohstoff-Feld in `gather_radius`, arbeitet dort `seconds` lang und trägt
+die Ware zurück. Gibt es Träger oder Karren, legt er sie im Betrieb ab; sonst bringt er sie selbst ins nächste Lager
+und baut in der Zeit nichts ab. Lauftempo `movement.worker_speed`. Wählt man eine Einheit aus, schickt der Client
+`watch_unit`, und der Server meldet ihren Weg (`unit_path`), wenn er sich ändert.
+
 Taler und Markt (`server/src/world/market.rs`): Jeder Spieler startet mit `market.start_taler`. Satte Bewohner zahlen
 pro Mahlzeit `market.tax_per_meal` Taler Steuern. Mit einem eigenen Markt (mit Arbeiter) kauft und verkauft man Waren
 zu den festen Preisen aus `market.prices` (`trade`); vorerst ein gemeinsamer Markt, die Ware geht direkt in den Vorrat.
