@@ -83,7 +83,8 @@ Lagerbestand je Lager (`server/src/world/storage.rs`): Der Vorrat (`stocks`) ble
 wird. Zusätzlich führt jedes Lager Buch, was bei ihm liegt (`BuildingState.inventory` bei Lagern). Träger und
 Arbeiter buchen beim Ablegen und Holen um; was sonst den Vorrat ändert (Bauen, Markt, Essen), gleicht
 `balance_hubs` jeden Tick aus. Der Bergfried fasst `base_capacity`, jedes Vorratslager `storehouse_capacity` je Ware;
-ist ein Lager voll, geht der Rest ins nächste.
+ist ein Lager voll, geht der Rest ins nächste. Ohne Lager ist der Platz 0: die Startgüter liegen dann „virtuell“
+im Vorrat (man kann damit bauen) und ziehen ins erste Lager, sobald es steht.
 
 Gebäude mit `first_free` (heute das Vorratslager) kosten beim ersten Mal nichts; reißt man das letzte ab, gibt es dafür
 nichts zurück.

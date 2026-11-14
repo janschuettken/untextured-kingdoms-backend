@@ -44,6 +44,13 @@ impl Stock {
         fits
     }
 
+    /// Ware einlagern, auch über die Kapazität hinaus (Startgüter, Admin).
+    pub fn add_unlimited(&mut self, good: Good, amount: u32) {
+        if amount > 0 {
+            self.goods.entry(good).or_default().push_back(Batch { amount, expires_at: None });
+        }
+    }
+
     pub fn has_all(&self, cost: &[GoodAmount]) -> bool {
         cost.iter().all(|c| self.amount(c.good) >= c.amount)
     }

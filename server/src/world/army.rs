@@ -98,8 +98,9 @@ impl World {
             }
         }
         let Some(stock) = self.stocks.get_mut(&player) else { return };
+        // Das kam eben erst aus dem Vorrat, also auch ohne Platz zurück.
         for g in goods {
-            stock.add(g.good, g.amount);
+            stock.add_unlimited(g.good, g.amount);
         }
         stock.taler = stock.taler.saturating_add(taler);
         self.dirty_stocks.insert(player);

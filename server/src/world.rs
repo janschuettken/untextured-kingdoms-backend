@@ -212,9 +212,16 @@ impl World {
     }
 
     /// Kapazität je Ware: Grundwert plus je Vorratslager.
+    /// Lagerplatz je Ware = Summe der eigenen Lager (Bergfried `base_capacity`, Vorratslager
+    /// `storehouse_capacity`). Ohne Lager gibt es keinen Platz; was schon da ist, bleibt.
     fn update_capacity(&mut self, player: u32) {
-        let n = self.buildings.iter().filter(|b| b.owner == player && b.kind == BuildingKind::Storehouse).count();
-        let cap = self.economy.def.base_capacity + n as u32 * self.economy.def.storehouse_capacity;
+        let hubs: Vec<u32> = self
+            .buildings
+            .iter()
+            .filter(|b| b.owner == player && self.economy.building(b.kind).is_some_and(|d| d.hub))
+            .map(|b| b.id)
+            .collect();
+        let cap = hubs.iter().map(|&h| self.hub_capacity(h)).sum();
         if let Some(s) = self.stocks.get_mut(&player) {
             s.capacity = cap;
             self.dirty_stocks.insert(player);
@@ -245,7 +252,7 @@ impl World {
         stock.taler = stock.taler.saturating_add(taler);
         for g in goods {
             if self.economy.def.goods.contains(&g.good) {
-                stock.add(g.good, g.amount);
+                stock.add_unlimited(g.good, g.amount);
             }
         }
         self.dirty_stocks.insert(player);
@@ -267,9 +274,11 @@ impl World {
             .unwrap_or(spawns[player as usize % spawns.len()]);
         let id = self.next_unit_id;
         self.next_unit_id += 1;
-        let mut stock = Stock::new(self.economy.def.base_capacity);
+        // Noch kein Lager, also kein Platz: die Startgüter liegen „virtuell“ im Vorrat und
+        // kommen ins erste Lager, sobald es steht.
+        let mut stock = Stock::new(0);
         for g in &self.economy.def.start_stock {
-            stock.add(g.good, g.amount);
+            stock.add_unlimited(g.good, g.amount);
         }
         stock.taler = self.economy.def.market.start_taler;
         self.stocks.insert(player, stock);
@@ -389,7 +398,7 @@ impl World {
         if !def.hub {
             self.inventories.insert(b.id, Stock::new(self.economy.def.transport.building_capacity));
         }
-        if kind == BuildingKind::Storehouse {
+        if def.hub {
             self.update_capacity(player);
         }
         self.make_room(&b);
@@ -617,7 +626,7 @@ impl World {
             }
         }
         self.remove_building(id);
-        if b.kind == BuildingKind::Storehouse {
+        if self.economy.building(b.kind).is_some_and(|d| d.hub) {
             self.update_capacity(player);
         }
         if let Some(stock) = self.stocks.get_mut(&player) {
@@ -967,6 +976,7 @@ mod tests {
     fn bauen_kostet_und_abriss_erstattet() {
         use protocol::Good;
         let mut w = flat_world();
+        w.place_building(1, BuildingKind::Storehouse, 14, 14).unwrap(); // Platz für die Erstattung
         let wood = w.stocks[&1].amount(Good::Wood);
         let b = w.place_building(1, BuildingKind::Bowyer, 4, 4).unwrap();
         let s = &w.stocks[&1];
