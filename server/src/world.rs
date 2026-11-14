@@ -319,7 +319,8 @@ impl World {
         }
         let (w, h) = if rotation % 2 == 1 { (def.h, def.w) } else { (def.w, def.h) };
         let max_hp = def.max_hp;
-        let cost = level_cost(&def, level);
+        // `first_free`: das erste Gebäude dieser Art ist gratis.
+        let cost = if def.first_free && !self.owns(player, kind) { Vec::new() } else { level_cost(&def, level) };
         if let Some(max) = def.max_per_player {
             let have = self.buildings.iter().filter(|b| b.owner == player && b.kind == kind).count();
             if have >= max as usize {
@@ -406,6 +407,10 @@ impl World {
     /// Darf ein Gebäude dieser Art (schon gedreht: `w` x `h`) hier stehen?
     /// `ignore`: dieses Gebäude zählt nicht als Hindernis (beim Versetzen).
     /// Liefert das Feld vor dem Eingang.
+    fn owns(&self, player: u32, kind: BuildingKind) -> bool {
+        self.buildings.iter().any(|b| b.owner == player && b.kind == kind)
+    }
+
     /// Eigene Mauerstücke (Mauer, hohe Mauer, Palisade) in dieser Fläche.
     fn walls_under(&self, player: u32, (x, y): (u32, u32), (w, h): (u32, u32)) -> Vec<u32> {
         let mut ids: Vec<u32> = Vec::new();
@@ -601,7 +606,10 @@ impl World {
             Some(_) => return Err(Text::new("error.not_yours")),
             None => return Err(Text::new("error.no_building")),
         };
-        let pct = self.economy.def.demolish_refund_percent;
+        // Das letzte seiner Art war gratis (das nächste ist es wieder): keine Erstattung.
+        let last_free = self.economy.building(b.kind).is_some_and(|d| d.first_free)
+            && !self.buildings.iter().any(|o| o.id != b.id && o.owner == player && o.kind == b.kind);
+        let pct = if last_free { 0 } else { self.economy.def.demolish_refund_percent };
         let mut refund: Vec<GoodAmount> = Vec::new();
         if let Some(def) = self.economy.building(b.kind) {
             for level in def.levels.iter().take(b.level as usize) {

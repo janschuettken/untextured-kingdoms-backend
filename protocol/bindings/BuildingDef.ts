@@ -74,4 +74,8 @@ garrison: number,
 /**
  * Darf direkt auf eigene Mauern gesetzt werden; die Mauer darunter wird abgerissen.
  */
-on_walls: boolean, levels: Array<BuildingLevel>, };
+on_walls: boolean, 
+/**
+ * Das erste Gebäude dieser Art je Spieler kostet nichts.
+ */
+first_free: boolean, levels: Array<BuildingLevel>, };
