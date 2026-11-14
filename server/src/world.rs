@@ -10,6 +10,7 @@ use protocol::{
 
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
+mod errand;
 mod gate;
 mod market;
 mod gather;
@@ -415,7 +416,8 @@ impl World {
             self.update_capacity(player);
         }
         self.make_room(&b);
-        for s in &def.spawns {
+        let spawns: Vec<_> = def.spawns.iter().chain(def.levels.iter().take(level as usize).flat_map(|l| &l.spawns)).copied().collect();
+        for s in spawns {
             for n in 0..s.count {
                 self.spawn_transport(&b, s.kind, n);
             }
@@ -450,10 +452,17 @@ impl World {
             return Err(Text::new("error.max_level"));
         };
         let cost = next.cost.clone();
+        let spawns = next.spawns.clone();
         self.pay(player, &cost)?;
         let b = self.buildings.iter_mut().find(|b| b.id == id).expect("eben gefunden");
         b.level += 1;
-        Ok(b.clone())
+        let b = b.clone();
+        for s in spawns {
+            for n in 0..s.count {
+                self.spawn_transport(&b, s.kind, n);
+            }
+        }
+        Ok(b)
     }
 
     /// Eigenes Gebäude abreißen. Ein Teil aller Bau- und Ausbaukosten kommt zurück.

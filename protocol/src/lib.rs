@@ -384,6 +384,9 @@ pub struct BuildingLevel {
     /// So viele Bewohner passen auf dieser Stufe hinein (Wohnhäuser).
     #[serde(default)]
     pub housing: u32,
+    /// Einheiten, die mit dieser Stufe dazukommen (Wagenschuppen: Träger, dann Karren).
+    #[serde(default)]
+    pub spawns: Vec<UnitCount>,
 }
 
 /// Wo ein Gebäude stehen darf: ein Mindestanteil seiner Felder muss einer
@@ -643,6 +646,8 @@ pub enum BuildingStatus {
     StorageFull,
     /// Keine Wohnung frei für die Arbeiter: mehr Häuser bauen.
     NoWorkers,
+    /// Der Arbeiter trägt gerade selbst Waren (kein Wagenschuppen mit Trägern).
+    WorkerAway,
 }
 
 /// Ein Gebäude auf der Karte. Es belegt die Felder (x, y) bis (x + w - 1, y + h - 1).

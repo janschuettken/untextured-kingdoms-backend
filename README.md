@@ -39,12 +39,14 @@ fruchtbarer Boden macht sie schneller). Die Obstplantage lässt sich aufgeben (`
 Fläche zu Wald. Zustand und Lager jedes Betriebs gehen bei Änderung an alle (`building_changed`).
 
 Transport (`server/src/world/transport.rs`): Der gemeinsame Vorrat liegt in Bergfried und Vorratslagern (`hub`).
-Dort wohnen Träger (`spawns`), der Wagenschuppen stellt einen Karren. Träger holen fertige Waren aus den Betrieben
+Träger und Karren kommen nur aus dem Wagenschuppen (`spawns` je Stufe: Stufe 1 Träger, Stufe 2 dazu ein Karren). Ohne
+sie bedient jeder Betrieb sich selbst (`server/src/world/errand.rs`): sein Arbeiter trägt Fertiges ins nächste Lager
+und holt fehlende Eingänge, in der Zeit steht der Betrieb (`WorkerAway`). Träger holen fertige Waren aus den Betrieben
 ins nächste Lager und bringen fehlende Eingänge hin, wenn der Betrieb Lieferungen annimmt. Der Karren fährt erst ab
 `cart_min_load` Waren los, lädt viel und ist schneller; solange er frei ist, lassen die Träger so große Ladungen für
 ihn liegen. Lager lassen sich auf bestimmte Waren beschränken (`stores`), dann bringen Träger nur diese dorthin. Jeder Betrieb
 kann je Eingang einen Mindestbestand im Vorrat festlegen (`keep_in_stock`): geliefert wird nur, was darüber liegt.
-Der Karren fährt nur Betriebe im Umkreis seines Schuppens an (`service_radius`) und sammelt bei mehreren gleichen
+Träger und Karren fahren nur Betriebe im Umkreis ihres Schuppens an (`service_radius`); der Karren sammelt bei mehreren gleichen
 Betrieben nacheinander ein, wenn einer allein nicht genug hat. Träger und Karren nehmen keine Befehle an und weichen neuen Gebäuden aus. Bauen bezahlt man vorerst
 direkt aus dem Vorrat.
 

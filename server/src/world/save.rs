@@ -91,6 +91,13 @@ impl World {
         w.meal_timer = save.meal_timer;
         w.next_unit_id = save.next_unit_id;
         w.next_building_id = save.next_building_id;
+        // Ältere Stände: Herstellungsbetriebe hatten noch keine eigenen Arbeiter.
+        for bi in 0..w.buildings.len() {
+            let id = w.buildings[bi].id;
+            if !w.units.iter().any(|u| u.home == Some(id) && u.kind == protocol::UnitKind::Worker) {
+                w.spawn_workers(bi);
+            }
+        }
         w.events.clear();
         Ok(w)
     }

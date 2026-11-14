@@ -39,7 +39,7 @@ impl Economy {
             if b.levels.is_empty() || b.w == 0 || b.h == 0 {
                 return Err(format!("Gebäude {:?} braucht Größe und mindestens eine Stufe", b.kind));
             }
-            if b.spawns.iter().any(|s| !matches!(s.kind, UnitKind::Carrier | UnitKind::Cart)) {
+            if b.spawns.iter().chain(b.levels.iter().flat_map(|l| &l.spawns)).any(|s| !matches!(s.kind, UnitKind::Carrier | UnitKind::Cart)) {
                 return Err(format!("Gebäude {:?}: nur Träger und Karren gehören zu einem Gebäude", b.kind));
             }
         }
@@ -191,7 +191,7 @@ fn tidy(v: &mut serde_json::Value) {
         Value::Object(m) => {
             m.retain(|k, x| match x {
                 Value::Null => false,
-                Value::Array(a) if a.is_empty() => !matches!(k.as_str(), "gathers" | "spawns"),
+                Value::Array(a) if a.is_empty() => k != "gathers",
                 Value::Bool(false) => k != "hub",
                 Value::Number(n) if n.as_u64() == Some(0) => k != "gather_radius",
                 _ => true,
