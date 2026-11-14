@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use protocol::{Good, GoodAmount};
+use protocol::{BuildingKind, Good, GoodAmount};
 
 use super::World;
 
@@ -77,13 +77,19 @@ impl World {
             for good in goods {
                 let want = total.iter().find(|g| g.good == good).map_or(0, |g| g.amount);
                 let have: u32 = mine.iter().map(|h| self.hub_amount(h.0, good)).sum();
+                let stores = |h: &&&(u32, u32, Option<Vec<Good>>)| h.2.as_ref().is_none_or(|s| s.contains(&good));
                 if want > have {
-                    let to = mine
-                        .iter()
-                        .find(|h| h.2.as_ref().is_none_or(|s| s.contains(&good)))
-                        .unwrap_or(&mine[0])
-                        .0;
-                    self.hub_add(to, good, want - have);
+                    // Erst dorthin, wo die Ware hin darf und Platz ist; Rest ins erste passende Lager.
+                    let mut left = want - have;
+                    for h in mine.iter().filter(stores) {
+                        let n = self.hub_room(h.0, good).min(left);
+                        self.hub_add(h.0, good, n);
+                        left -= n;
+                    }
+                    if left > 0 {
+                        let to = mine.iter().find(stores).unwrap_or(&mine[0]).0;
+                        self.hub_add(to, good, left);
+                    }
                 } else if have > want {
                     let mut extra = have - want;
                     let mut order: Vec<(u32, u32)> = mine.iter().map(|h| (self.hub_amount(h.0, good), h.0)).collect();
@@ -97,11 +103,38 @@ impl World {
                         }
                     }
                 }
+                // Volle Lager geben ab, was nicht mehr hineinpasst.
+                for h in &mine {
+                    let over = self.hub_amount(h.0, good).saturating_sub(self.hub_capacity(h.0));
+                    if over == 0 {
+                        continue;
+                    }
+                    let mut left = over;
+                    for o in mine.iter().filter(stores).filter(|o| o.0 != h.0) {
+                        let n = self.hub_room(o.0, good).min(left);
+                        self.hub_take(h.0, good, n);
+                        self.hub_add(o.0, good, n);
+                        left -= n;
+                    }
+                }
             }
         }
         for g in self.hub_goods.values_mut() {
             g.retain(|_, n| *n > 0);
         }
+    }
+
+    /// So viel passt je Ware in dieses Lager: Vorratslager `storehouse_capacity`, Bergfried `base_capacity`.
+    fn hub_capacity(&self, hub: u32) -> u32 {
+        let e = &self.economy.def;
+        match self.buildings.iter().find(|b| b.id == hub).map(|b| b.kind) {
+            Some(BuildingKind::Storehouse) => e.storehouse_capacity,
+            _ => e.base_capacity,
+        }
+    }
+
+    fn hub_room(&self, hub: u32, good: Good) -> u32 {
+        self.hub_capacity(hub).saturating_sub(self.hub_amount(hub, good))
     }
 
     /// Inhalt eines Lagers für die Anzeige.
@@ -146,5 +179,20 @@ mod tests {
         w.demolish(1, store).unwrap();
         w.step(0.05);
         assert_eq!(w.hub_amount(keep, Good::Iron), 5);
+    }
+
+    #[test]
+    fn volles_lager_gibt_an_das_naechste_ab() {
+        let row = "0".repeat(40);
+        let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        w.spawn_player(1);
+        let keep = w.place_building(1, BuildingKind::Keep, 2, 2).unwrap().id;
+        let store = w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap().id;
+        let base = w.economy.def.base_capacity;
+        w.admin_give(1, &[GoodAmount { good: Good::Iron, amount: base + 50 }], 0);
+        w.step(0.05);
+        assert_eq!(w.hub_amount(keep, Good::Iron), base, "Bergfried voll");
+        assert_eq!(w.hub_amount(store, Good::Iron), 50, "Rest im Vorratslager");
     }
 }
