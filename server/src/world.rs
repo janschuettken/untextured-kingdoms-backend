@@ -10,10 +10,12 @@ use protocol::{
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod market;
+mod gather;
 mod people;
 mod production;
 mod transport;
 use production::Work;
+use gather::Gather;
 use transport::Job;
 
 pub struct Unit {
@@ -34,16 +36,23 @@ pub struct Unit {
     carrying: Option<GoodAmount>,
     /// Sekunden bis zur nächsten Auftragssuche.
     cooldown: f32,
+    /// Arbeiter: was er gerade tut.
+    gather: Option<Gather>,
 }
 
 impl Unit {
     fn new(id: u32, owner: u32, kind: UnitKind, pos: (f32, f32)) -> Unit {
-        Unit { id, owner, kind, pos, path: Vec::new(), target: None, home: None, job: None, carrying: None, cooldown: 0.0 }
+        Unit { id, owner, kind, pos, path: Vec::new(), target: None, home: None, job: None, carrying: None, cooldown: 0.0, gather: None }
     }
 
     /// Träger und Karren gehorchen keinen Befehlen, sie arbeiten von selbst.
     fn is_transport(&self) -> bool {
         matches!(self.kind, UnitKind::Carrier | UnitKind::Cart)
+    }
+
+    /// Träger, Karren und Arbeiter: gehorchen keinen Befehlen und weichen Gebäuden aus.
+    fn is_civilian(&self) -> bool {
+        self.is_transport() || self.kind == UnitKind::Worker
     }
 }
 
@@ -79,6 +88,8 @@ pub struct World {
     unstaffed: HashSet<u32>,
     /// Träger und Karren ohne Wohnung: sie warten zu Hause.
     idle_units: HashSet<u32>,
+    /// Zustand der Abbaubetriebe, wie ihre Arbeiter ihn melden.
+    gather_status: HashMap<u32, BuildingStatus>,
 }
 
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
@@ -137,6 +148,7 @@ impl World {
             meal_timer: HashMap::new(),
             unstaffed: HashSet::new(),
             idle_units: HashSet::new(),
+            gather_status: HashMap::new(),
         }
     }
 
@@ -323,7 +335,7 @@ impl World {
             ux >= x as i64 && uy >= y as i64 && ux < (x + w) as i64 && uy < (y + h) as i64
         };
         // Träger weichen aus, alle anderen Einheiten stehen im Weg.
-        if self.units.iter().any(|u| !u.is_transport() && covers(u.pos)) {
+        if self.units.iter().any(|u| !u.is_civilian() && covers(u.pos)) {
             return Err(Text::new("error.unit_in_way"));
         }
         self.pay(player, &cost)?;
@@ -375,6 +387,7 @@ impl World {
                 self.spawn_transport(&b, s.kind, n);
             }
         }
+        self.spawn_workers(self.buildings.len() - 1);
         self.replan_all();
         Ok(b)
     }
@@ -481,7 +494,7 @@ impl World {
             target.1.clamp(0.0, self.map.height as f32 - 0.01),
         );
         for unit in self.units.iter_mut() {
-            if unit.owner == player && !unit.is_transport() && unit_ids.contains(&unit.id) {
+            if unit.owner == player && !unit.is_civilian() && unit_ids.contains(&unit.id) {
                 unit.path = self.map.nav.waypoints(unit.pos, target);
                 unit.target = Some(target);
             }
@@ -493,15 +506,18 @@ impl World {
         self.step_people(dt);
         self.step_production(dt);
         self.step_transport(dt);
+        self.step_gather(dt);
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
         let king = self.economy.def.movement.king_speed;
+        let worker = self.economy.def.movement.worker_speed;
         let hungry: HashMap<u32, f32> = self.stocks.keys().map(|&p| (p, self.hunger_factor(p))).collect();
         for unit in self.units.iter_mut() {
             let speed = match unit.kind {
                 UnitKind::King => king,
                 UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Cart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
+                UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
             };
             let mut budget = speed * dt;
             while budget > 0.0 {
@@ -529,6 +545,11 @@ impl World {
             b.inventory = self.inventories.get(&id).map(|s| s.state().goods).unwrap_or_default();
             self.events.push(ServerMsg::BuildingChanged { building: b.clone() });
         }
+    }
+
+    /// Restlicher Weg einer Einheit (Wegpunkte).
+    pub fn unit_path(&self, id: u32) -> Option<Vec<(f32, f32)>> {
+        self.units.iter().find(|u| u.id == id).map(|u| u.path.clone())
     }
 
     pub fn snapshot(&self) -> Vec<UnitState> {

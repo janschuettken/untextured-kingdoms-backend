@@ -3,4 +3,4 @@
 /**
  * Art einer Einheit.
  */
-export type UnitKind = "king" | "carrier" | "cart";
+export type UnitKind = "king" | "carrier" | "cart" | "worker";

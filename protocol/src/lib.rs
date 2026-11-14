@@ -47,6 +47,8 @@ pub enum ClientMsg {
     ConfigureBuilding { building_id: u32, settings: BuildingSettings },
     /// Obstplantage aufgeben: ihre Bäume werden zu Wald, den man abholzen kann.
     ReleaseTrees { building_id: u32 },
+    /// Diese Einheit beobachten: der Server schickt ihren Weg (`UnitPath`). `None` = keine.
+    WatchUnit { unit_id: Option<u32> },
     /// Am Markt handeln: `sell` = verkaufen, sonst kaufen. Bezahlt wird in Talern.
     Trade { good: Good, amount: u32, sell: bool },
     /// Als Admin anmelden (Token aus der Server-Umgebung `ADMIN_TOKEN`).
@@ -134,6 +136,12 @@ pub enum ServerMsg {
     EconomyChanged {
         economy: EconomyDef,
     },
+    /// Geplanter Weg der beobachteten Einheit (siehe `WatchUnit`), nächster Wegpunkt zuerst.
+    /// Leer = steht. Kommt nur, wenn sich der Weg ändert.
+    UnitPath {
+        unit_id: u32,
+        path: Vec<(f32, f32)>,
+    },
 }
 
 /// Art eines Feldes.
@@ -215,6 +223,8 @@ pub enum UnitKind {
     Carrier,
     /// Karren aus dem Wagenschuppen: fährt viel auf einmal.
     Cart,
+    /// Arbeiter eines Abbaubetriebs: holt Holz, Stein oder Erz und trägt es zurück.
+    Worker,
 }
 
 /// Zustand einer Einheit in einem Tick.
@@ -489,6 +499,13 @@ pub struct EconomyDef {
 #[ts(export)]
 pub struct MovementDef {
     pub king_speed: f32,
+    /// Arbeiter der Abbaubetriebe.
+    #[serde(default = "default_worker_speed")]
+    pub worker_speed: f32,
+}
+
+fn default_worker_speed() -> f32 {
+    1.2
 }
 
 /// Bewohner: Arbeiter und Träger brauchen einen Platz in einem Haus und essen.
@@ -548,7 +565,7 @@ pub struct PeopleState {
 
 impl Default for MovementDef {
     fn default() -> Self {
-        MovementDef { king_speed: 1.5 }
+        MovementDef { king_speed: 1.5, worker_speed: 1.2 }
     }
 }
 

@@ -177,7 +177,7 @@ impl World {
     }
 
     /// Nächstes eigenes Lager zu einem Punkt, das diese Ware lagert.
-    fn nearest_hub(&self, owner: u32, p: (f32, f32), good: Good) -> Option<u32> {
+    pub(super) fn nearest_hub(&self, owner: u32, p: (f32, f32), good: Good) -> Option<u32> {
         self.buildings
             .iter()
             .filter(|b| b.owner == owner && self.is_hub(b) && stores(b, good))
@@ -558,7 +558,7 @@ impl World {
     pub(super) fn make_room(&mut self, b: &BuildingState) {
         let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
         let door = self.door(b, center);
-        for u in self.units.iter_mut().filter(|u| u.is_transport()) {
+        for u in self.units.iter_mut().filter(|u| u.is_civilian()) {
             let inside = u.pos.0 >= b.x as f32
                 && u.pos.1 >= b.y as f32
                 && u.pos.0 < (b.x + b.w) as f32

@@ -3,4 +3,8 @@
 /**
  * Lauftempo der Einheiten, die nicht transportieren (Felder pro Sekunde).
  */
-export type MovementDef = { king_speed: number, };
+export type MovementDef = { king_speed: number, 
+/**
+ * Arbeiter der Abbaubetriebe.
+ */
+worker_speed: number, };
