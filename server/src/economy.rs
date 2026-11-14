@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use protocol::{BuildingDef, BuildingKind, EconomyDef, GoodAmount, RecipeDef, ResourceKind, UnitKind};
+use protocol::{BuildingDef, BuildingKind, EconomyDef, GoodAmount, RecipeDef, ResourceKind, UnitDef, UnitKind};
 
 pub const ECONOMY_JSON: &str = include_str!("../data/economy.json");
 
@@ -103,10 +103,42 @@ impl Economy {
                 return Err("Markt: Verkaufspreis darf nicht über dem Kaufpreis liegen (sonst gibt es Geld aus dem Nichts)".into());
             }
         }
+        for (i, u) in def.units.iter().enumerate() {
+            if !u.kind.is_soldier() {
+                return Err(format!("Einheit {:?}: nur Soldaten werden in der Kaserne ausgebildet", u.kind));
+            }
+            if def.units[..i].iter().any(|v| v.kind == u.kind) {
+                return Err(format!("Einheit {:?} doppelt", u.kind));
+            }
+            if !(u.seconds > 0.0 && u.seconds.is_finite() && u.speed > 0.0 && u.speed.is_finite()) {
+                return Err(format!("Einheit {:?}: Ausbildungszeit und Tempo müssen größer als 0 sein", u.kind));
+            }
+            if u.hp == 0 {
+                return Err(format!("Einheit {:?}: braucht Lebenspunkte", u.kind));
+            }
+        }
+        for b in &def.buildings {
+            for (n, level) in b.levels.iter().enumerate() {
+                if let Some(k) = level.trains.iter().find(|k| !def.units.iter().any(|u| u.kind == **k)) {
+                    return Err(format!("{:?} Stufe {}: Einheit {k:?} fehlt unter units", b.kind, n + 1));
+                }
+            }
+        }
+        let army = &def.army;
+        if !(army.upkeep_seconds >= 0.0 && army.upkeep_seconds.is_finite()) {
+            return Err("Heer: upkeep_seconds darf nicht negativ sein (0 = kein Sold)".into());
+        }
+        if !(1..=100).contains(&army.unpaid_speed_percent) {
+            return Err("Heer: unpaid_speed_percent muss zwischen 1 und 100 liegen".into());
+        }
+        if army.queue_max == 0 {
+            return Err("Heer: queue_max muss mindestens 1 sein".into());
+        }
         let goods = |list: &[GoodAmount]| list.iter().all(|g| def.goods.contains(&g.good));
         if !def.buildings.iter().all(|b| b.levels.iter().all(|l| goods(&l.cost)))
             || !def.recipes.iter().all(|r| goods(&r.inputs) && goods(&r.outputs))
             || !goods(&def.start_stock)
+            || !def.units.iter().all(|u| goods(&u.cost))
         {
             return Err("Eine Ware wird benutzt, steht aber nicht in goods".into());
         }
@@ -139,6 +171,10 @@ impl Economy {
 
     pub fn building(&self, kind: BuildingKind) -> Option<&BuildingDef> {
         self.buildings.get(&kind).map(|&i| &self.def.buildings[i])
+    }
+
+    pub fn unit(&self, kind: UnitKind) -> Option<&UnitDef> {
+        self.def.units.iter().find(|u| u.kind == kind)
     }
 
     pub fn recipe(&self, id: &str) -> Option<&RecipeDef> {
@@ -238,7 +274,7 @@ mod tests {
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 25);
+        assert_eq!(eco.def.buildings.len(), 29);
         assert!(eco.def.buildings.iter().any(|b| b.hub), "ohne Lager kein Transport");
     }
 

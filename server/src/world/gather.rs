@@ -100,11 +100,11 @@ impl World {
                     let stock = self.stocks.get_mut(&owner).expect("Spieler hat einen Vorrat");
                     let fits = stock.add(load.good, load.amount);
                     self.dirty_stocks.insert(owner);
+                    self.hub_add(hub, load.good, fits);
                     if fits < load.amount {
                         // Lager voll: Rest wieder mitnehmen und später nochmal versuchen.
                         self.units[k].carrying = Some(GoodAmount { good: load.good, amount: load.amount - fits });
                         self.units[k].cooldown = RETRY;
-                        let _ = hub;
                         self.go_to_building(k, bi);
                         self.units[k].gather = Some(Gather::Home);
                         return BuildingStatus::StorageFull;

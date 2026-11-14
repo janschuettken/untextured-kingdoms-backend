@@ -25,7 +25,7 @@ fn center(t: (i64, i64)) -> (f32, f32) {
     (t.0 as f32 + 0.5, t.1 as f32 + 0.5)
 }
 
-/// Mittleres Feld eines Tores (der Durchgang).
+/// Mittleres Feld eines Gebäudes (beim Tor der Durchgang).
 pub fn passage(b: &BuildingState) -> (u32, u32) {
     (b.x + b.w / 2, b.y + b.h / 2)
 }
@@ -166,17 +166,28 @@ impl World {
             })
     }
 
-    /// Treppen dieses Spielers: (Tormitte oben, Felder davor/dahinter am Boden).
+    /// Treppen dieses Spielers: (Feld oben, Felder am Boden davor).
+    /// Tor: Tormitte, vom Feld vor oder hinter dem Durchgang. Andere (Treppenhaus,
+    /// Turm): Gebäudemitte, von jedem freien Feld direkt neben dem Gebäude.
     fn stairs(&self, owner: u32) -> Vec<(usize, Vec<(i64, i64)>)> {
+        let open = |&(x, y): &(i64, i64)| self.map.nav.is_open(x as i32, y as i32);
         self.buildings
             .iter()
-            .filter(|b| b.owner == owner && b.kind == BuildingKind::Gate)
+            .filter(|b| b.owner == owner)
             .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.stairs_from_level > 0 && b.level >= d.stairs_from_level))
             .map(|b| {
-                let (px, py) = passage(b);
-                let open: Vec<(i64, i64)> =
-                    entries(b).into_iter().filter(|&(x, y)| self.map.nav.is_open(x as i32, y as i32)).collect();
-                ((py * self.map.width + px) as usize, open)
+                let (cx, cy) = passage(b);
+                let feet: Vec<(i64, i64)> = if b.kind == BuildingKind::Gate {
+                    entries(b).into_iter().filter(open).collect()
+                } else {
+                    let (x0, y0, x1, y1) = (b.x as i64, b.y as i64, (b.x + b.w) as i64, (b.y + b.h) as i64);
+                    (x0..x1)
+                        .flat_map(|x| [(x, y0 - 1), (x, y1)])
+                        .chain((y0..y1).flat_map(|y| [(x0 - 1, y), (x1, y)]))
+                        .filter(open)
+                        .collect()
+                };
+                ((cy * self.map.width + cx) as usize, feet)
             })
             .collect()
     }
@@ -360,7 +371,7 @@ fn path_len(from: (f32, f32), pts: &[(f32, f32)]) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use protocol::{BuildingKind, GateMode, Good, GoodAmount, UnitKind};
+    use protocol::{BuildingKind, GateMode, Good, GoodAmount, ServerMsg, UnitKind};
 
     use crate::map::GameMap;
     use crate::world::{Unit, World};
@@ -485,6 +496,69 @@ mod tests {
         assert!(!w.units[k].on_wall, "Mauer weg: König unten");
         let p = w.units[k].pos;
         assert!(w.map.nav.is_open(p.0.floor() as i32, p.1.floor() as i32));
+    }
+
+    #[test]
+    fn treppenhaus_und_turm_mit_treppe() {
+        let mut w = walled(2, 1);
+        let k = king(&w);
+        let id = w.units[k].id;
+        // Treppenhaus direkt an der Mauer.
+        w.place_building_rotated(1, BuildingKind::Staircase, 5, 11, 0, 1).unwrap();
+        w.order_move(1, &[id], (15.5, 10.5));
+        run(&mut w, 40.0);
+        assert!(w.units[k].on_wall, "über das Treppenhaus hinauf");
+        assert!((w.units[k].pos.0 - 15.5).abs() < 0.01, "{:?}", w.units[k].pos);
+        // Turm ohne Treppe: kein Aufgang; mit Treppe (Stufe 2) schon.
+        let mut w = walled(2, 1);
+        let k = king(&w);
+        let id = w.units[k].id;
+        let tower = w.place_building_rotated(1, BuildingKind::Tower, 18, 11, 0, 1).unwrap().id;
+        w.order_move(1, &[id], (2.5, 10.5));
+        run(&mut w, 40.0);
+        assert!(!w.units[k].on_wall, "Turm Stufe 1 hat keine Treppe");
+        w.upgrade(1, tower).unwrap();
+        w.order_move(1, &[id], (2.5, 10.5));
+        run(&mut w, 60.0);
+        assert!(w.units[k].on_wall, "über den Turm hinauf");
+        assert!((w.units[k].pos.0 - 2.5).abs() < 0.01, "{:?}", w.units[k].pos);
+    }
+
+    #[test]
+    fn tor_und_turm_direkt_auf_die_mauer() {
+        let mut w = walled(1, 1);
+        w.take_events();
+        let walls = w.buildings.len();
+        // Tor auf drei Mauerstücke, hoher Turm (2x2) halb auf die Mauer.
+        w.place_building_rotated(1, BuildingKind::Gate, 15, 10, 0, 1).unwrap();
+        w.place_building_rotated(1, BuildingKind::HighTower, 20, 10, 0, 1).unwrap();
+        let removed = w.take_events().iter().filter(|e| matches!(e, ServerMsg::BuildingRemoved { .. })).count();
+        assert_eq!(removed, 5, "drei Mauerstücke unterm Tor, zwei unterm Turm");
+        assert_eq!(w.buildings.len(), walls - 5 + 2);
+        // Andere Gebäude dürfen nicht auf die Mauer.
+        assert!(w.place_building_rotated(1, BuildingKind::Staircase, 3, 10, 0, 1).is_err());
+        assert!(w.place_building_rotated(1, BuildingKind::House, 2, 9, 0, 1).is_err());
+    }
+
+    #[test]
+    fn hoher_turm_hat_wenig_platz() {
+        let mut w = walled(2, 1);
+        w.place_building_rotated(1, BuildingKind::HighTower, 20, 10, 0, 2).unwrap();
+        let ids: Vec<u32> = (0..6).map(|i| {
+            let id = 900 + i;
+            w.units.push(Unit::new(id, 1, UnitKind::King, (14.5 + i as f32, 16.5)));
+            id
+        }).collect();
+        w.order_move(1, &ids, (20.5, 10.5));
+        run(&mut w, 60.0);
+        let up = w.units.iter().filter(|u| ids.contains(&u.id) && u.on_wall).count();
+        let max = w.economy.building(BuildingKind::HighTower).unwrap().garrison as usize;
+        assert_eq!(up, max, "nur {max} passen hinauf");
+        // Wer nicht hinaufpasst, steht unten am Turm.
+        for u in w.units.iter().filter(|u| ids.contains(&u.id) && !u.on_wall) {
+            assert!(w.map.nav.is_open(u.pos.0.floor() as i32, u.pos.1.floor() as i32), "{:?}", u.pos);
+            assert!((u.pos.0 - 20.5).abs() < 4.0 && (u.pos.1 - 10.5).abs() < 4.0, "{:?}", u.pos);
+        }
     }
 
     #[test]

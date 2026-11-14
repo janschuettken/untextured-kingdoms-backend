@@ -3,6 +3,7 @@ import type { BuildingKind } from "./BuildingKind";
 import type { BuildingSettings } from "./BuildingSettings";
 import type { Good } from "./Good";
 import type { GoodAmount } from "./GoodAmount";
+import type { UnitKind } from "./UnitKind";
 
 /**
  * Nachrichten vom Client an den Server.
@@ -11,4 +12,4 @@ export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", c
 /**
  * Gleich auf dieser Stufe bauen (0 oder 1 = erste Stufe). Kostet alle Stufen bis dahin.
  */
-level: number, } | { "type": "demolish_building", building_id: number, } | { "type": "upgrade_building", building_id: number, } | { "type": "configure_building", building_id: number, settings: BuildingSettings, } | { "type": "release_trees", building_id: number, } | { "type": "watch_unit", unit_id: number | null, } | { "type": "trade", good: Good, amount: number, sell: boolean, } | { "type": "admin_login", token: string, } | { "type": "admin_give", goods: Array<GoodAmount>, taler: number, } | { "type": "admin_game_speed", percent: number, } | { "type": "view", x0: number, y0: number, x1: number, y1: number, };
+level: number, } | { "type": "demolish_building", building_id: number, } | { "type": "upgrade_building", building_id: number, } | { "type": "configure_building", building_id: number, settings: BuildingSettings, } | { "type": "release_trees", building_id: number, } | { "type": "watch_unit", unit_id: number | null, } | { "type": "train_units", building_id: number, kind: UnitKind, count: number, } | { "type": "cancel_training", building_id: number, } | { "type": "trade", good: Good, amount: number, sell: boolean, } | { "type": "admin_login", token: string, } | { "type": "admin_give", goods: Array<GoodAmount>, taler: number, } | { "type": "admin_game_speed", percent: number, } | { "type": "view", x0: number, y0: number, x1: number, y1: number, } | { "type": "move_building", building_id: number, x: number, y: number, rotation: number, };
