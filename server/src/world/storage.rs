@@ -187,13 +187,16 @@ mod tests {
         let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
         let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
         w.spawn_player(1);
+        assert!(w.economy.building(BuildingKind::Storehouse).unwrap().first_free);
         let before = w.stocks[&1].state().goods;
         let store = w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap().id;
         assert_eq!(w.stocks[&1].state().goods, before, "erstes Lager kostet nichts");
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
-        assert_ne!(w.stocks[&1].state().goods, before, "zweites Lager kostet");
-        // Abriss erstattet wie üblich, solange ein anderes Lager bleibt.
+        w.place_building(1, BuildingKind::Storehouse, 20, 12).unwrap();
+        let after = w.stocks[&1].state().goods;
+        assert_ne!(after, before, "zweites Lager kostet");
+        // Abriss erstattet wie üblich, solange noch eins bleibt.
         w.demolish(1, store).unwrap();
+        assert_ne!(w.stocks[&1].state().goods, after);
     }
 
     #[test]
