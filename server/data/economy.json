@@ -158,7 +158,7 @@
       "h": 3,
       "max_hp": 250,
       "gathers": ["forest"],
-      "gather_radius": 12,
+      "gather_radius": 1000,
       "service_radius": 0,
       "no_entrance": false,
       "workers": 1,

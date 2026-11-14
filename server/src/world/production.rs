@@ -111,24 +111,59 @@ impl World {
     }
 
     /// Nächstes Feld mit abbaubarem Rohstoff in Reichweite des Gebäudes.
+    /// Sucht ringweise nach außen und hört auf, sobald kein näheres Feld mehr kommen kann,
+    /// so bleibt auch eine sehr große Reichweite (Holzfäller: ganze Karte) billig.
     pub(super) fn gather_tile(&self, i: usize) -> Option<usize> {
         let b = &self.buildings[i];
         let def = self.economy.building(b.kind)?;
-        let r = def.gather_radius as i64;
-        let (x0, y0) = (b.x as i64 - r, b.y as i64 - r);
-        let (x1, y1) = (b.x as i64 + b.w as i64 - 1 + r, b.y as i64 + b.h as i64 - 1 + r);
-        let (cx, cy) = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
+        let (bx0, by0) = (b.x as i64, b.y as i64);
+        let (bx1, by1) = (bx0 + b.w as i64 - 1, by0 + b.h as i64 - 1);
+        let (mw, mh) = (self.map.width as i64, self.map.height as i64);
+        let max_r = (def.gather_radius as i64).min(mw.max(mh));
+        // Abstand eines Feldes zum Gebäuderand.
+        let dist = |tx: i64, ty: i64| {
+            let dx = (bx0 - tx).max(tx - bx1).max(0) as f32;
+            let dy = (by0 - ty).max(ty - by1).max(0) as f32;
+            dx * dx + dy * dy
+        };
         let mut best: Option<(f32, usize)> = None;
-        for ty in y0.max(0)..=y1.min(self.map.height as i64 - 1) {
-            for tx in x0.max(0)..=x1.min(self.map.width as i64 - 1) {
-                let t = (ty as u32 * self.map.width + tx as u32) as usize;
-                if !def.gathers.contains(&self.map.resources[t]) || self.resource_left[t] == 0 {
-                    continue;
+        let check = |tx: i64, ty: i64, best: &mut Option<(f32, usize)>| {
+            if tx < 0 || ty < 0 || tx >= mw || ty >= mh {
+                return;
+            }
+            let t = (ty * mw + tx) as usize;
+            if !def.gathers.contains(&self.map.resources[t]) || self.resource_left[t] == 0 {
+                return;
+            }
+            let d = dist(tx, ty);
+            if best.is_none_or(|(bd, _)| d < bd) {
+                *best = Some((d, t));
+            }
+        };
+        for r in 0..=max_r {
+            // Felder in Ring r liegen mindestens r vom Rand weg.
+            if best.is_some_and(|(bd, _)| (r * r) as f32 > bd) {
+                break;
+            }
+            let (x0, y0, x1, y1) = (bx0 - r, by0 - r, bx1 + r, by1 + r);
+            if r == 0 {
+                for ty in y0..=y1 {
+                    for tx in x0..=x1 {
+                        check(tx, ty, &mut best);
+                    }
                 }
-                let d = (tx as f32 + 0.5 - cx).powi(2) + (ty as f32 + 0.5 - cy).powi(2);
-                if best.is_none_or(|(bd, _)| d < bd) {
-                    best = Some((d, t));
-                }
+                continue;
+            }
+            if x0 < 0 && y0 < 0 && x1 >= mw && y1 >= mh {
+                break; // ganze Karte abgesucht
+            }
+            for tx in x0..=x1 {
+                check(tx, y0, &mut best);
+                check(tx, y1, &mut best);
+            }
+            for ty in y0 + 1..y1 {
+                check(x0, ty, &mut best);
+                check(x1, ty, &mut best);
             }
         }
         best.map(|(_, t)| t)
@@ -242,13 +277,22 @@ mod tests {
     }
 
     #[test]
+    fn holzfaeller_findet_auch_weit_entfernten_wald() {
+        let mut w = world(&map(80, 10, (0, 9), &[(70, 1, 1, 1, 'W'), (75, 8, 1, 1, 'W')]));
+        w.place_building(1, BuildingKind::Woodcutter, 2, 2).unwrap();
+        let bi = w.buildings.len() - 1;
+        assert_eq!(w.gather_tile(bi), Some(70 + 80));
+    }
+
+    #[test]
     fn holzfaeller_holzt_wald_ab() {
         let mut w = world(&map(30, 10, (0, 9), &[(15, 0, 1, 1, 'W')]));
         w.place_building(1, BuildingKind::Keep, 20, 2).unwrap();
         let before = w.stocks[&1].amount(Good::Wood);
         let b = w.place_building(1, BuildingKind::Woodcutter, 2, 2).unwrap();
         let wood_after_build = w.stocks[&1].amount(Good::Wood);
-        assert_eq!(wood_after_build, before - 20);
+        let cost = w.economy.building(BuildingKind::Woodcutter).unwrap().levels[0].cost.iter().find(|c| c.good == Good::Wood).map_or(0, |c| c.amount);
+        assert_eq!(wood_after_build, before - cost);
         assert!(!w.map.nav.is_open(15, 0), "Wald blockiert");
         // Ein Waldfeld gibt 20 Holz. Der Arbeiter läuft je Stück hin (≈10 Felder), arbeitet 6 s
         // und trägt es zurück; Träger bringen es zum Bergfried.
