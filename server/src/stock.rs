@@ -10,14 +10,14 @@ use std::collections::{BTreeMap, VecDeque};
 
 use protocol::{Good, GoodAmount, StockState};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Batch {
     amount: u32,
     /// Spieltakt, ab dem die Charge verdorben ist. `None` = hält ewig.
     expires_at: Option<u64>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Stock {
     goods: BTreeMap<Good, VecDeque<Batch>>,
     /// Höchstmenge je Ware.

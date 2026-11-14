@@ -17,5 +17,6 @@ ENV PORT=8080
 ENV MAPS_DIR=/usr/local/share/untextured-kingdoms/maps
 # Balancing aus dem Editor landet hier (Volume), fehlt die Datei, gelten die eingebauten Werte.
 ENV ECONOMY_FILE=/data/economy.json
+ENV SAVE_FILE=/data/save.json
 EXPOSE 8080
 CMD ["server"]

@@ -11,6 +11,7 @@ use protocol::{BuildingDef, BuildingKind, EconomyDef, GoodAmount, RecipeDef, Res
 
 pub const ECONOMY_JSON: &str = include_str!("../data/economy.json");
 
+#[derive(Clone)]
 pub struct Economy {
     pub def: EconomyDef,
     buildings: HashMap<BuildingKind, usize>,

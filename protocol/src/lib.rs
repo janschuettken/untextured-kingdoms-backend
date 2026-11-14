@@ -136,6 +136,8 @@ pub enum ServerMsg {
     EconomyChanged {
         economy: EconomyDef,
     },
+    /// Spielstand wurde geladen oder neu gestartet: Seite neu laden.
+    Reload,
     /// Geplanter Weg der beobachteten Einheit (siehe `WatchUnit`), nächster Wegpunkt zuerst.
     /// Leer = steht. Kommt nur, wenn sich der Weg ändert.
     UnitPath {

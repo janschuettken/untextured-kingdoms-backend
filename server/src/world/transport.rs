@@ -33,7 +33,7 @@ const REACH: f32 = 1.6;
 /// Höchstens so viele Betriebe fährt ein Karren auf einer Sammelfahrt an.
 const TOUR_STOPS: usize = 4;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Job {
     kind: JobKind,
     good: Good,
@@ -49,7 +49,7 @@ type Groups = HashMap<(protocol::BuildingKind, Good), Vec<(f32, u32, u32)>>;
 
 const NO_REST: [(u32, u32); TOUR_STOPS - 1] = [(0, 0); TOUR_STOPS - 1];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum JobKind {
     /// Ware aus dem Betrieb `from` in den Vorrat bringen.
     Pickup { from: u32 },
@@ -57,7 +57,7 @@ enum JobKind {
     Supply { to: u32 },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum Stage {
     /// Unterwegs zum Aufladen bei diesem Gebäude.
     Load(u32),

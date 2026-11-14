@@ -12,7 +12,7 @@ use protocol::{BuildingStatus, GoodAmount, UnitKind};
 use super::World;
 
 /// Was ein Arbeiter gerade tut.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Gather {
     /// Unterwegs zum Rohstoff-Feld.
     ToTile(usize),

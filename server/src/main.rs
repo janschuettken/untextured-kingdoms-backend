@@ -57,6 +57,8 @@ struct AppState {
     /// Reihenfolge beim Sperren: erst `world`, dann `clients`.
     world: Mutex<World>,
     map_name: String,
+    /// Kartentext beim Start (für Laden und Neues Spiel).
+    map_text: String,
     next_player_id: AtomicU32,
     players_online: AtomicU32,
     clients: Mutex<HashMap<u32, Client>>,
@@ -66,6 +68,36 @@ struct AppState {
     admin: admin::Admin,
     /// Spieltempo in Prozent (100 = normal), vom Admin einstellbar.
     game_speed: AtomicU32,
+    /// Spielstand-Datei (`SAVE_FILE`, Standard `server/data/save.json`).
+    save_file: std::path::PathBuf,
+}
+
+/// Alle so viele Sekunden wird der Spielstand automatisch gespeichert.
+const AUTOSAVE_SECONDS: u64 = 120;
+
+/// Spielstand jetzt in die Datei schreiben (erst `.tmp`, dann umbenennen).
+fn save_game(state: &AppState) -> Result<(), String> {
+    let json = {
+        let world = state.world.lock().unwrap();
+        serde_json::to_string(&world.to_save(&state.map_name)).map_err(|e| e.to_string())?
+    };
+    let path = &state.save_file;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).and_then(|_| std::fs::rename(&tmp, path)).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Spielstand aus der Datei lesen und auf eine frische Karte setzen.
+fn load_game(path: &std::path::Path, map_name: &str, map_text: &str, economy: economy::Economy) -> Result<World, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let save: world::SaveGame = serde_json::from_str(&text).map_err(|e| format!("Spielstand unlesbar: {e}"))?;
+    if save.map != map_name {
+        return Err(format!("Spielstand gehört zur Karte {}, es läuft {map_name}", save.map));
+    }
+    let map = map::GameMap::parse(map_text).map_err(|e| e.to_string())?;
+    World::from_save(map, economy, save)
 }
 
 #[tokio::main]
@@ -96,11 +128,32 @@ async fn main() {
     if admin.open() {
         warn!("Kein ADMIN_TOKEN gesetzt: jeder darf Admin-Menü und Balancing-Editor benutzen");
     }
+    let save_file = std::env::var("SAVE_FILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/data/save.json")));
+    // Gibt es einen Spielstand für diese Karte, geht es dort weiter.
+    let world = if save_file.exists() {
+        match load_game(&save_file, &map_name, &map_text, economy.clone()) {
+            Ok(w) => {
+                info!("Spielstand {} geladen ({} Spieler)", save_file.display(), w.players().len());
+                w
+            }
+            Err(e) => {
+                warn!("Spielstand nicht geladen: {e}");
+                World::new(game_map, economy)
+            }
+        }
+    } else {
+        World::new(game_map, economy)
+    };
+    let next_player = world.players().last().map_or(1, |p| p + 1);
     let state = Arc::new(AppState {
-        world: Mutex::new(World::new(game_map, economy)),
+        world: Mutex::new(world),
         clients: Mutex::new(HashMap::new()),
         map_name: map_name.clone(),
-        next_player_id: AtomicU32::new(1),
+        map_text,
+        save_file,
+        next_player_id: AtomicU32::new(next_player),
         players_online: AtomicU32::new(0),
         ticks,
         admin,
@@ -170,6 +223,14 @@ async fn game_loop(state: Arc<AppState>) {
     loop {
         interval.tick().await;
         tick += 1;
+        if tick.is_multiple_of(AUTOSAVE_SECONDS * TICK_RATE as u64) {
+            let st = state.clone();
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = save_game(&st) {
+                    warn!("Automatisches Speichern fehlgeschlagen: {e}");
+                }
+            });
+        }
         let (units, stocks, paths) = {
             let mut world = state.world.lock().unwrap();
             let speed = state.game_speed.load(Ordering::Relaxed) as f32 / 100.0;
@@ -215,22 +276,41 @@ async fn game_loop(state: Arc<AppState>) {
     }
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+#[derive(serde::Deserialize)]
+struct WsQuery {
+    /// Diesen Spieler weiterspielen, wenn es ihn gibt und niemand ihn gerade spielt.
+    player: Option<u32>,
 }
 
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
-    let player_id = state.next_player_id.fetch_add(1, Ordering::Relaxed);
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(q): axum::extract::Query<WsQuery>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_socket(socket, state, q.player))
+}
+
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>, wanted: Option<u32>) {
     state.players_online.fetch_add(1, Ordering::Relaxed);
     // Gebäudestand und Abo im selben Lock holen: so geht keine Änderung
     // verloren und keine kommt doppelt an.
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<ServerMsg>(64);
-    let (map, buildings, economy, stock, mut ticks) = {
+    let (player_id, map, buildings, economy, stock, mut ticks) = {
         let mut world = state.world.lock().unwrap();
-        world.spawn_player(player_id);
+        // Bekannten Spieler weiterspielen, sonst einen neuen anlegen.
+        let online = |id: u32| state.clients.lock().unwrap().contains_key(&id);
+        let player_id = match wanted {
+            Some(id) if world.has_player(id) && !online(id) => id,
+            _ => {
+                let id = state.next_player_id.fetch_add(1, Ordering::Relaxed);
+                world.spawn_player(id);
+                id
+            }
+        };
         let client = Client { tx: out_tx.clone(), view: None, known: HashMap::new(), watch: None, watch_sent: None };
         state.clients.lock().unwrap().insert(player_id, client);
         (
+            player_id,
             // Die Karte selbst holt der Client über /api/maps/current.
             MapRef { name: state.map_name.clone(), width: world.map.width, height: world.map.height },
             world.buildings.clone(),
@@ -366,13 +446,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     }
 
     writer.abort();
+    // Der Spieler bleibt mit allem stehen; er kann später weiterspielen.
     state.clients.lock().unwrap().remove(&player_id);
-    {
-        let mut world = state.world.lock().unwrap();
-        for building_id in world.remove_player(player_id) {
-            let _ = state.ticks.send(ServerMsg::BuildingRemoved { building_id });
-        }
-    }
     state.players_online.fetch_sub(1, Ordering::Relaxed);
     info!("Spieler {player_id} getrennt");
 }

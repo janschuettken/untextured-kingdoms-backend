@@ -13,7 +13,7 @@ use super::{Refusal, World};
 use crate::map::resource_blocks;
 
 /// Laufender Durchlauf eines Gebäudes.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Work {
     /// Sekunden seit Start. `None` = noch nicht gestartet (Eingänge fehlen).
     elapsed: Option<f32>,
@@ -143,7 +143,7 @@ impl World {
     }
 
     /// Rohstoff eines Feldes ändern, Laufgitter anpassen und alle Clients informieren.
-    fn set_resource(&mut self, t: usize, r: ResourceKind) {
+    pub(super) fn set_resource(&mut self, t: usize, r: ResourceKind) {
         let old = self.map.resources[t];
         if old == r {
             return;
