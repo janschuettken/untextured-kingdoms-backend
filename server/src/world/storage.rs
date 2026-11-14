@@ -125,7 +125,7 @@ impl World {
     }
 
     /// So viel passt je Ware in dieses Lager: Vorratslager `storehouse_capacity`, Bergfried `base_capacity`.
-    fn hub_capacity(&self, hub: u32) -> u32 {
+    pub(super) fn hub_capacity(&self, hub: u32) -> u32 {
         let e = &self.economy.def;
         match self.buildings.iter().find(|b| b.id == hub).map(|b| b.kind) {
             Some(BuildingKind::Storehouse) => e.storehouse_capacity,
@@ -197,6 +197,21 @@ mod tests {
         // Abriss erstattet wie üblich, solange noch eins bleibt.
         w.demolish(1, store).unwrap();
         assert_ne!(w.stocks[&1].state().goods, after);
+    }
+
+    #[test]
+    fn ohne_lager_kein_platz_startgueter_ziehen_ins_erste_lager() {
+        let row = "0".repeat(40);
+        let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        w.spawn_player(1);
+        assert_eq!(w.stocks[&1].capacity, 0, "ohne Lager kein Platz");
+        let wood = w.stocks[&1].amount(Good::Wood);
+        assert!(wood > 0, "Startgüter liegen trotzdem bereit");
+        let store = w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap().id;
+        assert_eq!(w.stocks[&1].capacity, w.economy.def.storehouse_capacity);
+        w.step(0.05);
+        assert_eq!(w.hub_amount(store, Good::Wood), w.stocks[&1].amount(Good::Wood), "Startgüter im ersten Lager");
     }
 
     #[test]
