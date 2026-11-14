@@ -2,6 +2,7 @@
 import type { BuildingCategory } from "./BuildingCategory";
 import type { BuildingKind } from "./BuildingKind";
 import type { BuildingLevel } from "./BuildingLevel";
+import type { Good } from "./Good";
 import type { Placement } from "./Placement";
 import type { ResourceKind } from "./ResourceKind";
 import type { UnitCount } from "./UnitCount";
@@ -78,4 +79,12 @@ on_walls: boolean,
 /**
  * Das erste Gebäude dieser Art je Spieler kostet nichts.
  */
-first_free: boolean, levels: Array<BuildingLevel>, };
+first_free: boolean, 
+/**
+ * Lager nur für diese Waren (z. B. Waffenkammer). Leer = alle Waren.
+ */
+hub_goods: Array<Good>, 
+/**
+ * Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
+ */
+hub_capacity: number, levels: Array<BuildingLevel>, };

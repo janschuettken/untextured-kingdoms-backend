@@ -199,7 +199,7 @@ impl World {
     }
 
     pub fn stock_state(&self, player: u32) -> StockState {
-        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, people: Default::default(), taler: 0, army: Default::default() });
+        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, extra_capacity: Vec::new(), people: Default::default(), taler: 0, army: Default::default() });
         state.people = self.people.get(&player).cloned().unwrap_or_default();
         state.army = self.army_state(player);
         state
@@ -221,9 +221,20 @@ impl World {
             .filter(|b| b.owner == player && self.economy.building(b.kind).is_some_and(|d| d.hub))
             .map(|b| b.id)
             .collect();
-        let cap = hubs.iter().map(|&h| self.hub_capacity(h)).sum();
+        // Allgemeine Lager zählen für alle Waren, besondere nur für ihre.
+        let mut cap = 0;
+        let mut extra: std::collections::BTreeMap<protocol::Good, u32> = Default::default();
+        for &h in &hubs {
+            let n = self.hub_capacity(h);
+            let kind = self.buildings.iter().find(|b| b.id == h).expect("eben gefunden").kind;
+            match self.special_hub(kind) {
+                Some(goods) => goods.iter().for_each(|&g| *extra.entry(g).or_default() += n),
+                None => cap += n,
+            }
+        }
         if let Some(s) = self.stocks.get_mut(&player) {
             s.capacity = cap;
+            s.extra = extra;
             self.dirty_stocks.insert(player);
         }
     }
@@ -361,6 +372,8 @@ impl World {
             stores: None,
             keep_in_stock: Vec::new(),
             gate: GateMode::Auto,
+            worker_carries: false,
+            stop_at: Vec::new(),
         };
         let status = if settings.recipe.is_some() { BuildingStatus::Working } else { BuildingStatus::Idle };
         let b = BuildingState {
@@ -980,7 +993,8 @@ mod tests {
         let wood = w.stocks[&1].amount(Good::Wood);
         let b = w.place_building(1, BuildingKind::Bowyer, 4, 4).unwrap();
         let s = &w.stocks[&1];
-        assert_eq!(s.amount(Good::Wood), wood - 20);
+        let cost = w.economy.building(BuildingKind::Bowyer).unwrap().levels[0].cost.iter().find(|c| c.good == Good::Wood).unwrap().amount;
+        assert_eq!(s.amount(Good::Wood), wood - cost);
         assert_eq!(b.level, 1);
         // Stufe 2 braucht Eisen, das es zu Beginn nicht gibt.
         let err = w.upgrade(1, b.id).unwrap_err();

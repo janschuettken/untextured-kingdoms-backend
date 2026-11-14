@@ -14,7 +14,11 @@ goods: Array<GoodAmount>,
 /**
  * Höchstmenge je Ware (wächst mit Vorratslagern).
  */
-capacity: number, people: PeopleState, 
+capacity: number, 
+/**
+ * Zusätzlicher Platz für einzelne Waren (Waffenkammer, Kornspeicher).
+ */
+extra_capacity: Array<GoodAmount>, people: PeopleState, 
 /**
  * Geld des Spielers.
  */

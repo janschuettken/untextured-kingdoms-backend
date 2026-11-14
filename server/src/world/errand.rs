@@ -88,7 +88,7 @@ impl World {
                 }
                 u.cooldown = WAIT;
                 let b = &self.buildings[bi];
-                if b.settings.paused || self.unstaffed.contains(&b.id) || self.has_transport(owner) {
+                if b.settings.paused || self.unstaffed.contains(&b.id) || (self.has_transport(owner) && !b.settings.worker_carries) {
                     return true;
                 }
                 self.start_errand(k, bi)
@@ -111,7 +111,7 @@ impl World {
             if inputs.iter().any(|i| i.good == g.good) {
                 return None;
             }
-            let room = stock.map_or(0, |s| s.capacity.saturating_sub(s.amount(g.good)));
+            let room = stock.map_or(0, |s| s.room(g.good));
             let amount = g.amount.min(cap).min(room);
             let hub = self.nearest_hub(owner, pos, g.good)?;
             (amount > 0).then_some((hub, GoodAmount { good: g.good, amount }))
@@ -127,7 +127,7 @@ impl World {
             }
         }
         // Holen: Eingänge für zwei Durchläufe, wenn der Betrieb Lieferungen annimmt.
-        if !self.buildings[bi].settings.accept_deliveries {
+        if !self.buildings[bi].settings.accept_deliveries || self.target_reached(bi) {
             return true;
         }
         if let Some(load) = self.missing_input(bi) {
@@ -224,6 +224,32 @@ mod tests {
         assert!(carried, "Arbeiter holt Holz selbst");
         assert!(w.stocks[&1].amount(Good::Wood) < wood);
         assert!(w.stocks[&1].amount(Good::Boards) > boards, "Bretter selbst ins Lager gebracht");
+    }
+
+    #[test]
+    fn arbeiter_traegt_selbst_wenn_eingestellt_und_haelt_beim_hoechstbestand() {
+        let mut w = flat();
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::CartShed, 12, 12).unwrap();
+        let saw = w.place_building(1, BuildingKind::Sawmill, 25, 2).unwrap();
+        let mut s = saw.settings.clone();
+        s.worker_carries = true;
+        w.configure(1, saw.id, s.clone()).unwrap();
+        let worker = w.units.iter().position(|u| u.kind == UnitKind::Worker && u.home == Some(saw.id)).unwrap();
+        let mut carried = false;
+        for _ in 0..20 * 90 {
+            w.step(0.05);
+            carried |= w.units[worker].carrying.is_some();
+        }
+        assert!(carried, "Arbeiter trägt trotz Trägern selbst");
+        // Höchstbestand: bei so vielen Brettern im Vorrat macht das Sägewerk Pause.
+        let boards = w.stocks[&1].amount(Good::Boards);
+        s.stop_at = vec![protocol::GoodAmount { good: Good::Boards, amount: boards }];
+        w.configure(1, saw.id, s).unwrap();
+        for _ in 0..20 * 120 {
+            w.step(0.05);
+        }
+        assert_eq!(w.buildings.iter().find(|b| b.id == saw.id).unwrap().status, BuildingStatus::TargetReached);
     }
 
     #[test]

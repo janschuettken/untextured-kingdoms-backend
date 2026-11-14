@@ -137,6 +137,11 @@ impl World {
                     // Wartet: Zustand bleibt, wie er war (z. B. kein Rohstoff).
                     return self.buildings[bi].status;
                 }
+                if self.target_reached(bi) {
+                    self.units[k].cooldown = RETRY;
+                    self.go_to_building(k, bi);
+                    return BuildingStatus::TargetReached;
+                }
                 let Some(tile) = self.gather_tile(bi) else {
                     self.units[k].cooldown = RETRY;
                     self.go_to_building(k, bi);
@@ -165,7 +170,8 @@ impl World {
         };
         let b = &self.buildings[bi];
         let (id, owner) = (b.id, b.owner);
-        let carriers = self.units.iter().any(|u| u.owner == owner && u.is_transport() && !self.idle_units.contains(&u.id));
+        let carriers = !b.settings.worker_carries
+            && self.units.iter().any(|u| u.owner == owner && u.is_transport() && !self.idle_units.contains(&u.id));
         let room = self.inventories.get(&id).is_some_and(|inv| inv.amount(load.good) + load.amount <= inv.capacity);
         if carriers && room {
             self.inventories.get_mut(&id).expect("eben geprüft").add(load.good, load.amount);

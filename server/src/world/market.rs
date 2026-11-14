@@ -30,7 +30,7 @@ impl World {
             stock.take_all(&[GoodAmount { good, amount }]);
             stock.taler = stock.taler.saturating_add(price.sell * amount);
         } else {
-            let room = stock.capacity.saturating_sub(stock.amount(good));
+            let room = stock.room(good);
             let amount = amount.min(room);
             if amount == 0 {
                 return Err(Text::new("error.storage_full"));

@@ -45,6 +45,10 @@ impl World {
         let Some(def) = self.economy.building(kind).cloned() else { return BuildingStatus::Idle };
         let gathers = !def.gathers.is_empty();
 
+        let idle = self.work.get(&id).is_none_or(|w| w.elapsed.is_none());
+        if !gathers && idle && self.target_reached(i) {
+            return BuildingStatus::TargetReached;
+        }
         // Der Arbeiter trägt gerade selbst Waren (siehe `errand.rs`): der Betrieb steht.
         if !gathers && self.gather_status.get(&id) == Some(&BuildingStatus::WorkerAway) {
             return BuildingStatus::WorkerAway;
@@ -57,6 +61,10 @@ impl World {
         let elapsed = match elapsed {
             Some(e) => e,
             None => {
+                // Höchstbestand erreicht: nicht neu anfangen.
+                if self.target_reached(i) {
+                    return BuildingStatus::TargetReached;
+                }
                 // Starten: Rohstoff in Reichweite und Eingangswaren nötig.
                 if gathers && self.gather_tile(i).is_none() {
                     return BuildingStatus::NoResource;
@@ -94,6 +102,19 @@ impl World {
         }
         self.work.insert(id, Work::default());
         BuildingStatus::Working
+    }
+
+    /// Liegt von einem Ergebnis des laufenden Rezepts schon der Höchstbestand (`stop_at`) im Vorrat?
+    pub(super) fn target_reached(&self, i: usize) -> bool {
+        let b = &self.buildings[i];
+        if b.settings.stop_at.is_empty() {
+            return false;
+        }
+        let Some(recipe) = b.settings.recipe.as_ref().and_then(|r| self.economy.recipe(r)) else { return false };
+        let Some(stock) = self.stocks.get(&b.owner) else { return false };
+        recipe.outputs.iter().any(|o| {
+            b.settings.stop_at.iter().any(|g| g.good == o.good && g.amount > 0 && stock.amount(o.good) >= g.amount)
+        })
     }
 
     /// Höfe auf fruchtbarem Boden arbeiten schneller (anteilig nach Feldern).
@@ -211,7 +232,12 @@ impl World {
             }
         }
         let goods = &self.economy.def.goods;
-        if settings.stores.iter().flatten().chain(settings.keep_in_stock.iter().map(|g| &g.good)).any(|g| !goods.contains(g)) {
+        if settings
+            .stores
+            .iter()
+            .flatten()
+            .chain(settings.keep_in_stock.iter().chain(&settings.stop_at).map(|g| &g.good))
+            .any(|g| !goods.contains(g)) {
             return Err(Text::new("error.unknown_good"));
         }
         if b.settings.recipe != settings.recipe {

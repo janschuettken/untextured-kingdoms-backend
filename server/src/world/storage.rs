@@ -55,11 +55,20 @@ impl World {
 
     /// Bestand je Lager an den Gesamtvorrat angleichen.
     pub(super) fn balance_hubs(&mut self) {
+        // (Id, Besitzer, Waren, die es nehmen darf: Auswahl des Spielers und Art des Lagers)
         let hubs: Vec<(u32, u32, Option<Vec<Good>>)> = self
             .buildings
             .iter()
             .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.hub))
-            .map(|b| (b.id, b.owner, b.settings.stores.clone()))
+            .map(|b| {
+                let only = &self.economy.building(b.kind).expect("eben geprüft").hub_goods;
+                let allowed = match (&b.settings.stores, only.is_empty()) {
+                    (s, true) => s.clone(),
+                    (None, false) => Some(only.clone()),
+                    (Some(s), false) => Some(s.iter().filter(|g| only.contains(g)).copied().collect()),
+                };
+                (b.id, b.owner, allowed)
+            })
             .collect();
         let alive: BTreeSet<u32> = hubs.iter().map(|h| h.0).collect();
         self.hub_goods.retain(|id, _| alive.contains(id));
@@ -125,16 +134,34 @@ impl World {
     }
 
     /// So viel passt je Ware in dieses Lager: Vorratslager `storehouse_capacity`, Bergfried `base_capacity`.
+    /// `hub_capacity` aus den Gebäudedaten, sonst wie früher.
     pub(super) fn hub_capacity(&self, hub: u32) -> u32 {
         let e = &self.economy.def;
-        match self.buildings.iter().find(|b| b.id == hub).map(|b| b.kind) {
-            Some(BuildingKind::Storehouse) => e.storehouse_capacity,
+        let Some(b) = self.buildings.iter().find(|b| b.id == hub) else { return 0 };
+        match (self.economy.building(b.kind).map_or(0, |d| d.hub_capacity), b.kind) {
+            (n, _) if n > 0 => n,
+            (_, BuildingKind::Storehouse) => e.storehouse_capacity,
             _ => e.base_capacity,
         }
     }
 
     fn hub_room(&self, hub: u32, good: Good) -> u32 {
+        let Some(b) = self.buildings.iter().find(|b| b.id == hub) else { return 0 };
+        if !self.hub_accepts(b, good) {
+            return 0;
+        }
         self.hub_capacity(hub).saturating_sub(self.hub_amount(hub, good))
+    }
+
+    /// Nimmt dieses Lager die Ware? Art des Lagers (`hub_goods`) und Auswahl des Spielers.
+    pub(super) fn hub_accepts(&self, b: &protocol::BuildingState, good: Good) -> bool {
+        let only = self.economy.building(b.kind).map(|d| &d.hub_goods);
+        only.is_none_or(|o| o.is_empty() || o.contains(&good)) && b.settings.stores.as_ref().is_none_or(|s| s.contains(&good))
+    }
+
+    /// Lager nur für bestimmte Waren (Waffenkammer, Kornspeicher)?
+    pub(super) fn special_hub(&self, kind: BuildingKind) -> Option<&Vec<Good>> {
+        self.economy.building(kind).map(|d| &d.hub_goods).filter(|g| !g.is_empty())
     }
 
     /// Inhalt eines Lagers für die Anzeige.
@@ -212,6 +239,26 @@ mod tests {
         assert_eq!(w.stocks[&1].capacity, w.economy.def.storehouse_capacity);
         w.step(0.05);
         assert_eq!(w.hub_amount(store, Good::Wood), w.stocks[&1].amount(Good::Wood), "Startgüter im ersten Lager");
+    }
+
+    #[test]
+    fn kornspeicher_nimmt_nur_lebensmittel() {
+        let row = "0".repeat(40);
+        let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        w.spawn_player(1);
+        w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 100 }], 0);
+        let store = w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap().id;
+        let granary = w.place_building(1, BuildingKind::Granary, 20, 2).unwrap().id;
+        let def = w.economy.building(BuildingKind::Granary).unwrap();
+        let (cap, extra) = (w.economy.def.storehouse_capacity, def.hub_capacity);
+        assert_eq!(w.stocks[&1].capacity_of(Good::Bread), cap + extra, "Kornspeicher: mehr Platz für Brot");
+        assert_eq!(w.stocks[&1].capacity_of(Good::Wood), cap, "aber nicht für Holz");
+        w.admin_give(1, &[GoodAmount { good: Good::Bread, amount: cap + 20 }, GoodAmount { good: Good::Wood, amount: 10 }], 0);
+        w.step(0.05);
+        assert_eq!(w.hub_amount(granary, Good::Wood), 0, "kein Holz im Kornspeicher");
+        assert!(w.hub_amount(granary, Good::Bread) >= 20, "Brot passt in den Kornspeicher");
+        assert!(w.hub_amount(store, Good::Bread) <= cap);
     }
 
     #[test]

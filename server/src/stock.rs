@@ -22,13 +22,26 @@ pub struct Stock {
     goods: BTreeMap<Good, VecDeque<Batch>>,
     /// Höchstmenge je Ware.
     pub capacity: u32,
+    /// Zusätzlicher Platz für einzelne Waren (Waffenkammer, Kornspeicher).
+    #[serde(default)]
+    pub extra: BTreeMap<Good, u32>,
     /// Geld, ohne Obergrenze.
     pub taler: u32,
 }
 
 impl Stock {
     pub fn new(capacity: u32) -> Stock {
-        Stock { goods: BTreeMap::new(), capacity, taler: 0 }
+        Stock { goods: BTreeMap::new(), capacity, extra: BTreeMap::new(), taler: 0 }
+    }
+
+    /// Höchstmenge dieser Ware.
+    pub fn capacity_of(&self, good: Good) -> u32 {
+        self.capacity + self.extra.get(&good).copied().unwrap_or(0)
+    }
+
+    /// So viel passt von dieser Ware noch hinein.
+    pub fn room(&self, good: Good) -> u32 {
+        self.capacity_of(good).saturating_sub(self.amount(good))
     }
 
     pub fn amount(&self, good: Good) -> u32 {
@@ -37,7 +50,7 @@ impl Stock {
 
     /// Ware einlagern, höchstens bis zur Kapazität. Liefert, was wirklich hineinpasst.
     pub fn add(&mut self, good: Good, amount: u32) -> u32 {
-        let fits = amount.min(self.capacity.saturating_sub(self.amount(good)));
+        let fits = amount.min(self.room(good));
         if fits > 0 {
             self.goods.entry(good).or_default().push_back(Batch { amount: fits, expires_at: None });
         }
@@ -91,7 +104,8 @@ impl Stock {
             .map(|&good| GoodAmount { good, amount: self.amount(good) })
             .filter(|g| g.amount > 0)
             .collect();
-        StockState { goods, capacity: self.capacity, people: Default::default(), taler: self.taler, army: Default::default() }
+        let extra_capacity = self.extra.iter().filter(|(_, &n)| n > 0).map(|(&good, &amount)| GoodAmount { good, amount }).collect();
+        StockState { goods, capacity: self.capacity, extra_capacity, people: Default::default(), taler: self.taler, army: Default::default() }
     }
 }
 
