@@ -11,6 +11,8 @@ use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod market;
 mod gather;
+mod save;
+pub use save::SaveGame;
 mod people;
 mod production;
 mod transport;
@@ -18,6 +20,7 @@ use production::Work;
 use gather::Gather;
 use transport::Job;
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Unit {
     pub id: u32,
     pub owner: u32,

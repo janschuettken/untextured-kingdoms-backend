@@ -189,6 +189,18 @@ gute Werte einfach committen und teilen. Die vorige Fassung bleibt als `economy.
 Datei im Volume `game_data` (`/data/economy.json`); fehlt sie, gelten die Werte aus dem Repo.
 Schnittstelle: siehe `server/src/admin.rs`.
 
+### Spielstand
+
+Der Server speichert die ganze Welt (Gebäude, Lager, Einheiten, Ressourcen, Bevölkerung) alle 2 Minuten nach
+`SAVE_FILE`, lokal standardmäßig `server/data/save.json` (nicht im Repo), in Docker `/data/save.json` im Volume
+`game_data`. Beim Start wird er automatisch geladen, wenn er zur aktuellen Karte passt. Im Admin-Menü gibt es
+zusätzlich „Speichern“, „Laden“ und „Neues Spiel“ (`POST /api/save`, `/api/load`, `/api/new-game`); danach laden alle
+Browser neu.
+
+Spieler bleiben nach dem Trennen erhalten. Der Browser merkt sich seine Spieler-Nummer und verbindet sich mit
+`/ws?player=<id>` wieder als derselbe Spieler. `GET /api/players` listet alle Spieler; im Admin-Menü kann man
+„Spielen als“ einen anderen (nicht verbundenen) Spieler wählen oder ihn entfernen (`POST /api/players/<id>/remove`).
+
 ## Protokoll ändern
 
 Nachrichten werden nur in `protocol/src/lib.rs` definiert. Ablauf bei einer Änderung:
