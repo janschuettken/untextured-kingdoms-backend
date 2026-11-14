@@ -84,7 +84,7 @@ impl Stock {
             .map(|&good| GoodAmount { good, amount: self.amount(good) })
             .filter(|g| g.amount > 0)
             .collect();
-        StockState { goods, capacity: self.capacity, people: Default::default(), taler: self.taler }
+        StockState { goods, capacity: self.capacity, people: Default::default(), taler: self.taler, army: Default::default() }
     }
 }
 

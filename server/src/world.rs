@@ -10,6 +10,7 @@ use protocol::{
 
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
+mod army;
 mod errand;
 mod gate;
 mod market;
@@ -120,6 +121,10 @@ pub struct World {
     idle_units: HashSet<u32>,
     /// Zustand der Abbaubetriebe, wie ihre Arbeiter ihn melden.
     gather_status: HashMap<u32, BuildingStatus>,
+    /// Sekunden seit dem letzten Zahltag je Spieler.
+    pay_timer: HashMap<u32, f32>,
+    /// Spieler, deren Sold am letzten Zahltag nicht gereicht hat.
+    unpaid: HashSet<u32>,
 }
 
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
@@ -179,6 +184,8 @@ impl World {
             unstaffed: HashSet::new(),
             idle_units: HashSet::new(),
             gather_status: HashMap::new(),
+            pay_timer: HashMap::new(),
+            unpaid: HashSet::new(),
         }
     }
 
@@ -188,8 +195,9 @@ impl World {
     }
 
     pub fn stock_state(&self, player: u32) -> StockState {
-        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, people: Default::default(), taler: 0 });
+        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, people: Default::default(), taler: 0, army: Default::default() });
         state.people = self.people.get(&player).cloned().unwrap_or_default();
+        state.army = self.army_state(player);
         state
     }
 
@@ -395,6 +403,8 @@ impl World {
             entrance,
             inventory: Vec::new(),
             gate_open: kind == BuildingKind::Gate,
+            training: Vec::new(),
+            training_left: 0.0,
         };
         self.next_building_id += 1;
         if let Some((ex, ey)) = entrance {
@@ -497,6 +507,9 @@ impl World {
     fn remove_building(&mut self, id: u32) {
         let Some(pos) = self.buildings.iter().position(|b| b.id == id) else { return };
         let b = self.buildings.remove(pos);
+        if !b.training.is_empty() {
+            self.refund_training(b.owner, &b.training);
+        }
         self.work.remove(&id);
         self.dirty_buildings.remove(&id);
         self.entrances.retain(|_, b| *b != id);
@@ -551,17 +564,54 @@ impl World {
             target.1.clamp(0.0, self.map.height as f32 - 0.01),
         );
         let target_wall = self.is_walkway(player, target);
-        for k in 0..self.units.len() {
+        let chosen: Vec<usize> =
+            (0..self.units.len()).filter(|&k| self.units[k].owner == player && !self.units[k].is_civilian() && unit_ids.contains(&self.units[k].id)).collect();
+        let spots = if target_wall { vec![target; chosen.len()] } else { self.formation(target, chosen.len()) };
+        for (&k, &spot) in chosen.iter().zip(&spots) {
             let u = &self.units[k];
-            if u.owner == player && !u.is_civilian() && unit_ids.contains(&u.id) {
-                let (path, layers) = self.plan(player, u.pos, u.on_wall, target, target_wall);
-                let u = &mut self.units[k];
-                u.path = path;
-                u.layers = layers;
-                u.target = Some(target);
-                u.target_wall = target_wall;
+            let (path, layers) = self.plan(player, u.pos, u.on_wall, spot, target_wall);
+            let u = &mut self.units[k];
+            u.path = path;
+            u.layers = layers;
+            u.target = Some(spot);
+            u.target_wall = target_wall;
+        }
+    }
+
+    /// Ziele für eine Gruppe: ein Quadrat aus Feldern um den Zielpunkt, damit
+    /// nicht alle auf einem Fleck stehen. Felder, die nicht begehbar sind oder
+    /// auf einer anderen Höhe liegen, werden übersprungen.
+    fn formation(&self, target: (f32, f32), n: usize) -> Vec<(f32, f32)> {
+        if n <= 1 {
+            return vec![target; n];
+        }
+        let level = |x: i32, y: i32| self.map.levels[(y as u32 * self.map.width + x as u32) as usize];
+        let (cx, cy) = (target.0.floor() as i32, target.1.floor() as i32);
+        let home = level(cx, cy);
+        let mut spots = Vec::with_capacity(n);
+        // Ringe um das Zielfeld, innen zuerst.
+        'rings: for r in 0..(n as i32 + 2) {
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    if dx.abs().max(dy.abs()) != r {
+                        continue;
+                    }
+                    let (x, y) = (cx + dx, cy + dy);
+                    if !self.map.nav.is_open(x, y) || level(x, y) != home {
+                        continue;
+                    }
+                    let frac = (target.0 - cx as f32, target.1 - cy as f32);
+                    spots.push((x as f32 + frac.0, y as f32 + frac.1));
+                    if spots.len() == n {
+                        break 'rings;
+                    }
+                }
             }
         }
+        while spots.len() < n {
+            spots.push(target);
+        }
+        spots
     }
 
     /// Einen Spieltakt von `dt` Sekunden simulieren.
@@ -571,17 +621,20 @@ impl World {
         self.step_transport(dt);
         self.step_gather(dt);
         self.step_gates();
+        self.step_army(dt);
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
         let king = self.economy.def.movement.king_speed;
         let worker = self.economy.def.movement.worker_speed;
         let hungry: HashMap<u32, f32> = self.stocks.keys().map(|&p| (p, self.hunger_factor(p))).collect();
-        for unit in self.units.iter_mut() {
+        let soldier: Vec<f32> = self.units.iter().map(|u| if u.kind.is_soldier() { self.soldier_speed(u.owner, u.kind) } else { 0.0 }).collect();
+        for (k, unit) in self.units.iter_mut().enumerate() {
             let speed = match unit.kind {
                 UnitKind::King => king,
                 UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Cart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
+                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
             };
             let mut budget = speed * dt;
             while budget > 0.0 {
@@ -770,6 +823,25 @@ mod tests {
         let after = w.stock_state(1).goods.iter().find(|g| g.good == protocol::Good::Boards).map_or(0, |g| g.amount);
         assert_eq!(before - after, boards);
         assert_eq!(w.place_building_rotated(1, BuildingKind::Bowyer, 12, 4, 0, 3).unwrap_err().key, "error.max_level");
+    }
+
+    #[test]
+    fn gruppe_verteilt_sich_um_das_ziel() {
+        let mut w = flat_world();
+        let ids: Vec<u32> = (0..5).map(|n| {
+            let id = 500 + n;
+            w.units.push(Unit::new(id, 1, UnitKind::Spearman, (2.5 + n as f32, 20.5)));
+            id
+        }).collect();
+        w.order_move(1, &ids, (12.5, 12.5));
+        for _ in 0..20 * 30 {
+            w.step(0.05);
+        }
+        let mut tiles: Vec<(i32, i32)> = w.units.iter().filter(|u| ids.contains(&u.id)).map(|u| (u.pos.0 as i32, u.pos.1 as i32)).collect();
+        tiles.sort();
+        tiles.dedup();
+        assert_eq!(tiles.len(), 5, "jeder auf eigenem Feld");
+        assert!(tiles.iter().all(|&(x, y)| (x - 12).abs() <= 1 && (y - 12).abs() <= 1));
     }
 
     #[test]
