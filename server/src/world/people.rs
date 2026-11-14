@@ -66,6 +66,8 @@ impl World {
                     stock.take_all(&[GoodAmount { good, amount: take }]);
                     eaten += take;
                 }
+                // Satte Bewohner zahlen Steuern.
+                stock.taler = stock.taler.saturating_add(eaten * self.economy.def.market.tax_per_meal);
                 if eaten > 0 {
                     self.dirty_stocks.insert(player);
                 }
@@ -126,7 +128,7 @@ mod tests {
     #[test]
     fn traeger_warten_auf_wohnung() {
         let mut w = world();
-        w.admin_give(1, &[protocol::GoodAmount { good: Good::Wood, amount: 100 }]);
+        w.admin_give(1, &[protocol::GoodAmount { good: Good::Wood, amount: 100 }], 0);
         w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         w.step(0.05);
         assert_eq!(w.idle_units.len(), 3);
@@ -144,11 +146,13 @@ mod tests {
         w.place_building(1, BuildingKind::Woodcutter, 2, 10).unwrap();
         let bread = |w: &World| w.stock_state(1).goods.iter().find(|g| g.good == Good::Bread).map_or(0, |g| g.amount);
         let before = bread(&w);
+        let taler = w.stock_state(1).taler;
         for _ in 0..(10.0 / 0.05) as usize + 2 {
             w.step(0.05);
         }
         assert_eq!(before - bread(&w), 2, "zwei Arbeiter essen je ein Brot");
         assert!(!w.people[&1].hungry);
+        assert_eq!(w.stock_state(1).taler, taler + 2 * w.economy.def.market.tax_per_meal, "satte Bewohner zahlen Steuern");
         // Alles Essen weg: hungrig.
         let s = w.stock_state(1);
         for g in s.goods.iter().filter(|g| w.economy.def.population.food.contains(&g.good)) {

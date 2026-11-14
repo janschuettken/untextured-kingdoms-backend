@@ -315,13 +315,18 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                 }
             }
+            Ok(ClientMsg::Trade { good, amount, sell }) => {
+                if let Err(text) = state.world.lock().unwrap().trade(player_id, good, amount, sell) {
+                    let _ = out_tx.try_send(ServerMsg::Rejected { text });
+                }
+            }
             Ok(ClientMsg::AdminLogin { token }) => {
                 is_admin = state.admin.check(&token);
                 let _ = out_tx.send(ServerMsg::AdminStatus { ok: is_admin }).await;
             }
-            Ok(ClientMsg::AdminGive { goods }) => {
+            Ok(ClientMsg::AdminGive { goods, taler }) => {
                 if is_admin {
-                    state.world.lock().unwrap().admin_give(player_id, &goods);
+                    state.world.lock().unwrap().admin_give(player_id, &goods, taler);
                 } else {
                     let _ = out_tx.try_send(ServerMsg::Rejected { text: protocol::Text::new("admin.denied") });
                 }

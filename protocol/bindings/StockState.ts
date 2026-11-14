@@ -13,4 +13,8 @@ goods: Array<GoodAmount>,
 /**
  * Höchstmenge je Ware (wächst mit Vorratslagern).
  */
-capacity: number, people: PeopleState, };
+capacity: number, people: PeopleState, 
+/**
+ * Geld des Spielers.
+ */
+taler: number, };
