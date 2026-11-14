@@ -10,6 +10,7 @@ use protocol::{
 
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
+mod army;
 mod errand;
 mod gate;
 mod market;
@@ -120,6 +121,10 @@ pub struct World {
     idle_units: HashSet<u32>,
     /// Zustand der Abbaubetriebe, wie ihre Arbeiter ihn melden.
     gather_status: HashMap<u32, BuildingStatus>,
+    /// Sekunden seit dem letzten Zahltag je Spieler.
+    pay_timer: HashMap<u32, f32>,
+    /// Spieler, deren Sold am letzten Zahltag nicht gereicht hat.
+    unpaid: HashSet<u32>,
 }
 
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
@@ -179,6 +184,8 @@ impl World {
             unstaffed: HashSet::new(),
             idle_units: HashSet::new(),
             gather_status: HashMap::new(),
+            pay_timer: HashMap::new(),
+            unpaid: HashSet::new(),
         }
     }
 
@@ -188,8 +195,9 @@ impl World {
     }
 
     pub fn stock_state(&self, player: u32) -> StockState {
-        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, people: Default::default(), taler: 0 });
+        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, people: Default::default(), taler: 0, army: Default::default() });
         state.people = self.people.get(&player).cloned().unwrap_or_default();
+        state.army = self.army_state(player);
         state
     }
 
@@ -395,6 +403,8 @@ impl World {
             entrance,
             inventory: Vec::new(),
             gate_open: kind == BuildingKind::Gate,
+            training: Vec::new(),
+            training_left: 0.0,
         };
         self.next_building_id += 1;
         if let Some((ex, ey)) = entrance {
@@ -497,6 +507,9 @@ impl World {
     fn remove_building(&mut self, id: u32) {
         let Some(pos) = self.buildings.iter().position(|b| b.id == id) else { return };
         let b = self.buildings.remove(pos);
+        if !b.training.is_empty() {
+            self.refund_training(b.owner, &b.training);
+        }
         self.work.remove(&id);
         self.dirty_buildings.remove(&id);
         self.entrances.retain(|_, b| *b != id);
@@ -571,17 +584,20 @@ impl World {
         self.step_transport(dt);
         self.step_gather(dt);
         self.step_gates();
+        self.step_army(dt);
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
         let king = self.economy.def.movement.king_speed;
         let worker = self.economy.def.movement.worker_speed;
         let hungry: HashMap<u32, f32> = self.stocks.keys().map(|&p| (p, self.hunger_factor(p))).collect();
-        for unit in self.units.iter_mut() {
+        let soldier: Vec<f32> = self.units.iter().map(|u| if u.kind.is_soldier() { self.soldier_speed(u.owner, u.kind) } else { 0.0 }).collect();
+        for (k, unit) in self.units.iter_mut().enumerate() {
             let speed = match unit.kind {
                 UnitKind::King => king,
                 UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Cart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
+                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
             };
             let mut budget = speed * dt;
             while budget > 0.0 {

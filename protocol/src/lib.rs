@@ -49,6 +49,11 @@ pub enum ClientMsg {
     ReleaseTrees { building_id: u32 },
     /// Diese Einheit beobachten: der Server schickt ihren Weg (`UnitPath`). `None` = keine.
     WatchUnit { unit_id: Option<u32> },
+    /// In einer eigenen Kaserne `count` Soldaten dieser Art in Auftrag geben.
+    /// Waren und Taler werden sofort bezahlt (alle, die bezahlbar sind).
+    TrainUnits { building_id: u32, kind: UnitKind, count: u32 },
+    /// Den zuletzt in Auftrag gegebenen Soldaten streichen; die Kosten kommen ganz zurück.
+    CancelTraining { building_id: u32 },
     /// Am Markt handeln: `sell` = verkaufen, sonst kaufen. Bezahlt wird in Talern.
     Trade { good: Good, amount: u32, sell: bool },
     /// Als Admin anmelden (Token aus der Server-Umgebung `ADMIN_TOKEN`).
@@ -227,6 +232,24 @@ pub enum UnitKind {
     Cart,
     /// Arbeiter eines Abbaubetriebs: holt Holz, Stein oder Erz und trägt es zurück.
     Worker,
+    /// Soldaten aus der Kaserne (Werte in `economy.json` unter `units`).
+    /// Speerträger: billig, Speer aus dem Speermacher.
+    Spearman,
+    /// Bogenschütze mit Langbogen.
+    Archer,
+    /// Armbrustschütze: langsamer, trifft härter.
+    Crossbowman,
+    /// Schwertkämpfer mit Rüstung.
+    Swordsman,
+    /// Ritter zu Pferd: schnell und stark, teuer.
+    Knight,
+}
+
+impl UnitKind {
+    /// Soldaten: werden in der Kaserne ausgebildet und kosten Sold.
+    pub fn is_soldier(self) -> bool {
+        matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::Swordsman | UnitKind::Knight)
+    }
 }
 
 /// Zustand einer Einheit in einem Tick.
@@ -316,6 +339,8 @@ pub struct StockState {
     /// Geld des Spielers.
     #[serde(default)]
     pub taler: u32,
+    #[serde(default)]
+    pub army: ArmyState,
 }
 
 /// Art eines Gebäudes.
@@ -361,6 +386,8 @@ pub enum BuildingKind {
     Palisade,
     /// Treppenhaus an der Mauer: von hier steigen Einheiten auf den Wehrgang.
     Staircase,
+    /// Kaserne: bildet Soldaten aus Waffen und Talern aus.
+    Barracks,
 }
 
 /// Gruppe im Baumenü.
@@ -374,6 +401,7 @@ pub enum BuildingCategory {
     Raw,
     Workshop,
     Food,
+    Military,
 }
 
 /// Eine Ausbaustufe. Stufe 1 ist das Bauen selbst.
@@ -391,6 +419,9 @@ pub struct BuildingLevel {
     /// Einheiten, die mit dieser Stufe dazukommen (Wagenschuppen: Träger, dann Karren).
     #[serde(default)]
     pub spawns: Vec<UnitCount>,
+    /// Kaserne: Soldaten, die diese Stufe ausbilden kann (zusätzlich zu den vorigen).
+    #[serde(default)]
+    pub trains: Vec<UnitKind>,
 }
 
 /// Wo ein Gebäude stehen darf: ein Mindestanteil seiner Felder muss einer
@@ -515,6 +546,69 @@ pub struct EconomyDef {
     pub population: PopulationDef,
     #[serde(default)]
     pub market: MarketDef,
+    /// Soldaten: Kosten, Ausbildungszeit, Werte.
+    #[serde(default)]
+    pub units: Vec<UnitDef>,
+    #[serde(default)]
+    pub army: ArmyDef,
+}
+
+/// Eine Soldatenart, wie sie die Kaserne ausbildet.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UnitDef {
+    pub kind: UnitKind,
+    /// Ausrüstung aus dem Vorrat (Waffen, Rüstung, Sattel).
+    #[serde(default)]
+    pub cost: Vec<GoodAmount>,
+    /// Handgeld in Talern.
+    #[serde(default)]
+    pub taler: u32,
+    /// Ausbildungszeit in Sekunden.
+    pub seconds: f32,
+    /// Felder pro Sekunde.
+    pub speed: f32,
+    #[serde(default)]
+    pub hp: u32,
+    /// Schaden je Treffer (für den Kampf, kommt noch).
+    #[serde(default)]
+    pub attack: u32,
+    /// Reichweite in Feldern, 1 = Nahkampf (für den Kampf, kommt noch).
+    #[serde(default)]
+    pub range: f32,
+    /// Sold in Talern je Zahltag (siehe `army.upkeep_seconds`).
+    #[serde(default)]
+    pub upkeep: u32,
+}
+
+/// Regeln für das Heer.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct ArmyDef {
+    /// Alle so viele Sekunden ist Zahltag: jeder Soldat bekommt seinen Sold. 0 = nie.
+    pub upkeep_seconds: f32,
+    /// Reicht das Geld nicht, laufen alle Soldaten nur mit diesem Anteil des Tempos.
+    pub unpaid_speed_percent: u32,
+    /// So viele Soldaten kann eine Kaserne höchstens in der Warteschlange haben.
+    pub queue_max: u32,
+}
+
+impl Default for ArmyDef {
+    fn default() -> Self {
+        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10 }
+    }
+}
+
+/// Heer eines Spielers, wie im Vorrat angezeigt.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ArmyState {
+    pub soldiers: u32,
+    /// Sold aller Soldaten je Zahltag.
+    pub upkeep: u32,
+    /// Am letzten Zahltag reichte das Geld nicht.
+    pub unpaid: bool,
 }
 
 /// Lauftempo der Einheiten, die nicht transportieren (Felder pro Sekunde).
@@ -684,4 +778,10 @@ pub struct BuildingState {
     /// Nur Tore: ist der Durchgang gerade offen?
     #[serde(default)]
     pub gate_open: bool,
+    /// Nur Kaserne: Soldaten in der Ausbildung, der erste wird gerade ausgebildet.
+    #[serde(default)]
+    pub training: Vec<UnitKind>,
+    /// Sekunden (Spielzeit), bis der erste fertig ist. Der Client zählt selbst herunter.
+    #[serde(default)]
+    pub training_left: f32,
 }

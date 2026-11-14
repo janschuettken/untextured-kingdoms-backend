@@ -3,6 +3,7 @@ import type { BuildingKind } from "./BuildingKind";
 import type { BuildingSettings } from "./BuildingSettings";
 import type { BuildingStatus } from "./BuildingStatus";
 import type { GoodAmount } from "./GoodAmount";
+import type { UnitKind } from "./UnitKind";
 
 /**
  * Ein Gebäude auf der Karte. Es belegt die Felder (x, y) bis (x + w - 1, y + h - 1).
@@ -28,4 +29,12 @@ inventory: Array<GoodAmount>,
 /**
  * Nur Tore: ist der Durchgang gerade offen?
  */
-gate_open: boolean, };
+gate_open: boolean, 
+/**
+ * Nur Kaserne: Soldaten in der Ausbildung, der erste wird gerade ausgebildet.
+ */
+training: Array<UnitKind>, 
+/**
+ * Sekunden (Spielzeit), bis der erste fertig ist. Der Client zählt selbst herunter.
+ */
+training_left: number, };
