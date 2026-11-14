@@ -180,7 +180,7 @@ impl World {
     pub(super) fn nearest_hub(&self, owner: u32, p: (f32, f32), good: Good) -> Option<u32> {
         self.buildings
             .iter()
-            .filter(|b| b.owner == owner && self.is_hub(b) && stores(b, good))
+            .filter(|b| b.owner == owner && self.is_hub(b) && self.hub_accepts(b, good))
             .min_by(|a, b| dist_to(a, p).total_cmp(&dist_to(b, p)))
             .map(|b| b.id)
     }
@@ -226,7 +226,8 @@ impl World {
         let mut groups: Groups = HashMap::new();
         for b in self.buildings.iter().filter(|b| b.owner == owner) {
             let Some(inv) = self.inventories.get(&b.id) else { continue };
-            if !within(area, b) {
+            // Der Arbeiter trägt hier selbst (Einstellung am Gebäude).
+            if !within(area, b) || b.settings.worker_carries {
                 continue;
             }
             let inputs: &[GoodAmount] =
@@ -238,7 +239,7 @@ impl World {
                     continue;
                 }
                 let free = g.amount.saturating_sub(Reserved::get(&reserved.pickup, (b.id, g.good)));
-                let room = stock.capacity.saturating_sub(stock.amount(g.good));
+                let room = stock.room(g.good);
                 let amount = free.min(cap).min(room);
                 if free >= cart_min && free_carts.iter().any(|a| within(*a, b)) {
                     continue;
@@ -289,7 +290,7 @@ impl World {
         if cart && best.is_none() {
             for ((_, good), mut list) in groups {
                 list.sort_by(|a, b| a.0.total_cmp(&b.0));
-                let room = stock.capacity.saturating_sub(stock.amount(good)).min(cap);
+                let room = stock.room(good).min(cap);
                 let mut stops: Vec<(u32, u32)> = Vec::new();
                 let mut total = 0;
                 for &(_, id, n) in list.iter().take(TOUR_STOPS) {

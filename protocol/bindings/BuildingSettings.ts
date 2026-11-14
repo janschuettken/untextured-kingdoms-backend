@@ -29,4 +29,13 @@ keep_in_stock: Array<GoodAmount>,
 /**
  * Nur Tore: automatisch, fest offen oder fest zu.
  */
-gate: GateMode, };
+gate: GateMode, 
+/**
+ * Der Arbeiter bringt Ergebnisse selbst ins Lager und holt Eingänge selbst,
+ * auch wenn es Träger gibt.
+ */
+worker_carries: boolean, 
+/**
+ * Höchstbestand im Vorrat: liegt von einem Ergebnis so viel im Vorrat, macht der Betrieb Pause.
+ */
+stop_at: Array<GoodAmount>, };

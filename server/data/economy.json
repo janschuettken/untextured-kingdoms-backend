@@ -39,14 +39,14 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 10}],
+          "cost": [{"good": "wood", "amount": 6}],
           "recipes": [],
           "housing": 4,
           "spawns": [],
           "trains": []
         },
         {
-          "cost": [{"good": "wood", "amount": 15}, {"good": "boards", "amount": 15}],
+          "cost": [{"good": "wood", "amount": 10}, {"good": "boards", "amount": 15}],
           "recipes": [],
           "housing": 8,
           "spawns": [],
@@ -138,14 +138,14 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 10}, {"good": "blocks", "amount": 10}],
+          "cost": [{"good": "wood", "amount": 6}, {"good": "blocks", "amount": 10}],
           "recipes": [],
           "housing": 0,
           "spawns": [],
           "trains": []
         },
         {
-          "cost": [{"good": "wood", "amount": 10}, {"good": "boards", "amount": 6}],
+          "cost": [{"good": "wood", "amount": 6}, {"good": "boards", "amount": 6}],
           "recipes": [],
           "housing": 0,
           "spawns": [],
@@ -171,14 +171,14 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 8}, {"good": "blocks", "amount": 14}],
+          "cost": [{"good": "wood", "amount": 5}, {"good": "blocks", "amount": 14}],
           "recipes": [],
           "housing": 0,
           "spawns": [],
           "trains": []
         },
         {
-          "cost": [{"good": "wood", "amount": 8}, {"good": "boards", "amount": 6}],
+          "cost": [{"good": "wood", "amount": 5}, {"good": "boards", "amount": 6}],
           "recipes": [],
           "housing": 0,
           "spawns": [],
@@ -204,14 +204,14 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "stone", "amount": 12}, {"good": "wood", "amount": 8}],
+          "cost": [{"good": "stone", "amount": 12}, {"good": "wood", "amount": 5}],
           "recipes": [],
           "housing": 0,
           "spawns": [],
           "trains": []
         },
         {
-          "cost": [{"good": "wood", "amount": 10}, {"good": "boards", "amount": 6}],
+          "cost": [{"good": "wood", "amount": 6}, {"good": "boards", "amount": 6}],
           "recipes": [],
           "housing": 0,
           "spawns": [],
@@ -270,7 +270,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "stone", "amount": 6}, {"good": "wood", "amount": 6}],
+          "cost": [{"good": "stone", "amount": 6}, {"good": "wood", "amount": 4}],
           "recipes": [],
           "housing": 0,
           "spawns": [],
@@ -299,7 +299,7 @@
       "levels": [
         {
           "cost": [
-            {"good": "wood", "amount": 60},
+            {"good": "wood", "amount": 39},
             {"good": "boards", "amount": 40},
             {"good": "blocks", "amount": 40}
           ],
@@ -329,13 +329,69 @@
       "first_free": true,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 40}],
+          "cost": [{"good": "wood", "amount": 26}],
           "recipes": [],
           "housing": 0,
           "spawns": [],
           "trains": []
         }
       ]
+    },
+    {
+      "kind": "granary",
+      "category": "storage",
+      "w": 3,
+      "h": 3,
+      "max_hp": 500,
+      "service_radius": 0,
+      "no_entrance": false,
+      "hub": true,
+      "spawns": [],
+      "workers": 0,
+      "walkway_from_level": 0,
+      "stairs_from_level": 0,
+      "gate_radius": 0,
+      "garrison": 0,
+      "on_walls": false,
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 16}, {"good": "boards", "amount": 10}],
+          "recipes": [],
+          "housing": 0
+        }
+      ],
+      "hub_goods": ["grain", "flour", "bread", "fruit", "meat"],
+      "hub_capacity": 300
+    },
+    {
+      "kind": "armory",
+      "category": "storage",
+      "w": 3,
+      "h": 3,
+      "max_hp": 500,
+      "service_radius": 0,
+      "no_entrance": false,
+      "hub": true,
+      "spawns": [],
+      "workers": 0,
+      "walkway_from_level": 0,
+      "stairs_from_level": 0,
+      "gate_radius": 0,
+      "garrison": 0,
+      "on_walls": false,
+      "levels": [
+        {
+          "cost": [
+            {"good": "wood", "amount": 13},
+            {"good": "boards", "amount": 10},
+            {"good": "stone", "amount": 10}
+          ],
+          "recipes": [],
+          "housing": 0
+        }
+      ],
+      "hub_goods": ["spear", "longbow", "crossbow", "sword", "armor", "light_armor", "saddle"],
+      "hub_capacity": 200
     },
     {
       "kind": "cart_shed",
@@ -355,21 +411,21 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 30}],
+          "cost": [{"good": "wood", "amount": 20}],
           "recipes": [],
           "housing": 0,
           "spawns": [{"kind": "carrier", "count": 3}],
           "trains": []
         },
         {
-          "cost": [{"good": "wood", "amount": 10}, {"good": "boards", "amount": 20}],
+          "cost": [{"good": "wood", "amount": 6}, {"good": "boards", "amount": 20}],
           "recipes": [],
           "housing": 0,
           "spawns": [{"kind": "cart", "count": 1}],
           "trains": []
         },
         {
-          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 30}],
+          "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 30}],
           "recipes": [],
           "housing": 0,
           "spawns": [{"kind": "cart", "count": 1}],
@@ -403,7 +459,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 40}, {"good": "boards", "amount": 30}],
+          "cost": [{"good": "wood", "amount": 26}, {"good": "boards", "amount": 30}],
           "recipes": [],
           "housing": 0,
           "spawns": [],
@@ -431,7 +487,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 15}],
+          "cost": [{"good": "wood", "amount": 10}],
           "recipes": ["chop_wood"],
           "housing": 0,
           "spawns": [],
@@ -459,7 +515,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 25}],
+          "cost": [{"good": "wood", "amount": 16}],
           "recipes": ["quarry_stone"],
           "housing": 0,
           "spawns": [],
@@ -487,7 +543,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 30}, {"good": "boards", "amount": 15}],
+          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 15}],
           "recipes": ["mine_ore"],
           "housing": 0,
           "spawns": [],
@@ -514,7 +570,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 30}],
+          "cost": [{"good": "wood", "amount": 20}],
           "recipes": ["grow_grain"],
           "housing": 0,
           "spawns": [],
@@ -540,7 +596,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 30}],
+          "cost": [{"good": "wood", "amount": 20}],
           "recipes": ["saw_boards"],
           "housing": 0,
           "spawns": [],
@@ -566,7 +622,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 30}],
+          "cost": [{"good": "wood", "amount": 20}],
           "recipes": ["cut_blocks"],
           "housing": 0,
           "spawns": [],
@@ -576,7 +632,7 @@
     },
     {
       "kind": "spear_maker",
-      "category": "workshop",
+      "category": "military",
       "w": 3,
       "h": 3,
       "max_hp": 250,
@@ -592,7 +648,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 25}],
+          "cost": [{"good": "wood", "amount": 16}],
           "recipes": ["make_spear"],
           "housing": 0,
           "spawns": [],
@@ -602,7 +658,7 @@
     },
     {
       "kind": "bowyer",
-      "category": "workshop",
+      "category": "military",
       "w": 3,
       "h": 3,
       "max_hp": 300,
@@ -618,7 +674,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 20}],
+          "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 20}],
           "recipes": ["make_longbow"],
           "housing": 0,
           "spawns": [],
@@ -635,7 +691,7 @@
     },
     {
       "kind": "tannery",
-      "category": "workshop",
+      "category": "military",
       "w": 3,
       "h": 3,
       "max_hp": 300,
@@ -651,7 +707,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 20}],
+          "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 20}],
           "recipes": ["make_light_armor"],
           "housing": 0,
           "spawns": [],
@@ -685,7 +741,7 @@
       "levels": [
         {
           "cost": [
-            {"good": "wood", "amount": 20},
+            {"good": "wood", "amount": 13},
             {"good": "boards", "amount": 20},
             {"good": "stone", "amount": 30}
           ],
@@ -698,7 +754,7 @@
     },
     {
       "kind": "smithy",
-      "category": "workshop",
+      "category": "military",
       "w": 4,
       "h": 4,
       "max_hp": 400,
@@ -715,7 +771,7 @@
       "levels": [
         {
           "cost": [
-            {"good": "wood", "amount": 20},
+            {"good": "wood", "amount": 13},
             {"good": "boards", "amount": 20},
             {"good": "stone", "amount": 30}
           ],
@@ -755,7 +811,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 30}],
+          "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 30}],
           "recipes": ["grind_flour"],
           "housing": 0,
           "spawns": [],
@@ -782,7 +838,7 @@
       "levels": [
         {
           "cost": [
-            {"good": "wood", "amount": 20},
+            {"good": "wood", "amount": 13},
             {"good": "boards", "amount": 20},
             {"good": "stone", "amount": 20}
           ],
@@ -812,7 +868,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 25}],
+          "cost": [{"good": "wood", "amount": 16}],
           "recipes": ["grow_fruit"],
           "housing": 0,
           "spawns": [],
@@ -838,14 +894,14 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 30}],
+          "cost": [{"good": "wood", "amount": 20}],
           "recipes": ["raise_pigs"],
           "housing": 0,
           "spawns": [],
           "trains": []
         },
         {
-          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 15}],
+          "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 15}],
           "recipes": ["pig_leather"],
           "housing": 0,
           "spawns": [],
@@ -872,7 +928,7 @@
       "first_free": false,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 30}, {"good": "boards", "amount": 30}],
+          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 30}],
           "recipes": ["raise_cattle"],
           "housing": 0,
           "spawns": [],
@@ -899,7 +955,7 @@
       "levels": [
         {
           "cost": [
-            {"good": "wood", "amount": 40},
+            {"good": "wood", "amount": 26},
             {"good": "boards", "amount": 20},
             {"good": "stone", "amount": 20}
           ],

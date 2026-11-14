@@ -336,6 +336,9 @@ pub struct StockState {
     pub goods: Vec<GoodAmount>,
     /// Höchstmenge je Ware (wächst mit Vorratslagern).
     pub capacity: u32,
+    /// Zusätzlicher Platz für einzelne Waren (Waffenkammer, Kornspeicher).
+    #[serde(default)]
+    pub extra_capacity: Vec<GoodAmount>,
     #[serde(default)]
     pub people: PeopleState,
     /// Geld des Spielers.
@@ -393,6 +396,10 @@ pub enum BuildingKind {
     Staircase,
     /// Kaserne: bildet Soldaten aus Waffen und Talern aus.
     Barracks,
+    /// Waffenkammer: Lager nur für Waffen und Rüstungen.
+    Armory,
+    /// Kornspeicher: Lager nur für Lebensmittel.
+    Granary,
 }
 
 /// Gruppe im Baumenü.
@@ -497,6 +504,12 @@ pub struct BuildingDef {
     /// Das erste Gebäude dieser Art je Spieler kostet nichts.
     #[serde(default)]
     pub first_free: bool,
+    /// Lager nur für diese Waren (z. B. Waffenkammer). Leer = alle Waren.
+    #[serde(default)]
+    pub hub_goods: Vec<Good>,
+    /// Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
+    #[serde(default)]
+    pub hub_capacity: u32,
     pub levels: Vec<BuildingLevel>,
 }
 
@@ -731,6 +744,13 @@ pub struct BuildingSettings {
     /// Nur Tore: automatisch, fest offen oder fest zu.
     #[serde(default)]
     pub gate: GateMode,
+    /// Der Arbeiter bringt Ergebnisse selbst ins Lager und holt Eingänge selbst,
+    /// auch wenn es Träger gibt.
+    #[serde(default)]
+    pub worker_carries: bool,
+    /// Höchstbestand im Vorrat: liegt von einem Ergebnis so viel im Vorrat, macht der Betrieb Pause.
+    #[serde(default)]
+    pub stop_at: Vec<GoodAmount>,
 }
 
 /// Wie sich ein Tor verhält.
@@ -764,6 +784,8 @@ pub enum BuildingStatus {
     NoWorkers,
     /// Der Arbeiter trägt gerade selbst Waren (kein Wagenschuppen mit Trägern).
     WorkerAway,
+    /// Höchstbestand im Vorrat erreicht (`settings.stop_at`): Pause, bis wieder Platz ist.
+    TargetReached,
 }
 
 /// Ein Gebäude auf der Karte. Es belegt die Felder (x, y) bis (x + w - 1, y + h - 1).
