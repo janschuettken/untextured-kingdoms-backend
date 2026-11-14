@@ -45,6 +45,10 @@ impl World {
         let Some(def) = self.economy.building(kind).cloned() else { return BuildingStatus::Idle };
         let gathers = !def.gathers.is_empty();
 
+        // Der Arbeiter trägt gerade selbst Waren (siehe `errand.rs`): der Betrieb steht.
+        if !gathers && self.gather_status.get(&id) == Some(&BuildingStatus::WorkerAway) {
+            return BuildingStatus::WorkerAway;
+        }
         // Abbaubetriebe: die Arbeiter machen die Arbeit (siehe `gather.rs`).
         if gathers {
             return self.gather_status.get(&id).copied().unwrap_or(BuildingStatus::Working);
@@ -288,6 +292,7 @@ mod tests {
     fn holzfaeller_holzt_wald_ab() {
         let mut w = world(&map(30, 10, (0, 9), &[(15, 0, 1, 1, 'W')]));
         w.place_building(1, BuildingKind::Keep, 20, 2).unwrap();
+        w.place_building(1, BuildingKind::CartShed, 8, 5).unwrap();
         let before = w.stocks[&1].amount(Good::Wood);
         let b = w.place_building(1, BuildingKind::Woodcutter, 2, 2).unwrap();
         let wood_after_build = w.stocks[&1].amount(Good::Wood);
@@ -311,6 +316,7 @@ mod tests {
         let mut w = world(&map(20, 10, (0, 9), &[]));
         w.place_building(1, BuildingKind::Keep, 10, 0).unwrap();
         let b = w.place_building(1, BuildingKind::Bowyer, 2, 0).unwrap();
+        w.place_building(1, BuildingKind::CartShed, 4, 5).unwrap();
         assert_eq!(b.settings.recipe.as_deref(), Some("make_longbow"));
         // Armbrust erst ab Stufe 2.
         let mut s = b.settings.clone();

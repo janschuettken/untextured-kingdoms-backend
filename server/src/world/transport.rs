@@ -201,8 +201,8 @@ impl World {
         let cart_min = self.economy.def.transport.cart_min_load;
         let min_load = if cart { cart_min } else { 1 };
         let stock = self.stocks.get(&owner)?;
-        // Karren fahren nur im Umkreis ihres Schuppens.
-        let area = if cart { self.service_area(u.home) } else { None };
+        // Träger und Karren arbeiten nur im Umkreis ihres Schuppens.
+        let area = self.service_area(u.home);
         // Große Ladungen lassen Träger für einen freien Karren liegen, der dort hinkommt.
         let free_carts: Vec<_> = if cart {
             Vec::new()
@@ -223,7 +223,7 @@ impl World {
         let mut groups: Groups = HashMap::new();
         for b in self.buildings.iter().filter(|b| b.owner == owner) {
             let Some(inv) = self.inventories.get(&b.id) else { continue };
-            if cart && !within(area, b) {
+            if !within(area, b) {
                 continue;
             }
             let inputs: &[GoodAmount] =
@@ -601,50 +601,31 @@ mod tests {
         w.inventories[&id].amount(g)
     }
 
+    /// Wagenschuppen auf Stufe `level` (1 = Träger, 2 = dazu ein Karren).
+    fn shed(w: &mut World, x: u32, y: u32, level: u8) -> u32 {
+        w.place_building_rotated(1, BuildingKind::CartShed, x, y, 0, level).unwrap().id
+    }
+
+    fn count(w: &World, kind: UnitKind) -> usize {
+        w.units.iter().filter(|u| u.kind == kind).count()
+    }
+
     #[test]
-    fn lager_bringt_traeger_mit() {
+    fn traeger_und_karren_nur_aus_dem_wagenschuppen() {
         let mut w = flat(30, 20);
-        let keep = w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
-        let carriers = || {
-            w.units
-                .iter()
-                .filter(|u| u.kind == UnitKind::Carrier)
-                .count()
-        };
-        assert_eq!(carriers(), 2);
-        let store = w
-            .place_building(1, BuildingKind::Storehouse, 12, 2)
-            .unwrap();
-        assert_eq!(
-            w.units
-                .iter()
-                .filter(|u| u.kind == UnitKind::Carrier)
-                .count(),
-            5
-        );
-        w.place_building(1, BuildingKind::CartShed, 20, 2).unwrap();
-        assert_eq!(
-            w.units.iter().filter(|u| u.kind == UnitKind::Cart).count(),
-            1
-        );
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 12, 2).unwrap();
+        assert_eq!(count(&w, UnitKind::Carrier), 0, "Lager bringen keine Träger mehr mit");
+        let shed = shed(&mut w, 20, 2, 1);
+        assert_eq!((count(&w, UnitKind::Carrier), count(&w, UnitKind::Cart)), (3, 0), "Stufe 1: Träger");
+        w.upgrade(1, shed).unwrap();
+        assert_eq!((count(&w, UnitKind::Carrier), count(&w, UnitKind::Cart)), (3, 1), "Stufe 2: dazu der Karren");
         // Träger stehen nie in Gebäuden, und befehlen lassen sie sich nicht.
-        let id = w
-            .units
-            .iter()
-            .find(|u| u.kind == UnitKind::Carrier)
-            .unwrap()
-            .id;
+        let id = w.units.iter().find(|u| u.kind == UnitKind::Carrier).unwrap().id;
         w.order_move(1, &[id], (29.5, 19.5));
         assert!(w.units.iter().find(|u| u.id == id).unwrap().path.is_empty());
-        w.demolish(1, store.id).unwrap();
-        assert_eq!(
-            w.units
-                .iter()
-                .filter(|u| u.kind == UnitKind::Carrier)
-                .count(),
-            2
-        );
-        let _ = keep;
+        w.demolish(1, shed).unwrap();
+        assert_eq!(count(&w, UnitKind::Carrier) + count(&w, UnitKind::Cart), 0);
     }
 
     #[test]
@@ -652,6 +633,7 @@ mod tests {
         let mut w = flat(40, 20);
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
         let cutter = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap();
+        shed(&mut w, 10, 12, 1);
         let wood = central(&w, Good::Wood);
         let boards = central(&w, Good::Boards);
         // Sägewerk: 2 Holz → 2 Bretter in 8 s (siehe economy.json). Ohne Lieferung fehlt Holz.
@@ -702,7 +684,7 @@ mod tests {
         // Bergfried mit Trägern und ein Wagenschuppen: Die große Ladung lassen
         // die Träger für den Karren liegen, er holt alles auf einmal.
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
-        w.place_building(1, BuildingKind::CartShed, 10, 2).unwrap();
+        shed(&mut w, 10, 2, 2);
         let fruit = central(&w, Good::Fruit);
         let mut cart_load = 0;
         for _ in 0..20 * 40 {
@@ -751,6 +733,7 @@ mod tests {
         s.stores = Some(vec![Good::Wood]);
         w.configure(1, keep.id, s).unwrap();
         let orchard = w.place_building(1, BuildingKind::Orchard, 20, 2).unwrap();
+        shed(&mut w, 10, 12, 1);
         pause(&mut w, orchard.id);
         set_fruit(&mut w, orchard.id, 4);
         run(&mut w, 30.0);
@@ -769,6 +752,7 @@ mod tests {
         let mut s = saw.settings.clone();
         s.keep_in_stock = vec![GoodAmount { good: Good::Wood, amount: wood - 2 }];
         w.configure(1, saw.id, s).unwrap();
+        // Ohne Wagenschuppen holt der Arbeiter des Sägewerks selbst.
         run(&mut w, 40.0);
         assert_eq!(central(&w, Good::Wood), wood - 2, "nur die 2 über dem Mindestbestand");
     }
@@ -777,8 +761,8 @@ mod tests {
     fn karren_sammelt_bei_mehreren_und_bleibt_im_umkreis() {
         let mut w = flat(120, 30);
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        shed(&mut w, 12, 2, 2);
         w.units.retain(|u| u.kind != UnitKind::Carrier);
-        w.place_building(1, BuildingKind::CartShed, 12, 2).unwrap();
         let a = w.place_building(1, BuildingKind::Orchard, 24, 2).unwrap();
         let b = w.place_building(1, BuildingKind::Orchard, 32, 2).unwrap();
         // Weit außerhalb des Umkreises (40 Felder): wird nie angefahren.

@@ -5,7 +5,7 @@
 //! gibt, die sie abholen, und Platz ist. Sonst trägt er sie selbst ins nächste
 //! Lager und baut in der Zeit nichts ab.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use protocol::{BuildingStatus, GoodAmount, UnitKind};
 
@@ -22,6 +22,8 @@ pub enum Gather {
     Home,
     /// Trägt die Ware selbst ins Lager (Gebäude-Id).
     Deliver(u32),
+    /// Herstellungsbetrieb: holt Eingänge aus diesem Lager (siehe `errand.rs`).
+    Fetch(u32),
 }
 
 /// Wie lange ein Arbeiter wartet, bevor er es nochmal versucht.
@@ -31,12 +33,23 @@ impl World {
     pub(super) fn step_gather(&mut self, dt: f32) {
         let index: HashMap<u32, usize> = self.buildings.iter().enumerate().map(|(i, b)| (b.id, i)).collect();
         let mut busy: HashMap<u32, BuildingStatus> = HashMap::new();
+        let mut present: HashSet<u32> = HashSet::new();
         for k in 0..self.units.len() {
             if self.units[k].kind != UnitKind::Worker {
                 continue;
             }
             let Some(home) = self.units[k].home else { continue };
             let Some(&bi) = index.get(&home) else { continue };
+            let gathers = self.economy.building(self.buildings[bi].kind).is_some_and(|d| !d.gathers.is_empty());
+            if !gathers {
+                // Herstellungsbetrieb: unterwegs = der Betrieb steht, solange keiner da ist.
+                if self.step_errand(k, bi, dt) {
+                    present.insert(home);
+                } else {
+                    busy.entry(home).or_insert(BuildingStatus::WorkerAway);
+                }
+                continue;
+            }
             let status = self.step_worker(k, bi, dt);
             // Arbeitet einer, arbeitet der Betrieb.
             let entry = busy.entry(home).or_insert(status);
@@ -44,6 +57,7 @@ impl World {
                 *entry = status;
             }
         }
+        busy.retain(|id, s| *s != BuildingStatus::WorkerAway || !present.contains(id));
         self.gather_status = busy;
     }
 
@@ -97,6 +111,10 @@ impl World {
                     }
                 }
                 self.units[k].gather = None;
+                BuildingStatus::Working
+            }
+            Some(Gather::Fetch(_)) => {
+                self.units[k].gather = None; // nur für Herstellungsbetriebe
                 BuildingStatus::Working
             }
             None => {
@@ -205,11 +223,12 @@ impl World {
             })
     }
 
-    /// Arbeiter für einen neuen Abbaubetrieb.
+    /// Arbeiter für einen neuen Betrieb (mindestens einer).
     pub(super) fn spawn_workers(&mut self, bi: usize) {
         let b = self.buildings[bi].clone();
         let Some(def) = self.economy.building(b.kind) else { return };
-        if def.gathers.is_empty() {
+        // Abbau- und Herstellungsbetriebe; Mauern, Lager usw. haben keine Arbeiter.
+        if def.gathers.is_empty() && def.levels.iter().all(|l| l.recipes.is_empty()) {
             return;
         }
         let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);

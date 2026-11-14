@@ -125,7 +125,6 @@
       "service_radius": 0,
       "no_entrance": false,
       "hub": true,
-      "spawns": [{"kind": "carrier", "count": 2}],
       "workers": 0,
       "levels": [
         {
@@ -148,7 +147,6 @@
       "service_radius": 0,
       "no_entrance": false,
       "hub": true,
-      "spawns": [{"kind": "carrier", "count": 3}],
       "workers": 0,
       "levels": [{"cost": [{"good": "wood", "amount": 40}], "recipes": [], "housing": 0}]
     },
@@ -160,13 +158,19 @@
       "max_hp": 500,
       "service_radius": 40,
       "no_entrance": false,
-      "spawns": [{"kind": "cart", "count": 1}],
       "workers": 0,
       "levels": [
         {
-          "cost": [{"good": "wood", "amount": 30}, {"good": "boards", "amount": 20}],
+          "cost": [{"good": "wood", "amount": 30}],
           "recipes": [],
-          "housing": 0
+          "housing": 0,
+          "spawns": [{"kind": "carrier", "count": 3}]
+        },
+        {
+          "cost": [{"good": "wood", "amount": 10}, {"good": "boards", "amount": 20}],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [{"kind": "cart", "count": 1}]
         }
       ]
     },

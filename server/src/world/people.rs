@@ -129,7 +129,7 @@ mod tests {
     fn traeger_warten_auf_wohnung() {
         let mut w = world();
         w.admin_give(1, &[protocol::GoodAmount { good: Good::Wood, amount: 100 }], 0);
-        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::CartShed, 2, 2).unwrap();
         w.step(0.05);
         assert_eq!(w.idle_units.len(), 3);
         w.place_building(1, BuildingKind::House, 10, 2).unwrap();
