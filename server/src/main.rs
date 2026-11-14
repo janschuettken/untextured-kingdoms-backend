@@ -372,7 +372,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, wanted: Option<u
                 let mut world = state.world.lock().unwrap();
                 match world.place_building_rotated(player_id, kind, x, y, rotation, level) {
                     // Noch unter dem Lock verschicken, damit die Reihenfolge stimmt.
-                    Ok(building) => drop(state.ticks.send(ServerMsg::BuildingPlaced { building })),
+                    Ok(building) => {
+                        // Erst die Mauerstücke, die einem Tor oder Turm weichen mussten.
+                        for event in world.take_events() {
+                            let _ = state.ticks.send(event);
+                        }
+                        let _ = state.ticks.send(ServerMsg::BuildingPlaced { building });
+                    }
                     Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                 }
             }
@@ -398,6 +404,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, wanted: Option<u
                         for event in world.take_events() {
                             let _ = state.ticks.send(event);
                         }
+                    }
+                    Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
+                }
+            }
+            Ok(ClientMsg::MoveBuilding { building_id, x, y, rotation }) => {
+                let mut world = state.world.lock().unwrap();
+                match world.move_building(player_id, building_id, x, y, rotation) {
+                    // Für die Clients: alt weg, neu da (Belegung, Anschlüsse der Mauern).
+                    Ok(building) => {
+                        let _ = state.ticks.send(ServerMsg::BuildingRemoved { building_id });
+                        let _ = state.ticks.send(ServerMsg::BuildingPlaced { building });
                     }
                     Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                 }

@@ -16,6 +16,7 @@ mod gate;
 mod market;
 mod gather;
 mod save;
+mod storage;
 pub use save::SaveGame;
 mod people;
 mod production;
@@ -125,6 +126,8 @@ pub struct World {
     pay_timer: HashMap<u32, f32>,
     /// Spieler, deren Sold am letzten Zahltag nicht gereicht hat.
     unpaid: HashSet<u32>,
+    /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
+    hub_goods: HashMap<u32, storage::HubGoods>,
 }
 
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
@@ -186,6 +189,7 @@ impl World {
             gather_status: HashMap::new(),
             pay_timer: HashMap::new(),
             unpaid: HashSet::new(),
+            hub_goods: HashMap::new(),
         }
     }
 
@@ -322,52 +326,9 @@ impl World {
                 return Err(Text::new("error.limit_reached").arg("max", max));
             }
         }
-        if x.checked_add(w).is_none_or(|r| r > self.map.width) || y.checked_add(h).is_none_or(|b| b > self.map.height) {
-            return Err(Text::new("error.outside_map"));
-        }
-        let height = self.map.levels[(y * self.map.width + x) as usize];
-        for ty in y..y + h {
-            for tx in x..x + w {
-                let i = (ty * self.map.width + tx) as usize;
-                match self.map.tiles[i] {
-                    TileKind::Water => return Err(Text::new("error.on_water")),
-                    TileKind::Ramp => return Err(Text::new("error.on_ramp")),
-                    TileKind::Ground => {}
-                }
-                if self.map.levels[i] != height {
-                    return Err(Text::new("error.not_flat"));
-                }
-                if self.occupied[i] != 0 {
-                    return Err(Text::new("error.occupied"));
-                }
-                if self.entrances.contains_key(&i) {
-                    return Err(Text::new("error.blocks_entrance"));
-                }
-                let r = self.map.resources[i];
-                let allowed = def.placement.as_ref().is_some_and(|p| p.resources.contains(&r));
-                if crate::map::resource_blocks(r) && !allowed {
-                    return Err(Text::new("error.on_resource"));
-                }
-            }
-        }
-        if let Some(p) = &def.placement {
-            let on = (y..y + h)
-                .flat_map(|ty| (x..x + w).map(move |tx| (tx, ty)))
-                .filter(|&(tx, ty)| p.resources.contains(&self.map.resources[(ty * self.map.width + tx) as usize]))
-                .count() as u32;
-            if on * 100 < p.min_share_percent * w * h {
-                let names: Vec<String> = p.resources.iter().map(|r| resource_key(*r)).collect();
-                return Err(Text::new("error.needs_resource").arg("resources", names.join(",")));
-            }
-        }
-        let entrance = if def.no_entrance { None } else { Some(entrance_tile(x, y, w, h, rotation)) };
-        if let Some((ex, ey)) = entrance {
-            let inside = ex >= 0 && ey >= 0 && (ex as u32) < self.map.width && (ey as u32) < self.map.height;
-            if !inside || !self.map.nav.is_open(ex as i32, ey as i32) {
-                return Err(Text::new("error.entrance_blocked"));
-            }
-        }
-        let entrance = entrance.map(|(ex, ey)| (ex as u32, ey as u32));
+        // Tore und Türme dürfen auf eigene Mauern; die kommen beim Bauen weg.
+        let walls = if def.on_walls { self.walls_under(player, (x, y), (w, h)) } else { Vec::new() };
+        let entrance = self.check_site(&def, (x, y), (w, h), rotation, &walls)?;
         let covers = |p: (f32, f32)| {
             let (ux, uy) = (p.0.floor() as i64, p.1.floor() as i64);
             ux >= x as i64 && uy >= y as i64 && ux < (x + w) as i64 && uy < (y + h) as i64
@@ -377,6 +338,11 @@ impl World {
             return Err(Text::new("error.unit_in_way"));
         }
         self.pay(player, &cost)?;
+        for id in walls {
+            if self.demolish(player, id).is_ok() {
+                self.events.push(ServerMsg::BuildingRemoved { building_id: id });
+            }
+        }
 
         let settings = BuildingSettings {
             recipe: def.levels[0].recipes.first().cloned(),
@@ -435,6 +401,159 @@ impl World {
         self.spawn_workers(self.buildings.len() - 1);
         self.replan_all();
         Ok(b)
+    }
+
+    /// Darf ein Gebäude dieser Art (schon gedreht: `w` x `h`) hier stehen?
+    /// `ignore`: dieses Gebäude zählt nicht als Hindernis (beim Versetzen).
+    /// Liefert das Feld vor dem Eingang.
+    /// Eigene Mauerstücke (Mauer, hohe Mauer, Palisade) in dieser Fläche.
+    fn walls_under(&self, player: u32, (x, y): (u32, u32), (w, h): (u32, u32)) -> Vec<u32> {
+        let mut ids: Vec<u32> = Vec::new();
+        for ty in y..(y + h).min(self.map.height) {
+            for tx in x..(x + w).min(self.map.width) {
+                let id = self.occupied[(ty * self.map.width + tx) as usize];
+                if id == 0 || ids.contains(&id) {
+                    continue;
+                }
+                let wall = self.buildings.iter().find(|b| b.id == id).is_some_and(|b| {
+                    b.owner == player && matches!(b.kind, BuildingKind::Wall | BuildingKind::HighWall | BuildingKind::Palisade)
+                });
+                if wall {
+                    ids.push(id);
+                }
+            }
+        }
+        ids
+    }
+
+    fn check_site(
+        &self,
+        def: &protocol::BuildingDef,
+        (x, y): (u32, u32),
+        (w, h): (u32, u32),
+        rotation: u8,
+        ignore: &[u32],
+    ) -> Result<Option<(u32, u32)>, Refusal> {
+        if x.checked_add(w).is_none_or(|r| r > self.map.width) || y.checked_add(h).is_none_or(|b| b > self.map.height) {
+            return Err(Text::new("error.outside_map"));
+        }
+        let height = self.map.levels[(y * self.map.width + x) as usize];
+        for ty in y..y + h {
+            for tx in x..x + w {
+                let i = (ty * self.map.width + tx) as usize;
+                match self.map.tiles[i] {
+                    TileKind::Water => return Err(Text::new("error.on_water")),
+                    TileKind::Ramp => return Err(Text::new("error.on_ramp")),
+                    TileKind::Ground => {}
+                }
+                if self.map.levels[i] != height {
+                    return Err(Text::new("error.not_flat"));
+                }
+                if self.occupied[i] != 0 && !ignore.contains(&self.occupied[i]) {
+                    return Err(Text::new("error.occupied"));
+                }
+                if self.entrances.get(&i).is_some_and(|b| !ignore.contains(b)) {
+                    return Err(Text::new("error.blocks_entrance"));
+                }
+                let r = self.map.resources[i];
+                let allowed = def.placement.as_ref().is_some_and(|p| p.resources.contains(&r));
+                if crate::map::resource_blocks(r) && !allowed {
+                    return Err(Text::new("error.on_resource"));
+                }
+            }
+        }
+        if let Some(p) = &def.placement {
+            let on = (y..y + h)
+                .flat_map(|ty| (x..x + w).map(move |tx| (tx, ty)))
+                .filter(|&(tx, ty)| p.resources.contains(&self.map.resources[(ty * self.map.width + tx) as usize]))
+                .count() as u32;
+            if on * 100 < p.min_share_percent * w * h {
+                let names: Vec<String> = p.resources.iter().map(|r| resource_key(*r)).collect();
+                return Err(Text::new("error.needs_resource").arg("resources", names.join(",")));
+            }
+        }
+        let entrance = if def.no_entrance { None } else { Some(entrance_tile(x, y, w, h, rotation)) };
+        if let Some((ex, ey)) = entrance {
+            let inside = ex >= 0 && ey >= 0 && (ex as u32) < self.map.width && (ey as u32) < self.map.height;
+            if !inside || !self.map.nav.is_open(ex as i32, ey as i32) {
+                return Err(Text::new("error.entrance_blocked"));
+            }
+        }
+        Ok(entrance.map(|(ex, ey)| (ex as u32, ey as u32)))
+    }
+
+    /// Was das Versetzen kostet: `move_cost_percent` aller Bau- und Ausbaukosten, aufgerundet.
+    pub fn move_cost(&self, b: &BuildingState) -> Vec<GoodAmount> {
+        let pct = self.economy.def.move_cost_percent;
+        let Some(def) = self.economy.building(b.kind) else { return Vec::new() };
+        level_cost(def, b.level as u8)
+            .into_iter()
+            .map(|g| GoodAmount { good: g.good, amount: (g.amount * pct).div_ceil(100) })
+            .filter(|g| g.amount > 0)
+            .collect()
+    }
+
+    /// Eigenes Gebäude an eine andere Stelle versetzen. Stufe, Einstellungen und
+    /// Inhalt bleiben, seine Leute laufen zur neuen Stelle.
+    pub fn move_building(&mut self, player: u32, id: u32, x: u32, y: u32, rotation: u8) -> Result<BuildingState, Refusal> {
+        let bi = self.buildings.iter().position(|b| b.id == id).ok_or_else(|| Text::new("error.no_building"))?;
+        let old = self.buildings[bi].clone();
+        if old.owner != player {
+            return Err(Text::new("error.not_yours"));
+        }
+        let def = self.economy.building(old.kind).ok_or_else(|| Text::new("error.unknown_building"))?.clone();
+        let rotation = rotation % 4;
+        let (w, h) = if rotation % 2 == 1 { (def.h, def.w) } else { (def.w, def.h) };
+        if self.units.iter().any(|u| u.on_wall && {
+            let (ux, uy) = (u.pos.0.floor() as i64, u.pos.1.floor() as i64);
+            ux >= old.x as i64 && uy >= old.y as i64 && ux < (old.x + old.w) as i64 && uy < (old.y + old.h) as i64
+        }) {
+            return Err(Text::new("error.unit_in_way"));
+        }
+        // Alte Fläche kurz freigeben, damit man auch um ein paar Felder versetzen kann.
+        self.set_footprint(&old, false);
+        let site = self.check_site(&def, (x, y), (w, h), rotation, &[id]).and_then(|entrance| {
+            let covers = |p: (f32, f32)| {
+                let (ux, uy) = (p.0.floor() as i64, p.1.floor() as i64);
+                ux >= x as i64 && uy >= y as i64 && ux < (x + w) as i64 && uy < (y + h) as i64
+            };
+            if self.units.iter().any(|u| !u.is_civilian() && covers(u.pos)) {
+                return Err(Text::new("error.unit_in_way"));
+            }
+            Ok(entrance)
+        });
+        let cost = self.move_cost(&old);
+        let entrance = match site.and_then(|e| self.pay(player, &cost).map(|_| e)) {
+            Ok(e) => e,
+            Err(e) => {
+                self.set_footprint(&old, true);
+                return Err(e);
+            }
+        };
+        self.entrances.retain(|_, b| *b != id);
+        let b = &mut self.buildings[bi];
+        (b.x, b.y, b.w, b.h, b.rotation, b.entrance) = (x, y, w, h, rotation, entrance);
+        let b = b.clone();
+        if let Some((ex, ey)) = entrance {
+            self.entrances.insert((ey * self.map.width + ex) as usize, id);
+        }
+        self.set_footprint(&b, true);
+        self.make_room(&b);
+        self.drop_from_walls();
+        self.replan_all();
+        Ok(b)
+    }
+
+    /// Felder eines Gebäudes belegen (`true`) oder freigeben.
+    fn set_footprint(&mut self, b: &BuildingState, on: bool) {
+        for ty in b.y..b.y + b.h {
+            for tx in b.x..b.x + b.w {
+                self.occupied[(ty * self.map.width + tx) as usize] = if on { b.id } else { 0 };
+                if gate::blocks(b, tx, ty) {
+                    self.map.nav.set_blocked(tx as i32, ty as i32, on);
+                }
+            }
+        }
     }
 
     /// Kosten aus dem Lager nehmen oder mit Grund ablehnen.
@@ -567,14 +686,29 @@ impl World {
         let chosen: Vec<usize> =
             (0..self.units.len()).filter(|&k| self.units[k].owner == player && !self.units[k].is_civilian() && unit_ids.contains(&self.units[k].id)).collect();
         let spots = if target_wall { vec![target; chosen.len()] } else { self.formation(target, chosen.len()) };
+        let mut room = if target_wall { self.garrison_room(player, unit_ids, target) } else { None };
+        // Turm voll: die übrigen stellen sich unten neben den Turm.
+        let mut feet = match (room, chosen.first()) {
+            (Some(n), Some(&k)) if n < chosen.len() => self.formation(self.foot_of(target, self.units[k].pos), chosen.len() - n),
+            _ => Vec::new(),
+        }
+        .into_iter();
         for (&k, &spot) in chosen.iter().zip(&spots) {
             let u = &self.units[k];
-            let (path, layers) = self.plan(player, u.pos, u.on_wall, spot, target_wall);
+            let (to, wall) = match &mut room {
+                Some(0) => (feet.next().unwrap_or(target), false),
+                Some(n) => {
+                    *n -= 1;
+                    (spot, true)
+                }
+                None => (spot, target_wall),
+            };
+            let (path, layers) = self.plan(player, u.pos, u.on_wall, to, wall);
             let u = &mut self.units[k];
             u.path = path;
             u.layers = layers;
-            u.target = Some(spot);
-            u.target_wall = target_wall;
+            u.target = Some(to);
+            u.target_wall = wall;
         }
     }
 
@@ -614,6 +748,46 @@ impl World {
         spots
     }
 
+    /// Wie viele Einheiten noch auf das Gebäude am Ziel passen (`garrison`).
+    /// None, wenn es keine Grenze hat.
+    fn garrison_room(&self, player: u32, ordered: &[u32], target: (f32, f32)) -> Option<usize> {
+        let i = (target.1 as u32 * self.map.width + target.0 as u32) as usize;
+        let b = self.buildings.iter().find(|b| b.id == self.occupied[i])?;
+        let max = self.economy.building(b.kind)?.garrison as usize;
+        if max == 0 {
+            return None;
+        }
+        let inside = |p: (f32, f32)| {
+            p.0 >= b.x as f32 && p.1 >= b.y as f32 && p.0 < (b.x + b.w) as f32 && p.1 < (b.y + b.h) as f32
+        };
+        let taken = self
+            .units
+            .iter()
+            .filter(|u| u.owner == player && !u.is_civilian() && !ordered.contains(&u.id))
+            .filter(|u| match u.target {
+                Some(t) if u.target_wall => inside(t),
+                _ => u.on_wall && inside(u.pos),
+            })
+            .count();
+        Some(max.saturating_sub(taken))
+    }
+
+    /// Freies Feld direkt neben dem Gebäude am Punkt `p`, möglichst nah bei `from`.
+    fn foot_of(&self, p: (f32, f32), from: (f32, f32)) -> (f32, f32) {
+        let i = (p.1 as u32 * self.map.width + p.0 as u32) as usize;
+        let Some(b) = self.buildings.iter().find(|b| b.id == self.occupied[i]) else { return p };
+        let (x0, y0, x1, y1) = (b.x as i32 - 1, b.y as i32 - 1, (b.x + b.w) as i32, (b.y + b.h) as i32);
+        (y0..=y1)
+            .flat_map(|y| (x0..=x1).map(move |x| (x, y)))
+            .filter(|&(x, y)| (x == x0 || x == x1 || y == y0 || y == y1) && self.map.nav.is_open(x, y))
+            .map(|(x, y)| (x as f32 + 0.5, y as f32 + 0.5))
+            .min_by(|a, c| {
+                let d = |q: &(f32, f32)| (q.0 - from.0).powi(2) + (q.1 - from.1).powi(2);
+                d(a).total_cmp(&d(c))
+            })
+            .unwrap_or(p)
+    }
+
     /// Einen Spieltakt von `dt` Sekunden simulieren.
     pub fn step(&mut self, dt: f32) {
         self.step_people(dt);
@@ -622,6 +796,7 @@ impl World {
         self.step_gather(dt);
         self.step_gates();
         self.step_army(dt);
+        self.balance_hubs();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
         let king = self.economy.def.movement.king_speed;
@@ -661,8 +836,12 @@ impl World {
     /// Geänderte Gebäude (Status, Lager) an alle Clients melden.
     fn flush_buildings(&mut self) {
         for id in std::mem::take(&mut self.dirty_buildings) {
+            let goods = match self.inventories.get(&id) {
+                Some(s) => s.state().goods,
+                None => self.hub_state(id).unwrap_or_default(),
+            };
             let Some(b) = self.buildings.iter_mut().find(|b| b.id == id) else { continue };
-            b.inventory = self.inventories.get(&id).map(|s| s.state().goods).unwrap_or_default();
+            b.inventory = goods;
             self.events.push(ServerMsg::BuildingChanged { building: b.clone() });
         }
     }
@@ -693,6 +872,7 @@ impl World {
 mod tests {
     use super::*;
     use crate::map::DEFAULT_MAP;
+    use protocol::Good;
 
     #[test]
     fn koenig_laeuft_aus_der_burg_ins_tal() {
@@ -723,6 +903,31 @@ mod tests {
         let mut world = World::new(GameMap::parse(&text).unwrap(), eco());
         world.spawn_player(1);
         world
+    }
+
+    #[test]
+    fn gebaeude_versetzen_kostet_gebuehr() {
+        let mut w = flat_world();
+        let saw = w.place_building(1, BuildingKind::Sawmill, 4, 4).unwrap();
+        w.inventories.get_mut(&saw.id).unwrap().add(Good::Boards, 3);
+        let cost = w.move_cost(&saw);
+        assert!(!cost.is_empty());
+        let before: Vec<u32> = cost.iter().map(|c| w.stocks[&1].amount(c.good)).collect();
+        // Ein Feld weiter: überlappt die alte Fläche, geht trotzdem.
+        let moved = w.move_building(1, saw.id, 5, 4, 1).unwrap();
+        assert_eq!((moved.x, moved.y, moved.rotation), (5, 4, 1));
+        for (c, b) in cost.iter().zip(before) {
+            assert_eq!(w.stocks[&1].amount(c.good), b - c.amount, "Gebühr bezahlt");
+        }
+        assert!(w.map.nav.is_open(4, 4), "alte Fläche frei");
+        assert!(!w.map.nav.is_open(5, 4), "neue Fläche belegt");
+        assert_eq!(w.inventories[&saw.id].amount(Good::Boards), 3, "Inhalt bleibt");
+        assert_eq!(w.place_building(1, BuildingKind::Wall, 5, 5).unwrap_err().key, "error.occupied");
+        w.place_building(1, BuildingKind::Wall, 4, 4).unwrap();
+        // Nicht auf ein anderes Gebäude.
+        assert_eq!(w.move_building(1, saw.id, 3, 3, 0).unwrap_err().key, "error.occupied");
+        assert!(!w.map.nav.is_open(5, 4), "nach Fehlschlag steht es noch da");
+        assert_eq!(w.move_building(2, saw.id, 12, 12, 0).unwrap_err().key, "error.not_yours");
     }
 
     #[test]

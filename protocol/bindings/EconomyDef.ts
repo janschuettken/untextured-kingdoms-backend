@@ -28,6 +28,10 @@ storehouse_capacity: number,
  */
 demolish_refund_percent: number, 
 /**
+ * So viel Prozent der Bau- und Ausbaukosten kostet das Versetzen eines Gebäudes.
+ */
+move_cost_percent: number, 
+/**
  * Wie viel ein Feld hergibt, bevor es erschöpft ist (Wald, Stein, Eisen).
  */
 resource_amounts: Array<ResourceAmount>, 

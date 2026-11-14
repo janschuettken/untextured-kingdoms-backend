@@ -70,6 +70,8 @@ pub enum ClientMsg {
     /// Der Server schickt Einheiten nur für diesen Bereich (plus Rand) und
     /// immer die eigenen. Ohne diese Nachricht sieht der Client alles.
     View { x0: f32, y0: f32, x1: f32, y1: f32 },
+    /// Eigenes Gebäude an eine andere Stelle versetzen (kostet `move_cost_percent` der Baukosten).
+    MoveBuilding { building_id: u32, x: u32, y: u32, #[serde(default)] rotation: u8 },
 }
 
 /// Nachrichten vom Server an den Client.
@@ -352,7 +354,10 @@ pub enum BuildingKind {
     Wall,
     /// Hohe Mauer, ein Feld, schwerer zu überwinden.
     HighWall,
+    /// Turm: niedriger, viel Platz für Einheiten.
     Tower,
+    /// Hoher Turm: schmal und hoch, nur wenige Einheiten passen hinauf.
+    HighTower,
     /// Bergfried: Hauptturm der Burg.
     Keep,
     /// Vorratslager: mehr Platz für Waren.
@@ -483,6 +488,12 @@ pub struct BuildingDef {
     /// Tor: im Modus „automatisch“ schließt es, sobald fremde Einheiten so nah (Felder) sind.
     #[serde(default)]
     pub gate_radius: u32,
+    /// So viele Einheiten finden oben Platz. 0 = so viele, wie draufpassen.
+    #[serde(default)]
+    pub garrison: u32,
+    /// Darf direkt auf eigene Mauern gesetzt werden; die Mauer darunter wird abgerissen.
+    #[serde(default)]
+    pub on_walls: bool,
     pub levels: Vec<BuildingLevel>,
 }
 
@@ -535,6 +546,9 @@ pub struct EconomyDef {
     pub storehouse_capacity: u32,
     /// So viel Prozent der Bau- und Ausbaukosten gibt es beim Abriss zurück.
     pub demolish_refund_percent: u32,
+    /// So viel Prozent der Bau- und Ausbaukosten kostet das Versetzen eines Gebäudes.
+    #[serde(default = "default_move_cost")]
+    pub move_cost_percent: u32,
     /// Wie viel ein Feld hergibt, bevor es erschöpft ist (Wald, Stein, Eisen).
     pub resource_amounts: Vec<ResourceAmount>,
     /// So viel schneller arbeiten Höfe auf besonders fruchtbarem Boden (anteilig).
@@ -784,4 +798,8 @@ pub struct BuildingState {
     /// Sekunden (Spielzeit), bis der erste fertig ist. Der Client zählt selbst herunter.
     #[serde(default)]
     pub training_left: f32,
+}
+
+fn default_move_cost() -> u32 {
+    25
 }

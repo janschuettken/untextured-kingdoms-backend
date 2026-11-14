@@ -95,7 +95,35 @@
         }
       ],
       "walkway_from_level": 1,
-      "stairs_from_level": 2
+      "stairs_from_level": 2,
+      "garrison": 12,
+      "on_walls": true
+    },
+    {
+      "kind": "high_tower",
+      "category": "fortification",
+      "w": 2,
+      "h": 2,
+      "max_hp": 700,
+      "service_radius": 0,
+      "no_entrance": true,
+      "workers": 0,
+      "walkway_from_level": 1,
+      "stairs_from_level": 2,
+      "garrison": 4,
+      "on_walls": true,
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 8}, {"good": "blocks", "amount": 14}],
+          "recipes": [],
+          "housing": 0
+        },
+        {
+          "cost": [{"good": "wood", "amount": 8}, {"good": "boards", "amount": 6}],
+          "recipes": [],
+          "housing": 0
+        }
+      ]
     },
     {
       "kind": "gate",
@@ -119,7 +147,8 @@
           "recipes": [],
           "housing": 0
         }
-      ]
+      ],
+      "on_walls": true
     },
     {
       "kind": "palisade",
