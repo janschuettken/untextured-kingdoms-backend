@@ -319,7 +319,8 @@ impl World {
         }
         let (w, h) = if rotation % 2 == 1 { (def.h, def.w) } else { (def.w, def.h) };
         let max_hp = def.max_hp;
-        let cost = level_cost(&def, level);
+        // Das erste Lager (Bergfried oder Vorratslager) ist gratis.
+        let cost = if def.hub && !self.has_hub(player) { Vec::new() } else { level_cost(&def, level) };
         if let Some(max) = def.max_per_player {
             let have = self.buildings.iter().filter(|b| b.owner == player && b.kind == kind).count();
             if have >= max as usize {
@@ -406,6 +407,10 @@ impl World {
     /// Darf ein Gebäude dieser Art (schon gedreht: `w` x `h`) hier stehen?
     /// `ignore`: dieses Gebäude zählt nicht als Hindernis (beim Versetzen).
     /// Liefert das Feld vor dem Eingang.
+    fn has_hub(&self, player: u32) -> bool {
+        self.buildings.iter().any(|b| b.owner == player && self.economy.building(b.kind).is_some_and(|d| d.hub))
+    }
+
     /// Eigene Mauerstücke (Mauer, hohe Mauer, Palisade) in dieser Fläche.
     fn walls_under(&self, player: u32, (x, y): (u32, u32), (w, h): (u32, u32)) -> Vec<u32> {
         let mut ids: Vec<u32> = Vec::new();
@@ -601,7 +606,10 @@ impl World {
             Some(_) => return Err(Text::new("error.not_yours")),
             None => return Err(Text::new("error.no_building")),
         };
-        let pct = self.economy.def.demolish_refund_percent;
+        // Das letzte Lager war gratis (das nächste ist es wieder): keine Erstattung.
+        let last_hub = self.economy.building(b.kind).is_some_and(|d| d.hub)
+            && !self.buildings.iter().any(|o| o.id != b.id && o.owner == player && self.economy.building(o.kind).is_some_and(|d| d.hub));
+        let pct = if last_hub { 0 } else { self.economy.def.demolish_refund_percent };
         let mut refund: Vec<GoodAmount> = Vec::new();
         if let Some(def) = self.economy.building(b.kind) {
             for level in def.levels.iter().take(b.level as usize) {
