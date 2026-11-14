@@ -32,7 +32,7 @@ keep_in_stock: Array<GoodAmount>,
 gate: GateMode, 
 /**
  * Der Arbeiter bringt Ergebnisse selbst ins Lager und holt Eingänge selbst,
- * auch wenn es Träger gibt.
+ * auch wenn es Träger gibt. Standard: an.
  */
 worker_carries: boolean, 
 /**

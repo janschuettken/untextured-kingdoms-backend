@@ -92,9 +92,10 @@ nichts zurück.
 Besondere Lager: Kornspeicher (`granary`) und Waffenkammer (`armory`) haben `hub_goods` und nehmen nur diese Waren;
 ihr Platz (`hub_capacity`) zählt als Zusatzplatz nur für diese Waren (`Stock::extra`, `StockState.extra_capacity`).
 
-Einstellungen je Betrieb: `worker_carries` lässt den Arbeiter selbst tragen, auch wenn es Träger gibt (die lassen
+Einstellungen je Betrieb: `worker_carries` (Standard: an) lässt den Arbeiter selbst tragen, auch wenn es Träger gibt (die lassen
 den Betrieb dann aus). `keep_in_stock` ist der Mindestbestand je Eingang, `stop_at` der Höchstbestand je Ergebnis:
-liegt so viel im Vorrat, fängt der Betrieb nichts Neues an (Status `target_reached`).
+liegt so viel im Vorrat, fängt der Betrieb nichts Neues an (Status `target_reached`). Steht ein Arbeiter ohne Weg und Last an seinem
+Gebäude, ist er drinnen (`UnitState.inside`) und wird außen nicht gezeigt.
 
 Versetzen (`move_building`): Eigene Gebäude lassen sich gegen eine Gebühr umsetzen, `move_cost_percent` der Baukosten
 bis zu seiner Stufe (aufgerundet). Stufe, Einstellungen und Inhalt bleiben.

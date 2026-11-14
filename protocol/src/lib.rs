@@ -270,6 +270,9 @@ pub struct UnitState {
     /// Läuft oben auf der Mauer (Wehrgang) statt am Boden.
     #[serde(default)]
     pub on_wall: bool,
+    /// Arbeiter ist in seinem Gebäude (steht dort und arbeitet): außen nicht zu sehen.
+    #[serde(default)]
+    pub inside: bool,
 }
 
 /// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.
@@ -745,8 +748,8 @@ pub struct BuildingSettings {
     #[serde(default)]
     pub gate: GateMode,
     /// Der Arbeiter bringt Ergebnisse selbst ins Lager und holt Eingänge selbst,
-    /// auch wenn es Träger gibt.
-    #[serde(default)]
+    /// auch wenn es Träger gibt. Standard: an.
+    #[serde(default = "default_true")]
     pub worker_carries: bool,
     /// Höchstbestand im Vorrat: liegt von einem Ergebnis so viel im Vorrat, macht der Betrieb Pause.
     #[serde(default)]
@@ -823,6 +826,10 @@ pub struct BuildingState {
     /// Sekunden (Spielzeit), bis der erste fertig ist. Der Client zählt selbst herunter.
     #[serde(default)]
     pub training_left: f32,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_move_cost() -> u32 {
