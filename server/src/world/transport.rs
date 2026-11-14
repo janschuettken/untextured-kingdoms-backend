@@ -201,8 +201,11 @@ impl World {
         let cart_min = self.economy.def.transport.cart_min_load;
         let min_load = if cart { cart_min } else { 1 };
         let stock = self.stocks.get(&owner)?;
-        // Träger und Karren arbeiten nur im Umkreis ihres Schuppens.
+        // Träger und Karren arbeiten nur im Umkreis ihres Schuppens
+        // und nur mit den Waren, die dort ausgewählt sind.
         let area = self.service_area(u.home);
+        let home = u.home.and_then(|h| index.get(&h)).map(|&i| &self.buildings[i]);
+        let moves = |g: Good| home.is_none_or(|h| stores(h, g));
         // Große Ladungen lassen Träger für einen freien Karren liegen, der dort hinkommt.
         let free_carts: Vec<_> = if cart {
             Vec::new()
@@ -231,7 +234,7 @@ impl World {
             let d = dist_to(b, u.pos);
             // Abholen: alles, was kein Eingang ist, wenn ein Lager es nimmt.
             for g in inv.state().goods {
-                if inputs.iter().any(|i| i.good == g.good) || self.nearest_hub(owner, u.pos, g.good).is_none() {
+                if !moves(g.good) || inputs.iter().any(|i| i.good == g.good) || self.nearest_hub(owner, u.pos, g.good).is_none() {
                     continue;
                 }
                 let free = g.amount.saturating_sub(Reserved::get(&reserved.pickup, (b.id, g.good)));
@@ -258,7 +261,7 @@ impl World {
             if !b.settings.accept_deliveries || b.settings.paused {
                 continue;
             }
-            for i in inputs {
+            for i in inputs.iter().filter(|i| moves(i.good)) {
                 let Some(hub) = self.nearest_hub(owner, u.pos, i.good) else { continue };
                 let want = (i.amount * 2).min(inv.capacity);
                 let have = inv.amount(i.good) + Reserved::get(&reserved.incoming, (b.id, i.good));
@@ -620,12 +623,37 @@ mod tests {
         assert_eq!((count(&w, UnitKind::Carrier), count(&w, UnitKind::Cart)), (3, 0), "Stufe 1: Träger");
         w.upgrade(1, shed).unwrap();
         assert_eq!((count(&w, UnitKind::Carrier), count(&w, UnitKind::Cart)), (3, 1), "Stufe 2: dazu der Karren");
+        let more: Vec<GoodAmount> = [Good::Wood, Good::Boards, Good::Blocks].iter().map(|&good| GoodAmount { good, amount: 200 }).collect();
+        w.admin_give(1, &more, 0);
+        w.upgrade(1, shed).unwrap();
+        w.upgrade(1, shed).unwrap();
+        assert_eq!(count(&w, UnitKind::Cart), 3, "Stufe 3 und 4: je ein Karren mehr");
         // Träger stehen nie in Gebäuden, und befehlen lassen sie sich nicht.
         let id = w.units.iter().find(|u| u.kind == UnitKind::Carrier).unwrap().id;
         w.order_move(1, &[id], (29.5, 19.5));
         assert!(w.units.iter().find(|u| u.id == id).unwrap().path.is_empty());
         w.demolish(1, shed).unwrap();
         assert_eq!(count(&w, UnitKind::Carrier) + count(&w, UnitKind::Cart), 0);
+    }
+
+    #[test]
+    fn wagenschuppen_bewegt_nur_ausgewaehlte_waren() {
+        let mut w = flat(40, 20);
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        let s = shed(&mut w, 10, 12, 1);
+        let mut set = w.buildings.iter().find(|b| b.id == s).unwrap().settings.clone();
+        set.stores = Some(vec![Good::Wood]);
+        w.configure(1, s, set).unwrap();
+        let orchard = w.place_building(1, BuildingKind::Orchard, 20, 2).unwrap();
+        pause(&mut w, orchard.id);
+        set_fruit(&mut w, orchard.id, 4);
+        run(&mut w, 30.0);
+        assert_eq!(local(&w, orchard.id, Good::Fruit), 4, "Obst ist nicht ausgewählt");
+        let mut set = w.buildings.iter().find(|b| b.id == s).unwrap().settings.clone();
+        set.stores = None;
+        w.configure(1, s, set).unwrap();
+        run(&mut w, 30.0);
+        assert_eq!(local(&w, orchard.id, Good::Fruit), 0, "jetzt alles");
     }
 
     #[test]

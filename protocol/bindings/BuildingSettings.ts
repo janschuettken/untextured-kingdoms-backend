@@ -17,7 +17,8 @@ recipe: string | null, paused: boolean,
  */
 accept_deliveries: boolean, 
 /**
- * Nur Lager: welche Waren hier eingelagert werden. `None` = alle.
+ * Lager: welche Waren hier eingelagert werden. Wagenschuppen: welche Waren
+ * seine Träger und Karren bewegen. `None` = alle.
  */
 stores: Array<Good> | null, 
 /**
