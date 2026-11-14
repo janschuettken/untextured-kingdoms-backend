@@ -24,4 +24,8 @@ entrance: [number, number] | null,
  * Waren im Gebäude selbst: Eingänge für den nächsten Durchlauf und
  * Ergebnisse, die noch abgeholt werden. Leer bei Lagern (die zählen zum Vorrat).
  */
-inventory: Array<GoodAmount>, };
+inventory: Array<GoodAmount>, 
+/**
+ * Nur Tore: ist der Durchgang gerade offen?
+ */
+gate_open: boolean, };

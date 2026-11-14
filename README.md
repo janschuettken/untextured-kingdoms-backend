@@ -66,6 +66,13 @@ pro Mahlzeit `market.tax_per_meal` Taler Steuern. Mit einem eigenen Markt (mit A
 zu den festen Preisen aus `market.prices` (`trade`); vorerst ein gemeinsamer Markt, die Ware geht direkt in den Vorrat.
 Kosten fürs Heer in Talern folgen, sobald es Truppen gibt.
 
+Tore und Wehrgänge (`server/src/world/gate.rs`): Ein Tor ist 3x1 Felder, der mittlere Durchgang ist offen oder zu
+(`BuildingState.gate_open`). Modus je Tor (`settings.gate`): `auto` schließt, sobald fremde Einheiten näher als
+`gate_radius` sind, `open` und `closed` bleiben fest. Wer beim Schließen im Durchgang steht, wird hinausgeschoben.
+Ab `walkway_from_level` laufen eigene Einheiten oben auf dem Gebäude (Mauer und hohe Mauer ab Stufe 2, Turm und Tor
+immer); hinauf geht es nur über die Treppe eines Tores ab `stairs_from_level` (Stufe 2), vom Feld vor oder hinter dem
+Durchgang. Einheiten haben dafür `on_wall`; Wege über Mauer und Treppen plant `World::plan`.
+
 Texte: Der Server schickt nie fertige Sätze, sondern Schlüssel mit Platzhaltern (`Text { key, args }`, z. B.
 `error.not_enough` mit `good` und `need`). Übersetzt wird im Client (Deutsch und Englisch).
 

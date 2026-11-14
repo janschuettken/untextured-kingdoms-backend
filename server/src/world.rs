@@ -3,12 +3,14 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use protocol::{
+    GateMode,
     BuildingKind, BuildingSettings, BuildingState, BuildingStatus, GoodAmount, PeopleState, ResourceKind, ServerMsg, StockState, Text,
     TileKind, UnitKind, UnitState,
 };
 
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
+mod gate;
 mod market;
 mod gather;
 mod save;
@@ -41,11 +43,35 @@ pub struct Unit {
     cooldown: f32,
     /// Arbeiter: was er gerade tut.
     gather: Option<Gather>,
+    /// Steht oben auf dem Wehrgang.
+    #[serde(default)]
+    on_wall: bool,
+    /// Ebene je Wegpunkt in `path` (`true` = oben). Leer = alles am Boden.
+    #[serde(default)]
+    layers: Vec<bool>,
+    /// Liegt das Ziel oben auf dem Wehrgang?
+    #[serde(default)]
+    target_wall: bool,
 }
 
 impl Unit {
     fn new(id: u32, owner: u32, kind: UnitKind, pos: (f32, f32)) -> Unit {
-        Unit { id, owner, kind, pos, path: Vec::new(), target: None, home: None, job: None, carrying: None, cooldown: 0.0, gather: None }
+        Unit {
+            id,
+            owner,
+            kind,
+            pos,
+            path: Vec::new(),
+            target: None,
+            home: None,
+            job: None,
+            carrying: None,
+            cooldown: 0.0,
+            gather: None,
+            on_wall: false,
+            layers: Vec::new(),
+            target_wall: false,
+        }
     }
 
     /// Träger und Karren gehorchen keinen Befehlen, sie arbeiten von selbst.
@@ -349,6 +375,7 @@ impl World {
             accept_deliveries: true,
             stores: None,
             keep_in_stock: Vec::new(),
+            gate: GateMode::Auto,
         };
         let status = if settings.recipe.is_some() { BuildingStatus::Working } else { BuildingStatus::Idle };
         let b = BuildingState {
@@ -366,6 +393,7 @@ impl World {
             rotation,
             entrance,
             inventory: Vec::new(),
+            gate_open: kind == BuildingKind::Gate,
         };
         self.next_building_id += 1;
         if let Some((ex, ey)) = entrance {
@@ -374,7 +402,9 @@ impl World {
         for ty in y..y + h {
             for tx in x..x + w {
                 self.occupied[(ty * self.map.width + tx) as usize] = b.id;
-                self.map.nav.set_blocked(tx as i32, ty as i32, true);
+                if gate::blocks(&b, tx, ty) {
+                    self.map.nav.set_blocked(tx as i32, ty as i32, true);
+                }
             }
         }
         self.buildings.push(b.clone());
@@ -473,16 +503,31 @@ impl World {
         for ty in b.y..b.y + b.h {
             for tx in b.x..b.x + b.w {
                 self.occupied[(ty * self.map.width + tx) as usize] = 0;
-                self.map.nav.set_blocked(tx as i32, ty as i32, false);
+                if gate::blocks(&b, tx, ty) {
+                    self.map.nav.set_blocked(tx as i32, ty as i32, false);
+                }
             }
         }
+        self.drop_from_walls();
     }
 
     /// Nach einer Änderung am Gitter: laufende Einheiten suchen ihren Weg neu.
     fn replan_all(&mut self) {
-        for unit in self.units.iter_mut() {
-            if let (Some(target), false) = (unit.target, unit.path.is_empty()) {
-                unit.path = self.map.nav.waypoints(unit.pos, target);
+        for k in 0..self.units.len() {
+            let u = &self.units[k];
+            let Some(target) = u.target else { continue };
+            // Soldaten, die vor einem Hindernis (z. B. geschlossenem Tor) warten, versuchen es
+            // erneut; Träger und Arbeiter nur, solange sie unterwegs sind.
+            let waiting = !u.is_civilian() && (u.pos.0 - target.0).abs() + (u.pos.1 - target.1).abs() > 0.05;
+            if !u.path.is_empty() || waiting {
+                let (path, layers) = if u.is_civilian() {
+                    (self.map.nav.waypoints(u.pos, target), Vec::new())
+                } else {
+                    self.plan(u.owner, u.pos, u.on_wall, target, u.target_wall)
+                };
+                let u = &mut self.units[k];
+                u.path = path;
+                u.layers = layers;
             }
         }
     }
@@ -496,10 +541,16 @@ impl World {
             target.0.clamp(0.0, self.map.width as f32 - 0.01),
             target.1.clamp(0.0, self.map.height as f32 - 0.01),
         );
-        for unit in self.units.iter_mut() {
-            if unit.owner == player && !unit.is_civilian() && unit_ids.contains(&unit.id) {
-                unit.path = self.map.nav.waypoints(unit.pos, target);
-                unit.target = Some(target);
+        let target_wall = self.is_walkway(player, target);
+        for k in 0..self.units.len() {
+            let u = &self.units[k];
+            if u.owner == player && !u.is_civilian() && unit_ids.contains(&u.id) {
+                let (path, layers) = self.plan(player, u.pos, u.on_wall, target, target_wall);
+                let u = &mut self.units[k];
+                u.path = path;
+                u.layers = layers;
+                u.target = Some(target);
+                u.target_wall = target_wall;
             }
         }
     }
@@ -510,6 +561,7 @@ impl World {
         self.step_production(dt);
         self.step_transport(dt);
         self.step_gather(dt);
+        self.step_gates();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
         let king = self.economy.def.movement.king_speed;
@@ -530,6 +582,9 @@ impl World {
                 if dist <= budget {
                     unit.pos = next;
                     unit.path.remove(0);
+                    if !unit.layers.is_empty() {
+                        unit.on_wall = unit.layers.remove(0);
+                    }
                     budget -= dist;
                 } else {
                     unit.pos.0 += dx / dist * budget;
@@ -566,6 +621,7 @@ impl World {
                 y: u.pos.1,
                 moving: !u.path.is_empty(),
                 carrying: u.carrying.map(|g| g.good),
+                on_wall: u.on_wall,
             })
             .collect()
     }

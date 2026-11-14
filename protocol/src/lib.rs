@@ -242,6 +242,9 @@ pub struct UnitState {
     /// Was ein Träger oder Karren gerade transportiert.
     #[serde(default)]
     pub carrying: Option<Good>,
+    /// Läuft oben auf der Mauer (Wehrgang) statt am Boden.
+    #[serde(default)]
+    pub on_wall: bool,
 }
 
 /// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.
@@ -352,6 +355,8 @@ pub enum BuildingKind {
     House,
     /// Markt: Waren gegen Taler kaufen und verkaufen.
     Market,
+    /// Tor in der Mauer: der mittlere Durchgang lässt sich öffnen und schließen.
+    Gate,
 }
 
 /// Gruppe im Baumenü.
@@ -431,6 +436,15 @@ pub struct BuildingDef {
     /// Arbeiter, die der Betrieb braucht (sie wohnen in Häusern und essen).
     #[serde(default)]
     pub workers: u32,
+    /// Ab dieser Stufe können eigene Einheiten oben auf dem Gebäude laufen (Wehrgang). 0 = nie.
+    #[serde(default)]
+    pub walkway_from_level: u32,
+    /// Tor: ab dieser Stufe führt eine Treppe im Tor auf den Wehrgang. 0 = nie.
+    #[serde(default)]
+    pub stairs_from_level: u32,
+    /// Tor: im Modus „automatisch“ schließt es, sobald fremde Einheiten so nah (Felder) sind.
+    #[serde(default)]
+    pub gate_radius: u32,
     pub levels: Vec<BuildingLevel>,
 }
 
@@ -595,6 +609,21 @@ pub struct BuildingSettings {
     /// darüber liegt (z. B. Holz fürs Bauen behalten).
     #[serde(default)]
     pub keep_in_stock: Vec<GoodAmount>,
+    /// Nur Tore: automatisch, fest offen oder fest zu.
+    #[serde(default)]
+    pub gate: GateMode,
+}
+
+/// Wie sich ein Tor verhält.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum GateMode {
+    /// Offen, schließt aber, sobald fremde Einheiten nahe kommen.
+    #[default]
+    Auto,
+    Open,
+    Closed,
 }
 
 /// Was ein Betrieb gerade tut.
@@ -642,4 +671,7 @@ pub struct BuildingState {
     /// Ergebnisse, die noch abgeholt werden. Leer bei Lagern (die zählen zum Vorrat).
     #[serde(default)]
     pub inventory: Vec<GoodAmount>,
+    /// Nur Tore: ist der Durchgang gerade offen?
+    #[serde(default)]
+    pub gate_open: bool,
 }
