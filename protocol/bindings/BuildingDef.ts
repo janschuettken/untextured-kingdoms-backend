@@ -82,6 +82,10 @@ build_radius: number,
  */
 on_walls: boolean, 
 /**
+ * Darf auf Schrägen stehen (Mauern folgen dem Gelände).
+ */
+on_ramps: boolean, 
+/**
  * Das erste Gebäude dieser Art je Spieler kostet nichts.
  */
 first_free: boolean, 

@@ -672,6 +672,9 @@ pub struct BuildingDef {
     /// Darf direkt auf eigene Mauern gesetzt werden; die Mauer darunter wird abgerissen.
     #[serde(default)]
     pub on_walls: bool,
+    /// Darf auf Schrägen stehen (Mauern folgen dem Gelände).
+    #[serde(default)]
+    pub on_ramps: bool,
     /// Das erste Gebäude dieser Art je Spieler kostet nichts.
     #[serde(default)]
     pub first_free: bool,
