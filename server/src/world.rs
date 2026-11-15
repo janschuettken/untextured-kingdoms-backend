@@ -1,6 +1,6 @@
 //! Spielzustand: Einheiten und Gebäude auf der Karte.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use protocol::{
     GateMode,
@@ -249,19 +249,32 @@ impl World {
         }
     }
 
-    /// Eigenes Lager eines Betriebs je Ware: Einstellung am Gebäude, sonst Gebäudeart, sonst Standard.
-    pub(crate) fn inventory_capacity(&self, b: &BuildingState) -> u32 {
-        let by_kind = self.economy.building(b.kind).map_or(0, |d| d.building_storage);
-        let cap = b.settings.storage.unwrap_or(if by_kind > 0 { by_kind } else { self.economy.def.transport.building_capacity });
-        cap.max(1)
+    /// Eigenes Lager eines Betriebs je Ware, getrennt nach Eingängen (was ein
+    /// Rezept dieser Gebäudeart verbraucht) und allem anderen (Ergebnisse).
+    /// 0 im Balancing = `transport.building_capacity`.
+    fn inventory_limits(&self, kind: BuildingKind) -> (u32, BTreeMap<protocol::Good, u32>) {
+        let def = self.economy.building(kind);
+        let or_default = |n: u32| if n > 0 { n } else { self.economy.def.transport.building_capacity.max(1) };
+        let outputs = or_default(def.map_or(0, |d| d.storage_outputs));
+        let inputs = or_default(def.map_or(0, |d| d.storage_inputs));
+        let limits = self
+            .economy
+            .def
+            .recipes
+            .iter()
+            .filter(|r| r.building == kind)
+            .flat_map(|r| r.inputs.iter().map(|i| (i.good, inputs)))
+            .collect();
+        (outputs, limits)
     }
 
     /// Lagergrößen aller Betriebe neu setzen (Balancing geändert, Spielstand geladen).
     pub(crate) fn update_inventory_capacities(&mut self) {
-        let caps: Vec<(u32, u32)> = self.buildings.iter().map(|b| (b.id, self.inventory_capacity(b))).collect();
-        for (id, cap) in caps {
+        let caps: Vec<_> = self.buildings.iter().map(|b| (b.id, self.inventory_limits(b.kind))).collect();
+        for (id, (cap, limits)) in caps {
             if let Some(inv) = self.inventories.get_mut(&id) {
                 inv.capacity = cap;
+                inv.limits = limits;
             }
         }
     }
@@ -398,7 +411,6 @@ impl World {
             gate: GateMode::Auto,
             worker_carries: self.worker_carries_default,
             stop_at: Vec::new(),
-            storage: None,
         };
         let status = if settings.recipe.is_some() { BuildingStatus::Working } else { BuildingStatus::Idle };
         let b = BuildingState {
@@ -436,8 +448,10 @@ impl World {
         }
         self.buildings.push(b.clone());
         if !def.hub {
-            let cap = self.inventory_capacity(&b);
-            self.inventories.insert(b.id, Stock::new(cap));
+            let (cap, limits) = self.inventory_limits(b.kind);
+            let mut inv = Stock::new(cap);
+            inv.limits = limits;
+            self.inventories.insert(b.id, inv);
         }
         if def.hub {
             self.update_capacity(player);
@@ -743,11 +757,11 @@ impl World {
         let target_wall = self.is_walkway(player, target);
         let chosen: Vec<usize> =
             (0..self.units.len()).filter(|&k| self.units[k].owner == player && !self.units[k].is_civilian() && unit_ids.contains(&self.units[k].id)).collect();
-        let spots = if target_wall { vec![target; chosen.len()] } else { self.formation(target, chosen.len()) };
+        let spots = self.formation(player, unit_ids, target, chosen.len(), target_wall);
         let mut room = if target_wall { self.garrison_room(player, unit_ids, target) } else { None };
         // Turm voll: die übrigen stellen sich unten neben den Turm.
         let mut feet = match (room, chosen.first()) {
-            (Some(n), Some(&k)) if n < chosen.len() => self.formation(self.foot_of(target, self.units[k].pos), chosen.len() - n),
+            (Some(n), Some(&k)) if n < chosen.len() => self.formation(player, unit_ids, self.foot_of(target, self.units[k].pos), chosen.len() - n, false),
             _ => Vec::new(),
         }
         .into_iter();
@@ -771,31 +785,54 @@ impl World {
     }
 
     /// Ziele für eine Gruppe: ein Quadrat aus Feldern um den Zielpunkt, damit
-    /// nicht alle auf einem Fleck stehen. Felder, die nicht begehbar sind oder
-    /// auf einer anderen Höhe liegen, werden übersprungen.
-    fn formation(&self, target: (f32, f32), n: usize) -> Vec<(f32, f32)> {
-        if n <= 1 {
-            return vec![target; n];
-        }
-        let level = |x: i32, y: i32| self.map.levels[(y as u32 * self.map.width + x as u32) as usize];
-        let (cx, cy) = (target.0.floor() as i32, target.1.floor() as i32);
-        let home = level(cx, cy);
+    /// nicht alle auf einem Fleck stehen. Felder, die nicht begehbar sind, auf
+    /// einer anderen Höhe liegen oder auf denen schon eine andere Einheit steht
+    /// (bzw. hin will), werden übersprungen. `wall`: Felder auf dem Wehrgang.
+    fn formation(&self, player: u32, group: &[u32], target: (f32, f32), n: usize, wall: bool) -> Vec<(f32, f32)> {
+        let (w, h) = (self.map.width as i32, self.map.height as i32);
+        let cell = |p: (f32, f32)| (p.0.floor() as i32, p.1.floor() as i32);
+        // Felder, die andere Soldaten (und der König) schon belegen.
+        let taken: HashSet<(i32, i32)> = self
+            .units
+            .iter()
+            .filter(|u| !u.is_civilian() && !group.contains(&u.id))
+            .filter(|u| u.target_wall == wall || u.on_wall == wall)
+            .map(|u| cell(u.target.filter(|_| !u.path.is_empty()).unwrap_or(u.pos)))
+            .collect();
+        let level = |x: i32, y: i32| self.map.levels[(y * w + x) as usize];
+        let (cx, cy) = cell(target);
+        let home = level(cx.clamp(0, w - 1), cy.clamp(0, h - 1));
+        let on = self.occupied[(cy.clamp(0, h - 1) * w + cx.clamp(0, w - 1)) as usize];
+        let fits = |x: i32, y: i32| {
+            if x < 0 || y < 0 || x >= w || y >= h {
+                return false;
+            }
+            if wall {
+                // Auf dem Wehrgang nur auf demselben Bauwerk (Turm: Besatzung zählt dort).
+                self.occupied[(y * w + x) as usize] == on && self.is_walkway(player, (x as f32 + 0.5, y as f32 + 0.5))
+            } else {
+                self.map.nav.is_open(x, y) && level(x, y) == home
+            }
+        };
+        let frac = (target.0 - cx as f32, target.1 - cy as f32);
         let mut spots = Vec::with_capacity(n);
-        // Ringe um das Zielfeld, innen zuerst.
-        'rings: for r in 0..(n as i32 + 2) {
-            for dy in -r..=r {
-                for dx in -r..=r {
-                    if dx.abs().max(dy.abs()) != r {
-                        continue;
-                    }
-                    let (x, y) = (cx + dx, cy + dy);
-                    if !self.map.nav.is_open(x, y) || level(x, y) != home {
-                        continue;
-                    }
-                    let frac = (target.0 - cx as f32, target.1 - cy as f32);
-                    spots.push((x as f32 + frac.0, y as f32 + frac.1));
-                    if spots.len() == n {
-                        break 'rings;
+        // Ringe um das Zielfeld, innen zuerst; erst nur freie Felder, notfalls auch belegte.
+        for free_only in [true, false] {
+            'rings: for r in 0..(n as i32 + 3) {
+                for dy in -r..=r {
+                    for dx in -r..=r {
+                        if spots.len() == n {
+                            break 'rings;
+                        }
+                        let (x, y) = (cx + dx, cy + dy);
+                        if dx.abs().max(dy.abs()) != r || !fits(x, y) {
+                            continue;
+                        }
+                        let spot = (x as f32 + frac.0, y as f32 + frac.1);
+                        if (free_only && taken.contains(&(x, y))) || spots.contains(&spot) {
+                            continue;
+                        }
+                        spots.push(spot);
                     }
                 }
             }
@@ -1208,6 +1245,31 @@ mod tests {
         tiles.dedup();
         assert_eq!(tiles.len(), 5, "jeder auf eigenem Feld");
         assert!(tiles.iter().all(|&(x, y)| (x - 12).abs() <= 1 && (y - 12).abs() <= 1));
+    }
+
+    #[test]
+    fn einzeln_zum_selben_ziel_stehen_nicht_ineinander() {
+        let mut w = flat_world();
+        let ids: Vec<u32> = (0..4).map(|n| {
+            let id = 600 + n;
+            w.units.push(Unit::new(id, 1, UnitKind::Spearman, (2.5 + n as f32, 20.5)));
+            id
+        }).collect();
+        // Nacheinander einzeln geschickt, alle zum selben Punkt.
+        for &id in &ids {
+            w.order_move(1, &[id], (12.5, 12.5));
+        }
+        for _ in 0..20 * 30 {
+            w.step(0.05);
+        }
+        let mut tiles: Vec<(i32, i32)> = w.units.iter().filter(|u| ids.contains(&u.id)).map(|u| (u.pos.0 as i32, u.pos.1 as i32)).collect();
+        tiles.sort();
+        tiles.dedup();
+        assert_eq!(tiles.len(), 4, "jeder auf eigenem Feld");
+        // Wer schon steht, bleibt; ein neuer Befehl dorthin weicht aus.
+        w.order_move(1, &[ids[0]], (12.5, 12.5));
+        let first = w.units.iter().find(|u| u.id == ids[0]).unwrap();
+        assert_eq!(first.target, Some((12.5, 12.5)), "eigenes Feld zählt nicht als belegt");
     }
 
     #[test]

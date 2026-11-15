@@ -12,9 +12,6 @@ use protocol::{BuildingSettings, BuildingState, BuildingStatus, ResourceKind, Se
 use super::{Refusal, World};
 use crate::map::resource_blocks;
 
-/// Höchstens so viel darf ein Spieler je Ware im Betrieb lagern lassen.
-pub const MAX_STORAGE: u32 = 200;
-
 /// Laufender Durchlauf eines Gebäudes.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Work {
@@ -100,7 +97,7 @@ impl World {
         // Fertig: Ergebnis ins eigene Lager, wenn alles hineinpasst. Abholen
         // ist Sache der Träger.
         let inv = self.inventories.get_mut(&id).expect("Betrieb hat ein Lager");
-        if recipe.outputs.iter().any(|o| inv.amount(o.good) + o.amount > inv.capacity) {
+        if recipe.outputs.iter().any(|o| o.amount > inv.room(o.good)) {
             return BuildingStatus::StorageFull;
         }
         for o in &recipe.outputs {
@@ -266,14 +263,7 @@ impl World {
             // Rezept gewechselt: laufender Durchlauf verfällt (Eingänge sind verbraucht).
             self.work.remove(&id);
         }
-        if settings.storage.is_some_and(|n| n == 0 || n > MAX_STORAGE) {
-            return Err(Text::new("error.bad_amount"));
-        }
         self.buildings[i].settings = settings;
-        let cap = self.inventory_capacity(&self.buildings[i]);
-        if let Some(inv) = self.inventories.get_mut(&id) {
-            inv.capacity = cap;
-        }
         Ok(self.buildings[i].clone())
     }
 
@@ -387,22 +377,19 @@ mod tests {
     }
 
     #[test]
-    fn lager_im_betrieb_einstellbar() {
+    fn lager_im_betrieb_nach_eingang_und_ergebnis() {
         let mut w = world(&map(20, 10, (0, 9), &[]));
         let b = w.place_building(1, BuildingKind::Bowyer, 2, 0).unwrap();
-        assert_eq!(w.inventories[&b.id].capacity, w.economy.def.transport.building_capacity);
-        let mut s = b.settings.clone();
-        s.storage = Some(5);
-        w.configure(1, b.id, s.clone()).unwrap();
-        assert_eq!(w.inventories[&b.id].capacity, 5);
-        s.storage = Some(0);
-        assert_eq!(w.configure(1, b.id, s).unwrap_err().key, "error.bad_amount");
+        let std = w.economy.def.transport.building_capacity;
+        assert_eq!(w.inventories[&b.id].capacity_of(Good::Wood), std);
+        assert_eq!(w.inventories[&b.id].capacity_of(Good::Longbow), std);
         let mut eco = w.economy.clone();
-        eco.def.buildings.iter_mut().find(|d| d.kind == BuildingKind::Bowyer).unwrap().building_storage = 30;
-        let saw = w.place_building(1, BuildingKind::Bowyer, 10, 0).unwrap();
+        let def = eco.def.buildings.iter_mut().find(|d| d.kind == BuildingKind::Bowyer).unwrap();
+        def.storage_inputs = 30;
+        def.storage_outputs = 5;
         w.set_economy(eco);
-        assert_eq!(w.inventories[&saw.id].capacity, 30, "Gebäudeart");
-        assert_eq!(w.inventories[&b.id].capacity, 5, "eigene Einstellung bleibt");
+        assert_eq!(w.inventories[&b.id].capacity_of(Good::Wood), 30, "Eingang");
+        assert_eq!(w.inventories[&b.id].capacity_of(Good::Longbow), 5, "Ergebnis");
     }
 
     #[test]
@@ -453,7 +440,8 @@ mod tests {
         let mut w = world(&map(14, 10, (13, 9), &[]));
         let b = w.place_building(1, BuildingKind::Orchard, 0, 0).unwrap();
         run(&mut w, 26.0);
-        assert_eq!(w.inventories[&b.id].amount(Good::Fruit), 2, "kein Lager: Obst bleibt im Betrieb");
+        let fruit = w.economy.recipe("grow_fruit").unwrap().outputs[0].amount;
+        assert_eq!(w.inventories[&b.id].amount(Good::Fruit), fruit, "kein Lager: Obst bleibt im Betrieb");
         assert_eq!(w.release_trees(1, b.id + 99).unwrap_err().key, "error.no_building");
         w.release_trees(1, b.id).unwrap();
         assert!(w.buildings.is_empty());

@@ -25,17 +25,23 @@ pub struct Stock {
     /// Zusätzlicher Platz für einzelne Waren (Waffenkammer, Kornspeicher).
     #[serde(default)]
     pub extra: BTreeMap<Good, u32>,
+    /// Feste Höchstmenge für einzelne Waren, statt `capacity` (Betriebe: Eingänge).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub limits: BTreeMap<Good, u32>,
     /// Geld, ohne Obergrenze.
     pub taler: u32,
 }
 
 impl Stock {
     pub fn new(capacity: u32) -> Stock {
-        Stock { goods: BTreeMap::new(), capacity, extra: BTreeMap::new(), taler: 0 }
+        Stock { goods: BTreeMap::new(), capacity, extra: BTreeMap::new(), limits: BTreeMap::new(), taler: 0 }
     }
 
     /// Höchstmenge dieser Ware.
     pub fn capacity_of(&self, good: Good) -> u32 {
+        if let Some(&n) = self.limits.get(&good) {
+            return n;
+        }
         self.capacity + self.extra.get(&good).copied().unwrap_or(0)
     }
 
