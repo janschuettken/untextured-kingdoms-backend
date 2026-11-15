@@ -37,4 +37,9 @@ training: Array<UnitKind>,
 /**
  * Sekunden (Spielzeit), bis der erste fertig ist. Der Client zählt selbst herunter.
  */
-training_left: number, };
+training_left: number, 
+/**
+ * Laufender Durchlauf: wie weit (0..1). Der Client rechnet mit
+ * `progress_rate` (Anteil je Spielsekunde) selbst weiter.
+ */
+progress: number, progress_rate: number, };

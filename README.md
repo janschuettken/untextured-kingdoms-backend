@@ -91,6 +91,14 @@ nichts zurück.
 
 Besondere Lager: Kornspeicher (`granary`) und Waffenkammer (`armory`) haben `hub_goods` und nehmen nur diese Waren;
 ihr Platz (`hub_capacity`) zählt als Zusatzplatz nur für diese Waren (`Stock::extra`, `StockState.extra_capacity`).
+Auch Vorratslager und Bergfried haben `hub_goods` (nur Waren/Rohstoffe): Essen passt nur in den Kornspeicher,
+Waffen nur in die Waffenkammer. Was kein Lager nimmt (z. B. Start-Brot ohne Kornspeicher), bleibt im virtuellen Vorrat.
+
+Rezepte: `unattended_percent` = so viel Prozent am Anfang des Durchlaufs laufen ohne Arbeiter weiter (Wachsen),
+auch wenn er gerade Waren trägt. Fortschritt je Betrieb: `BuildingState.progress` + `progress_rate` (Client rechnet
+weiter, Server schickt nur bei Abweichung, siehe `world/progress.rs`). Status `stock_reserved`: Eingänge nur bis zum
+Mindestbestand da. Beobachtete eigene Einheit (`WatchUnit`): Server schickt `UnitInfo` (Tätigkeit, Ziel, Ladung).
+
 
 Einstellungen je Betrieb: `worker_carries` (Standard: an) lässt den Arbeiter selbst tragen, auch wenn es Träger gibt (die lassen
 den Betrieb dann aus). `keep_in_stock` ist der Mindestbestand je Eingang, `stop_at` der Höchstbestand je Ergebnis:

@@ -5,7 +5,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use protocol::{
     GateMode,
     BuildingKind, BuildingSettings, BuildingState, BuildingStatus, GoodAmount, PeopleState, ResourceKind, ServerMsg, StockState, Text,
-    TileKind, UnitKind, UnitState,
+    TileKind, UnitActivity, UnitInfo, UnitKind, UnitState,
 };
 
 use crate::{economy::Economy, map::GameMap, stock::Stock};
@@ -20,6 +20,7 @@ mod storage;
 pub use save::SaveGame;
 mod people;
 mod production;
+mod progress;
 mod transport;
 use production::Work;
 use gather::Gather;
@@ -111,6 +112,8 @@ pub struct World {
     resource_left: Vec<u32>,
     /// Laufende Arbeit je Gebäude-Id.
     work: HashMap<u32, Work>,
+    /// Sekunden seit dem letzten geschickten Fortschritt je Gebäude (siehe `progress.rs`).
+    progress_clock: HashMap<u32, f32>,
     /// Änderungen für alle Clients (Gebäudestatus, Rohstoffe), siehe `take_events`.
     events: Vec<ServerMsg>,
     /// Bewohner je Spieler (Wohnplätze, Arbeiter, Hunger).
@@ -183,6 +186,7 @@ impl World {
             dirty_stocks: BTreeSet::new(),
             resource_left,
             work: HashMap::new(),
+            progress_clock: HashMap::new(),
             events: Vec::new(),
             people: HashMap::new(),
             meal_timer: HashMap::new(),
@@ -204,6 +208,9 @@ impl World {
     pub fn stock_state(&self, player: u32) -> StockState {
         let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, extra_capacity: Vec::new(), people: Default::default(), taler: 0, army: Default::default() });
         state.people = self.people.get(&player).cloned().unwrap_or_default();
+        let meal = self.economy.def.population.meal_seconds;
+        let timer = self.meal_timer.get(&player).copied().unwrap_or(0.0);
+        state.people.next_meal_in = (meal - timer).max(0.0).ceil() as u32;
         state.army = self.army_state(player);
         state
     }
@@ -397,6 +404,8 @@ impl World {
             gate_open: kind == BuildingKind::Gate,
             training: Vec::new(),
             training_left: 0.0,
+            progress: 0.0,
+            progress_rate: 0.0,
         };
         self.next_building_id += 1;
         if let Some((ex, ey)) = entrance {
@@ -827,6 +836,7 @@ impl World {
         self.step_production(dt);
         self.step_transport(dt);
         self.step_gather(dt);
+        self.step_progress(dt);
         self.step_gates();
         self.step_army(dt);
         self.balance_hubs();
@@ -879,6 +889,11 @@ impl World {
         }
     }
 
+    /// Besitzer einer Einheit.
+    pub fn unit_owner(&self, id: u32) -> Option<u32> {
+        self.units.iter().find(|u| u.id == id).map(|u| u.owner)
+    }
+
     /// Restlicher Weg einer Einheit (Wegpunkte).
     pub fn unit_path(&self, id: u32) -> Option<Vec<(f32, f32)>> {
         self.units.iter().find(|u| u.id == id).map(|u| u.path.clone())
@@ -901,8 +916,62 @@ impl World {
             .collect()
     }
 
+    /// Was eine Einheit tut, wohin sie will und was sie trägt (für die Anzeige).
+    pub fn unit_info(&self, id: u32) -> Option<UnitInfo> {
+        let u = self.units.iter().find(|u| u.id == id)?;
+        let walking = !u.path.is_empty();
+        let mut target_building = None;
+        let mut job_good = u.carrying.map(|g| g.good);
+        let activity = match (&u.gather, &u.job) {
+            (Some(Gather::ToTile(_)), _) => UnitActivity::ToResource,
+            (Some(Gather::Working { .. }), _) => UnitActivity::Gathering,
+            (Some(Gather::Home), _) => {
+                target_building = u.home;
+                UnitActivity::BringingHome
+            }
+            (Some(Gather::Deliver(b)), _) => {
+                target_building = Some(*b);
+                UnitActivity::Delivering
+            }
+            (Some(Gather::Fetch(b)), _) => {
+                target_building = Some(if u.carrying.is_some() { u.home.unwrap_or(*b) } else { *b });
+                UnitActivity::Fetching
+            }
+            (None, Some(job)) => {
+                let (loading, building, good) = job.describe();
+                target_building = Some(building);
+                job_good = Some(good);
+                if loading { UnitActivity::PickingUp } else { UnitActivity::Unloading }
+            }
+            (None, None) if self.inside(u) => UnitActivity::Working,
+            (None, None) if walking && u.is_civilian() => {
+                target_building = u.home;
+                UnitActivity::Returning
+            }
+            (None, None) if walking => UnitActivity::Walking,
+            (None, None) if u.on_wall => UnitActivity::OnWall,
+            (None, None) => UnitActivity::Idle,
+        };
+        Some(UnitInfo {
+            unit_id: u.id,
+            activity,
+            home: u.home,
+            target_building,
+            target: u.path.last().copied(),
+            job_good,
+            carrying: u.carrying,
+        })
+    }
+
     /// Arbeiter steht ohne Weg und Last an seinem Gebäude: er ist drinnen.
     fn inside(&self, u: &Unit) -> bool {
+        // Ohne Wohnung gibt es den Arbeiter (oder Träger) gar nicht: nicht zeigen.
+        if u.kind == UnitKind::Worker && u.home.is_some_and(|h| self.unstaffed.contains(&h)) {
+            return true;
+        }
+        if u.is_transport() && self.idle_units.contains(&u.id) && u.path.is_empty() && u.carrying.is_none() {
+            return true;
+        }
         if u.kind != UnitKind::Worker || !u.path.is_empty() || u.carrying.is_some() {
             return false;
         }
@@ -921,6 +990,34 @@ mod tests {
     use super::*;
     use crate::map::DEFAULT_MAP;
     use protocol::Good;
+
+    #[test]
+    fn einheiten_info_zeigt_taetigkeit_und_ziel() {
+        let mut world = World::new(GameMap::parse(DEFAULT_MAP).unwrap(), eco());
+        world.spawn_player(1);
+        let id = world.units[0].id;
+        assert_eq!(world.unit_info(id).unwrap().activity, UnitActivity::Idle);
+        world.order_move(1, &[id], (122.5, 82.5));
+        let info = world.unit_info(id).unwrap();
+        assert_eq!(info.activity, UnitActivity::Walking);
+        let (tx, ty) = info.target.unwrap();
+        assert!((tx - 122.5).abs() < 1.5 && (ty - 82.5).abs() < 1.5, "Ziel {tx},{ty}");
+        assert!(world.unit_info(999_999).is_none());
+    }
+
+    #[test]
+    fn ohne_wohnung_kein_arbeiter_zu_sehen() {
+        let row = "0".repeat(40);
+        let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap());
+        w.spawn_player(1);
+        w.admin_give(1, &[GoodAmount { good: protocol::Good::Wood, amount: 500 }], 0);
+        let saw = w.place_building(1, BuildingKind::Woodcutter, 20, 2).unwrap();
+        w.step(0.05);
+        assert_eq!(w.buildings.iter().find(|b| b.id == saw.id).unwrap().status, BuildingStatus::NoWorkers);
+        let worker = w.units.iter().find(|u| u.home == Some(saw.id)).unwrap().id;
+        assert!(w.snapshot().iter().find(|u| u.id == worker).unwrap().inside, "unbesetzt: Arbeiter unsichtbar");
+    }
 
     #[test]
     fn koenig_laeuft_aus_der_burg_ins_tal() {
@@ -1034,9 +1131,9 @@ mod tests {
     fn ohne_material_kein_bau_und_lager_erhoeht_platz() {
         use protocol::Good;
         let mut w = flat_world();
-        let cap = w.stocks[&1].capacity;
+        let cap = w.stocks[&1].capacity_of(Good::Stone);
         w.place_building(1, BuildingKind::Storehouse, 6, 6).unwrap();
-        assert_eq!(w.stocks[&1].capacity, cap + w.economy.def.storehouse_capacity);
+        assert_eq!(w.stocks[&1].capacity_of(Good::Stone), cap + w.economy.def.storehouse_capacity);
         let all = w.stocks[&1].amount(Good::Stone);
         w.stocks.get_mut(&1).unwrap().take_all(&[GoodAmount { good: Good::Stone, amount: all }]);
         assert_eq!(w.place_building(1, BuildingKind::Wall, 0, 9).unwrap_err().key, "error.not_enough");

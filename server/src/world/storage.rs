@@ -95,9 +95,10 @@ impl World {
                         self.hub_add(h.0, good, n);
                         left -= n;
                     }
-                    if left > 0 {
-                        let to = mine.iter().find(stores).unwrap_or(&mine[0]).0;
-                        self.hub_add(to, good, left);
+                    // Rest ins erste passende Lager; nimmt keins die Ware (Essen ohne
+                    // Kornspeicher, Waffen ohne Waffenkammer), bleibt sie im virtuellen Vorrat.
+                    if let (true, Some(to)) = (left > 0, mine.iter().find(stores)) {
+                        self.hub_add(to.0, good, left);
                     }
                 } else if have > want {
                     let mut extra = have - want;
@@ -236,7 +237,8 @@ mod tests {
         let wood = w.stocks[&1].amount(Good::Wood);
         assert!(wood > 0, "Startgüter liegen trotzdem bereit");
         let store = w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap().id;
-        assert_eq!(w.stocks[&1].capacity, w.economy.def.storehouse_capacity);
+        assert_eq!(w.stocks[&1].capacity_of(Good::Wood), w.economy.def.storehouse_capacity);
+        assert_eq!(w.stocks[&1].capacity_of(Good::Bread), 0, "Essen nur in den Kornspeicher");
         w.step(0.05);
         assert_eq!(w.hub_amount(store, Good::Wood), w.stocks[&1].amount(Good::Wood), "Startgüter im ersten Lager");
     }
@@ -252,13 +254,13 @@ mod tests {
         let granary = w.place_building(1, BuildingKind::Granary, 20, 2).unwrap().id;
         let def = w.economy.building(BuildingKind::Granary).unwrap();
         let (cap, extra) = (w.economy.def.storehouse_capacity, def.hub_capacity);
-        assert_eq!(w.stocks[&1].capacity_of(Good::Bread), cap + extra, "Kornspeicher: mehr Platz für Brot");
-        assert_eq!(w.stocks[&1].capacity_of(Good::Wood), cap, "aber nicht für Holz");
-        w.admin_give(1, &[GoodAmount { good: Good::Bread, amount: cap + 20 }, GoodAmount { good: Good::Wood, amount: 10 }], 0);
+        assert_eq!(w.stocks[&1].capacity_of(Good::Bread), extra, "Brot nur im Kornspeicher");
+        assert_eq!(w.stocks[&1].capacity_of(Good::Wood), cap, "Holz nur im Vorratslager");
+        w.admin_give(1, &[GoodAmount { good: Good::Bread, amount: 20 }, GoodAmount { good: Good::Wood, amount: 10 }], 0);
         w.step(0.05);
         assert_eq!(w.hub_amount(granary, Good::Wood), 0, "kein Holz im Kornspeicher");
         assert!(w.hub_amount(granary, Good::Bread) >= 20, "Brot passt in den Kornspeicher");
-        assert!(w.hub_amount(store, Good::Bread) <= cap);
+        assert_eq!(w.hub_amount(store, Good::Bread), 0, "kein Brot im Vorratslager");
     }
 
     #[test]

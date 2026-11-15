@@ -16,7 +16,7 @@ use crate::map::resource_blocks;
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Work {
     /// Sekunden seit Start. `None` = noch nicht gestartet (Eingänge fehlen).
-    elapsed: Option<f32>,
+    pub(super) elapsed: Option<f32>,
 }
 
 impl World {
@@ -49,9 +49,14 @@ impl World {
         if !gathers && idle && self.target_reached(i) {
             return BuildingStatus::TargetReached;
         }
-        // Der Arbeiter trägt gerade selbst Waren (siehe `errand.rs`): der Betrieb steht.
+        // Der Arbeiter trägt gerade selbst Waren (siehe `errand.rs`): der Betrieb steht,
+        // außer im Teil des Durchlaufs, der von allein läuft (Wachsen).
         if !gathers && self.gather_status.get(&id) == Some(&BuildingStatus::WorkerAway) {
-            return BuildingStatus::WorkerAway;
+            let grows_alone = self.work.get(&id).and_then(|w| w.elapsed).unwrap_or(0.0)
+                < recipe.seconds * recipe.unattended_percent.min(100) as f32 / 100.0;
+            if !grows_alone {
+                return BuildingStatus::WorkerAway;
+            }
         }
         // Abbaubetriebe: die Arbeiter machen die Arbeit (siehe `gather.rs`).
         if gathers {
@@ -71,7 +76,11 @@ impl World {
                 }
                 let Some(inv) = self.inventories.get_mut(&id) else { return BuildingStatus::Idle };
                 if !inv.take_all(&recipe.inputs) {
-                    return BuildingStatus::MissingInput;
+                    return if self.held_back(i, &recipe.inputs) {
+                        BuildingStatus::StockReserved
+                    } else {
+                        BuildingStatus::MissingInput
+                    };
                 }
                 if !recipe.inputs.is_empty() {
                     self.dirty_buildings.insert(id);
@@ -104,6 +113,16 @@ impl World {
         BuildingStatus::Working
     }
 
+    /// Fehlt ein Eingang nur, weil der Mindestbestand (`keep_in_stock`) ihn zurückhält?
+    fn held_back(&self, i: usize, inputs: &[protocol::GoodAmount]) -> bool {
+        let b = &self.buildings[i];
+        let (Some(inv), Some(stock)) = (self.inventories.get(&b.id), self.stocks.get(&b.owner)) else { return false };
+        inputs.iter().filter(|g| inv.amount(g.good) < g.amount).any(|g| {
+            let keep = b.settings.keep_in_stock.iter().find(|k| k.good == g.good).map_or(0, |k| k.amount);
+            keep > 0 && stock.amount(g.good) > 0 && stock.amount(g.good) <= keep
+        })
+    }
+
     /// Liegt von einem Ergebnis des laufenden Rezepts schon der Höchstbestand (`stop_at`) im Vorrat?
     pub(super) fn target_reached(&self, i: usize) -> bool {
         let b = &self.buildings[i];
@@ -118,7 +137,7 @@ impl World {
     }
 
     /// Höfe auf fruchtbarem Boden arbeiten schneller (anteilig nach Feldern).
-    fn speed(&self, i: usize) -> f32 {
+    pub(super) fn speed(&self, i: usize) -> f32 {
         let b = &self.buildings[i];
         let on_fields = self.economy.building(b.kind).and_then(|d| d.placement.as_ref()).is_some_and(|p| {
             p.resources.contains(&ResourceKind::Farmland) || p.resources.contains(&ResourceKind::Fertile)
@@ -339,12 +358,33 @@ mod tests {
     }
 
     #[test]
+    fn fortschritt_laeuft_und_wird_selten_geschickt() {
+        let mut w = world(&map(20, 10, (0, 9), &[]));
+        w.place_building(1, BuildingKind::Keep, 10, 0).unwrap();
+        let b = w.place_building(1, BuildingKind::Bowyer, 2, 0).unwrap();
+        let mut seen = 0.0f32;
+        let mut sent = 0;
+        for _ in 0..(90.0 / 0.05) as usize {
+            w.step(0.05);
+            let x = w.buildings.iter().find(|x| x.id == b.id).unwrap();
+            // Geschickt wird Stand + Tempo; der Client rechnet weiter.
+            seen = seen.max(x.progress_rate);
+            assert!((0.0..=1.0).contains(&x.progress));
+            sent += w.take_events().iter().filter(|e| matches!(e, ServerMsg::BuildingChanged { building } if building.id == b.id)).count();
+        }
+        assert!(seen > 0.0, "Tempo {seen}");
+        assert!(sent < 60, "zu oft geschickt: {sent}");
+    }
+
+    #[test]
     fn werkstatt_braucht_eingaenge_und_rezept_einstellbar() {
         let mut w = world(&map(20, 10, (0, 9), &[]));
         w.worker_carries_default = false; // hier tragen die Träger
         w.place_building(1, BuildingKind::Keep, 10, 0).unwrap();
         let b = w.place_building(1, BuildingKind::Bowyer, 2, 0).unwrap();
         w.place_building(1, BuildingKind::CartShed, 4, 5).unwrap();
+        w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 50 }, GoodAmount { good: Good::Stone, amount: 50 }], 0);
+        w.place_building(1, BuildingKind::Armory, 16, 6).unwrap(); // Platz für Bögen
         assert_eq!(b.settings.recipe.as_deref(), Some("make_longbow"));
         // Armbrust erst ab Stufe 2.
         let mut s = b.settings.clone();

@@ -312,7 +312,7 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": true,
-      "hub_goods": [],
+      "hub_goods": ["wood", "boards", "stone", "blocks", "iron_ore", "iron", "leather"],
       "hub_capacity": 0,
       "levels": [
         {
@@ -1159,28 +1159,32 @@
       "building": "pig_farm",
       "inputs": [{"good": "grain", "amount": 1}],
       "outputs": [{"good": "meat", "amount": 2}],
-      "seconds": 20
+      "seconds": 20,
+      "unattended_percent": 60
     },
     {
       "id": "pig_leather",
       "building": "pig_farm",
       "inputs": [{"good": "grain", "amount": 1}],
       "outputs": [{"good": "meat", "amount": 1}, {"good": "leather", "amount": 1}],
-      "seconds": 20
+      "seconds": 20,
+      "unattended_percent": 60
     },
     {
       "id": "raise_cattle",
       "building": "cattle_farm",
       "inputs": [{"good": "grain", "amount": 2}],
       "outputs": [{"good": "meat", "amount": 3}, {"good": "leather", "amount": 1}],
-      "seconds": 30
+      "seconds": 30,
+      "unattended_percent": 60
     },
     {
       "id": "grow_fruit",
       "building": "orchard",
       "inputs": [],
       "outputs": [{"good": "fruit", "amount": 10}],
-      "seconds": 25
+      "seconds": 25,
+      "unattended_percent": 80
     }
   ],
   "start_stock": [

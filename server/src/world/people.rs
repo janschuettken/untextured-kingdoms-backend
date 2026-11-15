@@ -53,7 +53,15 @@ impl World {
                 }
             }
 
-            let mut state = PeopleState { housing, needed, working: used, hungry: self.people.get(&player).is_some_and(|p| p.hungry) };
+            let prev = self.people.get(&player);
+            let mut state = PeopleState {
+                housing,
+                needed,
+                working: used,
+                hungry: prev.is_some_and(|p| p.hungry),
+                fed: prev.map_or(0, |p| p.fed),
+                next_meal_in: 0,
+            };
             let timer = self.meal_timer.entry(player).or_insert(0.0);
             *timer += dt;
             if pop.meal_seconds > 0.0 && *timer >= pop.meal_seconds {
@@ -72,6 +80,8 @@ impl World {
                     self.dirty_stocks.insert(player);
                 }
                 state.hungry = eaten < used;
+                state.fed = eaten.min(used);
+                self.dirty_stocks.insert(player); // neue Zeit bis zur nächsten Mahlzeit
             }
             if self.people.get(&player) != Some(&state) {
                 self.people.insert(player, state);
@@ -122,7 +132,8 @@ mod tests {
         w.step(0.05);
         let b = w.buildings.iter().find(|b| b.id == saw.id).unwrap();
         assert_ne!(b.status, BuildingStatus::NoWorkers);
-        assert_eq!((w.people[&1].housing, w.people[&1].working), (4, 1));
+        let housing = w.economy.building(BuildingKind::House).unwrap().levels[0].housing;
+        assert_eq!((w.people[&1].housing, w.people[&1].working), (housing, 1));
     }
 
     #[test]

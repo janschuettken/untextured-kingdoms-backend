@@ -29,7 +29,7 @@ use axum::{
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
-use protocol::{ClientMsg, MapRef, ServerMsg, UnitState};
+use protocol::{ClientMsg, MapRef, ServerMsg, UnitInfo, UnitState};
 use world::World;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
@@ -50,6 +50,8 @@ struct Client {
     /// Beobachtete Einheit (Weg anzeigen) und der zuletzt geschickte Weg.
     watch: Option<u32>,
     watch_sent: Option<Vec<(f32, f32)>>,
+    /// Zuletzt geschickte `UnitInfo` der beobachteten Einheit.
+    watch_info: Option<UnitInfo>,
 }
 
 struct AppState {
@@ -232,7 +234,7 @@ async fn game_loop(state: Arc<AppState>) {
                 }
             });
         }
-        let (units, stocks, paths) = {
+        let (units, stocks, paths, infos) = {
             let mut world = state.world.lock().unwrap();
             let speed = state.game_speed.load(Ordering::Relaxed) as f32 / 100.0;
             world.step(speed / TICK_RATE as f32);
@@ -242,8 +244,12 @@ async fn game_loop(state: Arc<AppState>) {
             }
             let watched: Vec<u32> = state.clients.lock().unwrap().values().filter_map(|c| c.watch).collect();
             let paths: HashMap<u32, Vec<(f32, f32)>> =
-                watched.into_iter().filter_map(|id| world.unit_path(id).map(|p| (id, p))).collect();
-            (world.snapshot(), world.take_dirty_stocks(), paths)
+                watched.iter().filter_map(|&id| world.unit_path(id).map(|p| (id, p))).collect();
+            let infos: HashMap<u32, (u32, UnitInfo)> = watched
+                .into_iter()
+                .filter_map(|id| Some((id, (world.unit_owner(id)?, world.unit_info(id)?))))
+                .collect();
+            (world.snapshot(), world.take_dirty_stocks(), paths, infos)
         };
         let players_online = state.players_online.load(Ordering::Relaxed);
         let mut clients = state.clients.lock().unwrap();
@@ -259,6 +265,15 @@ async fn game_loop(state: Arc<AppState>) {
                     && client.tx.try_send(ServerMsg::UnitPath { unit_id: id, path: path.clone() }).is_ok()
                 {
                     client.watch_sent = Some(path);
+                }
+                // Tätigkeit und Ladung nur für eigene Einheiten.
+                if let Some((owner, info)) = infos.get(&id) {
+                    if *owner == player
+                        && client.watch_info.as_ref() != Some(info)
+                        && client.tx.try_send(ServerMsg::UnitInfo { info: info.clone() }).is_ok()
+                    {
+                        client.watch_info = Some(info.clone());
+                    }
                 }
             }
             let (send, gone) = tick_for(player, client, &units);
@@ -308,7 +323,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, wanted: Option<u
                 id
             }
         };
-        let client = Client { tx: out_tx.clone(), view: None, known: HashMap::new(), watch: None, watch_sent: None };
+        let client = Client { tx: out_tx.clone(), view: None, known: HashMap::new(), watch: None, watch_sent: None, watch_info: None };
         state.clients.lock().unwrap().insert(player_id, client);
         (
             player_id,
@@ -442,6 +457,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, wanted: Option<u
                     if let Some(c) = state.clients.lock().unwrap().get_mut(&player_id) {
                         c.watch = unit_id;
                         c.watch_sent = None;
+                        c.watch_info = None;
                     }
                 }
                 Ok(ClientMsg::TrainUnits { building_id, kind, count }) => {
