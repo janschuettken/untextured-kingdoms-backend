@@ -1376,7 +1376,7 @@
       "speed": 1.4,
       "hp": 40,
       "attack": 6,
-      "range": 8,
+      "range": 18,
       "upkeep": 1
     },
     {
@@ -1387,7 +1387,7 @@
       "speed": 1.2,
       "hp": 55,
       "attack": 12,
-      "range": 7,
+      "range": 17,
       "upkeep": 2
     },
     {
