@@ -1111,7 +1111,7 @@
           "recipes": [],
           "housing": 0,
           "spawns": [],
-          "trains": ["spearman", "archer"]
+          "trains": ["spearman", "archer", "light_swordsman"]
         },
         {
           "cost": [
@@ -1389,6 +1389,17 @@
       "attack": 12,
       "range": 17,
       "upkeep": 2
+    },
+    {
+      "kind": "light_swordsman",
+      "cost": [{"good": "sword", "amount": 1}, {"good": "light_armor", "amount": 1}],
+      "taler": 20,
+      "seconds": 12,
+      "speed": 1.3,
+      "hp": 80,
+      "attack": 10,
+      "range": 1,
+      "upkeep": 1
     },
     {
       "kind": "swordsman",
