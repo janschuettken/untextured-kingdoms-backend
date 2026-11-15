@@ -290,7 +290,7 @@ mod tests {
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 31);
+        assert_eq!(eco.def.buildings.len(), 33);
         assert!(eco.def.buildings.iter().any(|b| b.hub), "ohne Lager kein Transport");
     }
 

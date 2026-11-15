@@ -22,6 +22,82 @@
   ],
   "buildings": [
     {
+      "kind": "wood_path",
+      "category": "road",
+      "build_radius": 50,
+      "road_speed_percent": 40,
+      "w": 1,
+      "h": 1,
+      "max_hp": 60,
+      "service_radius": 0,
+      "no_entrance": true,
+      "spawns": [],
+      "workers": 0,
+      "walkway_from_level": 0,
+      "stairs_from_level": 0,
+      "gate_radius": 0,
+      "garrison": 0,
+      "on_walls": false,
+      "on_ramps": true,
+      "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
+      "levels": [
+        {
+          "cost": [
+            {
+              "good": "wood",
+              "amount": 1
+            }
+          ],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": []
+        }
+      ]
+    },
+    {
+      "kind": "stone_path",
+      "category": "road",
+      "build_radius": 50,
+      "road_speed_percent": 80,
+      "w": 1,
+      "h": 1,
+      "max_hp": 150,
+      "service_radius": 0,
+      "no_entrance": true,
+      "spawns": [],
+      "workers": 0,
+      "walkway_from_level": 0,
+      "stairs_from_level": 0,
+      "gate_radius": 0,
+      "garrison": 0,
+      "on_walls": false,
+      "on_ramps": true,
+      "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
+      "levels": [
+        {
+          "cost": [
+            {
+              "good": "stone",
+              "amount": 1
+            }
+          ],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": []
+        }
+      ]
+    },
+    {
       "kind": "house",
       "category": "housing",
       "w": 3,

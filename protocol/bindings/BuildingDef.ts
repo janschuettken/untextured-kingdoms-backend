@@ -86,6 +86,11 @@ on_walls: boolean,
  */
 on_ramps: boolean, 
 /**
+ * Weg: das Feld bleibt begehbar, und man läuft hier so viel Prozent schneller.
+ * 0 = kein Weg.
+ */
+road_speed_percent: number, 
+/**
  * Das erste Gebäude dieser Art je Spieler kostet nichts.
  */
 first_free: boolean, 
