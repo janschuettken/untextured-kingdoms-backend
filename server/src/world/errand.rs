@@ -268,4 +268,18 @@ mod tests {
         assert!(w.stocks[&1].amount(Good::Boards) > boards);
         assert!(w.snapshot()[worker].inside, "Arbeiter ist im Sägewerk, außen nicht zu sehen");
     }
+
+    #[test]
+    fn mindestbestand_zeigt_eigenen_status() {
+        let mut w = flat();
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        let saw = w.place_building(1, BuildingKind::Sawmill, 25, 2).unwrap();
+        let mut s = saw.settings.clone();
+        s.keep_in_stock = vec![protocol::GoodAmount { good: Good::Wood, amount: 9999 }];
+        w.configure(1, saw.id, s).unwrap();
+        for _ in 0..20 * 30 {
+            w.step(0.05);
+        }
+        assert_eq!(w.buildings.iter().find(|b| b.id == saw.id).unwrap().status, BuildingStatus::StockReserved);
+    }
 }

@@ -68,13 +68,13 @@ mod tests {
         assert_eq!(w.trade(1, Good::Bread, 1, true).unwrap_err().key, "error.no_market");
         w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 100 }, GoodAmount { good: Good::Wood, amount: 100 }], 0);
         w.place_building(1, BuildingKind::Market, 5, 5).unwrap();
-        w.place_building(1, BuildingKind::Storehouse, 15, 15).unwrap(); // Platz für Gekauftes
+        w.place_building(1, BuildingKind::Granary, 15, 15).unwrap(); // Platz für gekauftes Brot
         let taler = w.stock_state(1).taler;
         w.trade(1, Good::Bread, 10, true).unwrap();
         assert_eq!(w.stock_state(1).taler, taler + 10 * price.sell);
         w.trade(1, Good::Bread, 2, false).unwrap();
         assert_eq!(w.stock_state(1).taler, taler + 10 * price.sell - 2 * price.buy);
-        assert_eq!(w.trade(1, Good::Crossbow, 1000, false).unwrap_err().key, "error.not_enough_taler");
+        assert_eq!(w.trade(1, Good::Bread, 280, false).unwrap_err().key, "error.not_enough_taler");
         assert_eq!(w.trade(1, Good::Bread, 1000, true).unwrap_err().key, "error.not_enough");
     }
 }

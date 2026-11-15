@@ -19,4 +19,12 @@ working: number,
 /**
  * Bei der letzten Mahlzeit gab es nicht genug Essen.
  */
-hungry: boolean, };
+hungry: boolean, 
+/**
+ * So viele wurden bei der letzten Mahlzeit satt (von `working`).
+ */
+fed: number, 
+/**
+ * Sekunden (Spielzeit) bis zur nächsten Mahlzeit, Stand beim Senden.
+ */
+next_meal_in: number, };

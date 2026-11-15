@@ -151,6 +151,11 @@ pub enum ServerMsg {
         unit_id: u32,
         path: Vec<(f32, f32)>,
     },
+    /// Was die beobachtete eigene Einheit tut, wohin und mit welcher Ladung.
+    /// Kommt nur, wenn sich etwas ändert.
+    UnitInfo {
+        info: UnitInfo,
+    },
 }
 
 /// Art eines Feldes.
@@ -252,6 +257,55 @@ impl UnitKind {
     pub fn is_soldier(self) -> bool {
         matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::Swordsman | UnitKind::Knight)
     }
+}
+
+/// Was eine Einheit gerade tut (für die Anzeige beim Anklicken).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum UnitActivity {
+    /// Steht und hat nichts zu tun.
+    Idle,
+    /// Läuft zu einem Punkt (Befehl oder auf dem Rückweg).
+    Walking,
+    /// Steht auf dem Wehrgang.
+    OnWall,
+    /// Arbeiter: unterwegs zum Rohstoff-Feld.
+    ToResource,
+    /// Arbeiter: baut am Feld ab.
+    Gathering,
+    /// Arbeiter: arbeitet in seinem Gebäude.
+    Working,
+    /// Arbeiter: bringt die Ware zum eigenen Betrieb.
+    BringingHome,
+    /// Bringt Ware in ein Lager.
+    Delivering,
+    /// Holt Ware für den eigenen Betrieb.
+    Fetching,
+    /// Träger/Karren: unterwegs zum Aufladen.
+    PickingUp,
+    /// Träger/Karren: bringt die Ladung hin.
+    Unloading,
+    /// Träger/Karren: zurück zum Heimatgebäude.
+    Returning,
+}
+
+/// Genaueres zu einer beobachteten eigenen Einheit (siehe `WatchUnit`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UnitInfo {
+    pub unit_id: u32,
+    pub activity: UnitActivity,
+    /// Gebäude, zu dem die Einheit gehört (Arbeiter, Träger, Karren).
+    pub home: Option<u32>,
+    /// Gebäude, zu dem sie gerade unterwegs ist.
+    pub target_building: Option<u32>,
+    /// Endpunkt ihres Weges (Feld-Koordinaten).
+    pub target: Option<(f32, f32)>,
+    /// Ware, um die es beim Auftrag geht (auch wenn noch nicht geladen).
+    pub job_good: Option<Good>,
+    /// Was sie gerade trägt.
+    pub carrying: Option<GoodAmount>,
 }
 
 /// Zustand einer Einheit in einem Tick.
@@ -549,6 +603,10 @@ pub struct RecipeDef {
     pub outputs: Vec<GoodAmount>,
     /// Dauer eines Durchlaufs.
     pub seconds: f32,
+    /// So viel Prozent am Anfang des Durchlaufs laufen ohne Arbeiter weiter
+    /// (Wachsen von Getreide, Obst, Tieren), auch wenn er gerade Waren trägt.
+    #[serde(default)]
+    pub unattended_percent: u32,
 }
 
 /// Die ganze Wirtschaft als Daten (einzige Quelle: `server/data/economy.json`).
@@ -711,6 +769,12 @@ pub struct PeopleState {
     pub working: u32,
     /// Bei der letzten Mahlzeit gab es nicht genug Essen.
     pub hungry: bool,
+    /// So viele wurden bei der letzten Mahlzeit satt (von `working`).
+    #[serde(default)]
+    pub fed: u32,
+    /// Sekunden (Spielzeit) bis zur nächsten Mahlzeit, Stand beim Senden.
+    #[serde(default)]
+    pub next_meal_in: u32,
 }
 
 impl Default for MovementDef {
@@ -789,6 +853,9 @@ pub enum BuildingStatus {
     WorkerAway,
     /// Höchstbestand im Vorrat erreicht (`settings.stop_at`): Pause, bis wieder Platz ist.
     TargetReached,
+    /// Eingangswaren liegen nur noch bis zum Mindestbestand (`settings.keep_in_stock`)
+    /// im Vorrat: der Betrieb wartet, bis wieder mehr da ist.
+    StockReserved,
 }
 
 /// Ein Gebäude auf der Karte. Es belegt die Felder (x, y) bis (x + w - 1, y + h - 1).
@@ -826,6 +893,12 @@ pub struct BuildingState {
     /// Sekunden (Spielzeit), bis der erste fertig ist. Der Client zählt selbst herunter.
     #[serde(default)]
     pub training_left: f32,
+    /// Laufender Durchlauf: wie weit (0..1). Der Client rechnet mit
+    /// `progress_rate` (Anteil je Spielsekunde) selbst weiter.
+    #[serde(default)]
+    pub progress: f32,
+    #[serde(default)]
+    pub progress_rate: f32,
 }
 
 fn default_true() -> bool {

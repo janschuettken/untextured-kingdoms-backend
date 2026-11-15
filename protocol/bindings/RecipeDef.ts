@@ -9,4 +9,9 @@ export type RecipeDef = { id: string, building: BuildingKind, inputs: Array<Good
 /**
  * Dauer eines Durchlaufs.
  */
-seconds: number, };
+seconds: number, 
+/**
+ * So viel Prozent am Anfang des Durchlaufs laufen ohne Arbeiter weiter
+ * (Wachsen von Getreide, Obst, Tieren), auch wenn er gerade Waren trägt.
+ */
+unattended_percent: number, };

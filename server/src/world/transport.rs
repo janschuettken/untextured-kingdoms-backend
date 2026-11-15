@@ -44,6 +44,16 @@ pub struct Job {
     rest: [(u32, u32); TOUR_STOPS - 1],
 }
 
+impl Job {
+    /// Für die Anzeige: (noch beim Aufladen?, Zielgebäude, Ware).
+    pub(super) fn describe(&self) -> (bool, u32, Good) {
+        match self.stage {
+            Stage::Load(b) => (true, b, self.good),
+            Stage::Unload(b) => (false, b, self.good),
+        }
+    }
+}
+
 /// Für Sammelfahrten: (Art, Ware) → Betriebe als (Abstand, Id, Menge).
 type Groups = HashMap<(protocol::BuildingKind, Good), Vec<(f32, u32, u32)>>;
 
@@ -608,6 +618,12 @@ mod tests {
     }
 
     /// Wagenschuppen auf Stufe `level` (1 = Träger, 2 = dazu ein Karren).
+    /// Kornspeicher: nur dort ist Platz für Obst.
+    fn granary(w: &mut World, x: u32, y: u32) -> u32 {
+        w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 50 }, GoodAmount { good: Good::Wood, amount: 50 }], 0);
+        w.place_building(1, BuildingKind::Granary, x, y).unwrap().id
+    }
+
     fn shed(w: &mut World, x: u32, y: u32, level: u8) -> u32 {
         w.place_building_rotated(1, BuildingKind::CartShed, x, y, 0, level).unwrap().id
     }
@@ -630,7 +646,9 @@ mod tests {
         w.admin_give(1, &more, 0);
         w.upgrade(1, shed).unwrap();
         w.upgrade(1, shed).unwrap();
-        assert_eq!(count(&w, UnitKind::Cart), 3, "Stufe 3 und 4: je ein Karren mehr");
+        let def = w.economy.building(BuildingKind::CartShed).unwrap();
+        let carts: u32 = def.levels.iter().flat_map(|l| &l.spawns).chain(&def.spawns).filter(|sp| sp.kind == UnitKind::Cart).map(|sp| sp.count).sum();
+        assert_eq!(count(&w, UnitKind::Cart) as u32, carts, "Stufe 3 und 4: weitere Karren laut Daten");
         // Träger stehen nie in Gebäuden, und befehlen lassen sie sich nicht.
         let id = w.units.iter().find(|u| u.kind == UnitKind::Carrier).unwrap().id;
         w.order_move(1, &[id], (29.5, 19.5));
@@ -644,6 +662,7 @@ mod tests {
         let mut w = flat(40, 20);
         w.worker_carries_default = false; // hier tragen die Träger
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        granary(&mut w, 30, 14);
         let s = shed(&mut w, 10, 12, 1);
         let mut set = w.buildings.iter().find(|b| b.id == s).unwrap().settings.clone();
         set.stores = Some(vec![Good::Wood]);
@@ -718,6 +737,7 @@ mod tests {
         // Bergfried mit Trägern und ein Wagenschuppen: Die große Ladung lassen
         // die Träger für den Karren liegen, er holt alles auf einmal.
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        granary(&mut w, 2, 12);
         shed(&mut w, 10, 2, 2);
         let fruit = central(&w, Good::Fruit);
         let mut cart_load = 0;
@@ -773,9 +793,9 @@ mod tests {
         set_fruit(&mut w, orchard.id, 4);
         run(&mut w, 30.0);
         assert_eq!(local(&w, orchard.id, Good::Fruit), 4, "kein Lager nimmt Obst");
-        w.place_building(1, BuildingKind::Storehouse, 30, 12).unwrap();
+        granary(&mut w, 30, 12);
         run(&mut w, 40.0);
-        assert_eq!(local(&w, orchard.id, Good::Fruit), 0, "jetzt ins Vorratslager");
+        assert_eq!(local(&w, orchard.id, Good::Fruit), 0, "jetzt in den Kornspeicher");
     }
 
     #[test]
@@ -797,6 +817,7 @@ mod tests {
         let mut w = flat(120, 30);
         w.worker_carries_default = false; // hier tragen die Träger
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        granary(&mut w, 2, 12);
         shed(&mut w, 12, 2, 2);
         w.units.retain(|u| u.kind != UnitKind::Carrier);
         let a = w.place_building(1, BuildingKind::Orchard, 24, 2).unwrap();
