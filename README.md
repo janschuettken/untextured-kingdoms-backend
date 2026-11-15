@@ -94,6 +94,10 @@ ihr Platz (`hub_capacity`) zählt als Zusatzplatz nur für diese Waren (`Stock::
 Auch Vorratslager und Bergfried haben `hub_goods` (nur Waren/Rohstoffe): Essen passt nur in den Kornspeicher,
 Waffen nur in die Waffenkammer. Was kein Lager nimmt (z. B. Start-Brot ohne Kornspeicher), bleibt im virtuellen Vorrat.
 
+Lager im Betrieb: `transport.building_capacity` (Standard 20) je Ware, je Gebäudeart überschreibbar mit
+`building_storage`, je Gebäude mit `settings.storage`. Einheiten laden und abladen nur am Eingangsfeld (`at_door`),
+auch wenn Gebäude direkt nebeneinander stehen.
+
 Rezepte: `unattended_percent` = so viel Prozent am Anfang des Durchlaufs laufen ohne Arbeiter weiter (Wachsen),
 auch wenn er gerade Waren trägt. Fortschritt je Betrieb: `BuildingState.progress` + `progress_rate` (Client rechnet
 weiter, Server schickt nur bei Abweichung, siehe `world/progress.rs`). Status `stock_reserved`: Eingänge nur bis zum

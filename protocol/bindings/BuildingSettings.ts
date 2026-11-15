@@ -38,4 +38,8 @@ worker_carries: boolean,
 /**
  * Höchstbestand im Vorrat: liegt von einem Ergebnis so viel im Vorrat, macht der Betrieb Pause.
  */
-stop_at: Array<GoodAmount>, };
+stop_at: Array<GoodAmount>, 
+/**
+ * Eigenes Lager des Betriebs je Ware; `None` = wie im Balancing für diese Gebäudeart.
+ */
+storage: number | null, };
