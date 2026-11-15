@@ -785,52 +785,65 @@ impl World {
         }
     }
 
-    /// Ziele für eine Gruppe: ein Quadrat aus Feldern um den Zielpunkt, damit
-    /// nicht alle auf einem Fleck stehen. Felder, die nicht begehbar sind, auf
-    /// einer anderen Höhe liegen oder auf denen schon eine andere Einheit steht
-    /// (bzw. hin will), werden übersprungen. `wall`: Felder auf dem Wehrgang.
+    /// Ziele für eine Gruppe: ein enges Raster (`FORMATION_GAP`) um den
+    /// Zielpunkt, damit nicht alle auf einem Fleck stehen. Punkte auf nicht
+    /// begehbaren Feldern, auf anderer Höhe oder zu nah an einer anderen Einheit
+    /// (dort stehend oder auf dem Weg dorthin) werden übersprungen. `wall`: nur
+    /// auf dem Wehrgang desselben Bauwerks; auf Türmen innerhalb der runden
+    /// Plattform um die Turmmitte.
     fn formation(&self, player: u32, group: &[u32], target: (f32, f32), n: usize, wall: bool) -> Vec<(f32, f32)> {
+        const FORMATION_GAP: f32 = 0.6;
         let (w, h) = (self.map.width as i32, self.map.height as i32);
         let cell = |p: (f32, f32)| (p.0.floor() as i32, p.1.floor() as i32);
-        // Felder, die andere Soldaten (und der König) schon belegen.
-        let taken: HashSet<(i32, i32)> = self
+        let others: Vec<(f32, f32)> = self
             .units
             .iter()
             .filter(|u| !u.is_civilian() && !group.contains(&u.id))
             .filter(|u| u.target_wall == wall || u.on_wall == wall)
-            .map(|u| cell(u.target.filter(|_| !u.path.is_empty()).unwrap_or(u.pos)))
+            .map(|u| u.target.filter(|_| !u.path.is_empty()).unwrap_or(u.pos))
             .collect();
         let level = |x: i32, y: i32| self.map.levels[(y * w + x) as usize];
         let (cx, cy) = cell(target);
         let home = level(cx.clamp(0, w - 1), cy.clamp(0, h - 1));
         let on = self.occupied[(cy.clamp(0, h - 1) * w + cx.clamp(0, w - 1)) as usize];
-        let fits = |x: i32, y: i32| {
+        // Turm (Besatzung begrenzt): Mitte und Radius der runden Plattform.
+        let platform = if wall {
+            self.buildings
+                .iter()
+                .find(|b| b.id == on)
+                .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.garrison > 0))
+                .map(|b| ((b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0), b.w.min(b.h) as f32 * 0.3))
+        } else {
+            None
+        };
+        let center = platform.map_or(target, |p| p.0);
+        let fits = |p: (f32, f32)| {
+            let (x, y) = cell(p);
             if x < 0 || y < 0 || x >= w || y >= h {
                 return false;
             }
             if wall {
-                // Auf dem Wehrgang nur auf demselben Bauwerk (Turm: Besatzung zählt dort).
-                self.occupied[(y * w + x) as usize] == on && self.is_walkway(player, (x as f32 + 0.5, y as f32 + 0.5))
+                let on_platform = platform.is_none_or(|(c, r)| (p.0 - c.0).hypot(p.1 - c.1) <= r + 1e-3);
+                on_platform && self.occupied[(y * w + x) as usize] == on && self.is_walkway(player, p)
             } else {
                 self.map.nav.is_open(x, y) && level(x, y) == home
             }
         };
-        let frac = (target.0 - cx as f32, target.1 - cy as f32);
-        let mut spots = Vec::with_capacity(n);
-        // Ringe um das Zielfeld, innen zuerst; erst nur freie Felder, notfalls auch belegte.
+        let near = |p: (f32, f32), list: &[(f32, f32)]| list.iter().any(|q| (p.0 - q.0).hypot(p.1 - q.1) < FORMATION_GAP * 0.8);
+        let mut spots: Vec<(f32, f32)> = Vec::with_capacity(n);
+        // Ringe um den Zielpunkt, innen zuerst; erst nur freie Punkte, notfalls auch belegte.
         for free_only in [true, false] {
-            'rings: for r in 0..(n as i32 + 3) {
+            'rings: for r in 0..(2 * n as i32 + 4) {
                 for dy in -r..=r {
                     for dx in -r..=r {
                         if spots.len() == n {
                             break 'rings;
                         }
-                        let (x, y) = (cx + dx, cy + dy);
-                        if dx.abs().max(dy.abs()) != r || !fits(x, y) {
+                        if dx.abs().max(dy.abs()) != r {
                             continue;
                         }
-                        let spot = (x as f32 + frac.0, y as f32 + frac.1);
-                        if (free_only && taken.contains(&(x, y))) || spots.contains(&spot) {
+                        let spot = (center.0 + dx as f32 * FORMATION_GAP, center.1 + dy as f32 * FORMATION_GAP);
+                        if !fits(spot) || near(spot, &spots) || (free_only && near(spot, &others)) {
                             continue;
                         }
                         spots.push(spot);
@@ -839,7 +852,7 @@ impl World {
             }
         }
         while spots.len() < n {
-            spots.push(target);
+            spots.push(center);
         }
         spots
     }
@@ -1251,6 +1264,16 @@ mod tests {
         assert_eq!(w.place_building_rotated(1, BuildingKind::Bowyer, 12, 4, 0, 3).unwrap_err().key, "error.max_level");
     }
 
+    /// Nicht ineinander (mindestens ein halbes Feld Abstand), aber eng beim Ziel.
+    fn assert_spread(pos: &[(f32, f32)], target: (f32, f32), max: f32) {
+        for (i, a) in pos.iter().enumerate() {
+            assert!((a.0 - target.0).abs() <= max + 1e-3 && (a.1 - target.1).abs() <= max + 1e-3, "zu weit weg: {a:?}");
+            for b in &pos[i + 1..] {
+                assert!((a.0 - b.0).hypot(a.1 - b.1) >= 0.5, "ineinander: {a:?} {b:?}");
+            }
+        }
+    }
+
     #[test]
     fn gruppe_verteilt_sich_um_das_ziel() {
         let mut w = flat_world();
@@ -1263,11 +1286,8 @@ mod tests {
         for _ in 0..20 * 30 {
             w.step(0.05);
         }
-        let mut tiles: Vec<(i32, i32)> = w.units.iter().filter(|u| ids.contains(&u.id)).map(|u| (u.pos.0 as i32, u.pos.1 as i32)).collect();
-        tiles.sort();
-        tiles.dedup();
-        assert_eq!(tiles.len(), 5, "jeder auf eigenem Feld");
-        assert!(tiles.iter().all(|&(x, y)| (x - 12).abs() <= 1 && (y - 12).abs() <= 1));
+        let pos: Vec<(f32, f32)> = w.units.iter().filter(|u| ids.contains(&u.id)).map(|u| u.pos).collect();
+        assert_spread(&pos, (12.5, 12.5), 1.0);
     }
 
     #[test]
@@ -1285,10 +1305,8 @@ mod tests {
         for _ in 0..20 * 30 {
             w.step(0.05);
         }
-        let mut tiles: Vec<(i32, i32)> = w.units.iter().filter(|u| ids.contains(&u.id)).map(|u| (u.pos.0 as i32, u.pos.1 as i32)).collect();
-        tiles.sort();
-        tiles.dedup();
-        assert_eq!(tiles.len(), 4, "jeder auf eigenem Feld");
+        let pos: Vec<(f32, f32)> = w.units.iter().filter(|u| ids.contains(&u.id)).map(|u| u.pos).collect();
+        assert_spread(&pos, (12.5, 12.5), 1.0);
         // Wer schon steht, bleibt; ein neuer Befehl dorthin weicht aus.
         w.order_move(1, &[ids[0]], (12.5, 12.5));
         let first = w.units.iter().find(|u| u.id == ids[0]).unwrap();
