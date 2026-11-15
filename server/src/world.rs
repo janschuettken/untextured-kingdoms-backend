@@ -572,10 +572,12 @@ impl World {
                 let i = (ty * self.map.width + tx) as usize;
                 match self.map.tiles[i] {
                     TileKind::Water => return Err(Text::new("error.on_water")),
-                    TileKind::Ramp => return Err(Text::new("error.on_ramp")),
-                    TileKind::Ground => {}
+                    TileKind::Ramp if !def.on_ramps => return Err(Text::new("error.on_ramp")),
+                    _ => {}
                 }
-                if self.map.levels[i] != height {
+                // Auf Schrägen (`on_ramps`) reicht: höchstens eine Stufe Unterschied.
+                let diff = self.map.levels[i].abs_diff(height);
+                if diff > 1 || (diff == 1 && !def.on_ramps) {
                     return Err(Text::new("error.not_flat"));
                 }
                 if self.occupied[i] != 0 && !ignore.contains(&self.occupied[i]) {
@@ -1226,7 +1228,11 @@ mod tests {
         let water = (0..w * world.map.height).find(|&i| world.map.tiles[i as usize] == TileKind::Water).unwrap();
         assert!(world.place_building(1, BuildingKind::Wall, water % w, water / w).is_err());
         let ramp = (0..w * world.map.height).find(|&i| world.map.tiles[i as usize] == TileKind::Ramp).unwrap();
-        assert!(world.place_building(1, BuildingKind::Wall, ramp % w, ramp / w).is_err());
+        assert_eq!(world.place_building(1, BuildingKind::House, ramp % w, ramp / w).unwrap_err().key, "error.on_ramp");
+        // Mauern (`on_ramps`) dürfen auf Schrägen.
+        assert!(world.economy.building(BuildingKind::Wall).unwrap().on_ramps);
+        let r = world.place_building(1, BuildingKind::Wall, ramp % w, ramp / w);
+        assert!(r.as_ref().map_or_else(|e| e.key != "error.on_ramp" && e.key != "error.not_flat", |_| true), "{r:?}");
         assert!(world.place_building(1, BuildingKind::Keep, w - 2, w - 2).is_err(), "ragt aus der Karte");
         let king = world.units[0].pos;
         assert!(world.place_building(1, BuildingKind::Wall, king.0 as u32, king.1 as u32).is_err());
