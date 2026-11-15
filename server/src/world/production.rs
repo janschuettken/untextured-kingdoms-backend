@@ -299,7 +299,7 @@ mod tests {
     use crate::{economy::Economy, map::GameMap};
 
     fn world(text: &str) -> World {
-        let mut w = World::new(GameMap::parse(text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        let mut w = World::new(GameMap::parse(text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
         w.spawn_player(1);
         w
     }
