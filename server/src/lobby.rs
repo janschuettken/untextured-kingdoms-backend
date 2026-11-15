@@ -231,7 +231,10 @@ impl Hub {
         for game in games {
             match self.save_game(&game) {
                 Ok(()) => info!("Spiel {} gespeichert", game.id),
-                Err(e) => warn!("Spiel {}: Speichern beim Beenden fehlgeschlagen: {e}", game.id),
+                Err(e) => warn!(
+                    "Spiel {}: Speichern beim Beenden fehlgeschlagen: {e}",
+                    game.id
+                ),
             }
         }
     }
@@ -702,7 +705,7 @@ mod tests {
             can_save: false,
         };
         let economy = Economy::parse(crate::economy::ECONOMY_JSON).unwrap();
-        Arc::new(Hub::new(Arc::new(store), Admin::from_env(), economy, dir))
+        Arc::new(Hub::new(Arc::new(store), Admin::for_tests(), economy, dir))
     }
 
     const A: &str = "aaaaaaaaaaaaaaaaaaaa";

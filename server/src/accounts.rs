@@ -9,7 +9,7 @@
 //! - `GET  /api/account`           `{ "enabled": bool }` (ohne `DATABASE_URL` aus)
 //! - `POST /api/account/register`  `{ username, password, token }` → `{ username, token }`
 //! - `POST /api/account/login`     `{ username, password }` → `{ username, token }`
-//! - `POST /api/account/me`        `{ token }` → `{ username }` oder `{ username: null }`
+//! - `POST /api/account/me`        `{ token }` → `{ username, admin }` oder `{ username: null }`
 //!
 //! Fehler kommen als `{ "error": "account.…" }` (Schlüssel, der Client übersetzt).
 //! Passwörter werden mit Argon2 gehasht. Die Tabellen legt der Server beim
@@ -58,6 +58,13 @@ impl Accounts {
         }
         info!("Datenbank verbunden, Accounts sind an");
         Accounts { db: Some(pool) }
+    }
+}
+
+impl Accounts {
+    /// Die Datenbank, falls verbunden (für die Admin-Prüfung).
+    pub fn pool(&self) -> Option<PgPool> {
+        self.db.clone()
     }
 }
 
@@ -182,12 +189,12 @@ struct MeBody {
 
 async fn me(State(acc): State<Arc<Accounts>>, Json(b): Json<MeBody>) -> Response {
     let Some(db) = &acc.db else { return Json(serde_json::json!({ "username": null })).into_response() };
-    let name: Option<(String,)> = sqlx::query_as("SELECT username FROM accounts WHERE player_token = $1")
+    let name: Option<(String, bool)> = sqlx::query_as("SELECT username, is_admin FROM accounts WHERE player_token = $1")
         .bind(&b.token)
         .fetch_optional(db)
         .await
         .unwrap_or(None);
-    Json(serde_json::json!({ "username": name.map(|n| n.0) })).into_response()
+    Json(serde_json::json!({ "username": name.as_ref().map(|n| &n.0), "admin": name.is_some_and(|n| n.1) })).into_response()
 }
 
 #[cfg(test)]

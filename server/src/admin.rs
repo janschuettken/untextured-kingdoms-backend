@@ -1,11 +1,22 @@
-//! Admin: Token-Prüfung und Balancing-Schnittstelle.
+//! Admin: wer darf Admin-Menü, Balancing-Editor und Admin-Aktionen benutzen?
 //!
-//! Der Admin-Token kommt aus der Umgebungsvariable `ADMIN_TOKEN`. Ist sie
-//! nicht gesetzt (vorerst der Normalfall), ist jeder Admin, ganz ohne Anmeldung.
-//! Ist sie gesetzt, muss man den Token eingeben.
+//! Admin-Rechte hängen am Account (Tabelle `accounts`, Spalte `is_admin`). Der
+//! Client weist sich mit seiner geheimen Spieler-Id aus (dieselbe wie in Lobby
+//! und Spiel; nach dem Anmelden gehört sie zum Account), per Kopfzeile
+//! `X-Player-Token` bzw. in `admin_login`.
 //!
-//! - `GET  /api/admin`    `{ "enabled": true, "open": bool }`: `open` = ohne Anmeldung
-//! - `POST /api/admin`    Token prüfen (Kopfzeile `X-Admin-Token`), 204 oder 401
+//! Admin ist, wessen Account `is_admin` hat oder dessen Name in `ADMIN_USERS`
+//! steht (durch Komma getrennt, ohne Rücksicht auf Groß-/Kleinschreibung). Wer
+//! in `ADMIN_USERS` steht, bekommt `is_admin` beim Start fest eingetragen; so
+//! setzt man den ersten Admin. Weitere per SQL:
+//! `UPDATE accounts SET is_admin = true WHERE lower(username) = lower('Name');`
+//!
+//! `ADMIN_OPEN=1` macht jeden zum Admin, ohne Anmeldung (Standard im
+//! Debug-Build `cargo run`, damit lokal alles ohne Datenbank geht; im
+//! Release-Build/Docker aus).
+//!
+//! - `GET  /api/admin`    `{ "enabled": bool, "open": bool }`: `open` = ohne Anmeldung
+//! - `POST /api/admin`    Ist dieser Spieler Admin? (Kopfzeile `X-Player-Token`), 204 oder 401
 //! - `GET  /api/games/{id}/players`  alle Spieler des Spiels: `[{ id, name, online, buildings }]`
 //! - `POST /api/games/{id}/players/{pid}/remove`  nur Admin: Reich eines (nicht verbundenen) Spielers entfernen
 //! - `POST /api/games/{id}/save`     nur Admin: Spiel jetzt speichern
@@ -29,6 +40,8 @@ use axum::{
     Json, Router,
 };
 use protocol::ServerMsg;
+use sqlx::PgPool;
+use tracing::{info, warn};
 
 use crate::{
     economy::Economy,
@@ -37,52 +50,104 @@ use crate::{
 };
 
 pub struct Admin {
-    token: Option<String>,
+    /// Jeder ist Admin, ohne Anmeldung.
+    open: bool,
+    /// Namen aus `ADMIN_USERS`, klein geschrieben.
+    users: Vec<String>,
+    db: Option<PgPool>,
     pub economy_file: PathBuf,
 }
 
 impl Admin {
-    pub fn from_env() -> Admin {
-        let token = std::env::var("ADMIN_TOKEN")
-            .ok()
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty());
+    pub async fn from_env(db: Option<PgPool>) -> Admin {
+        let open = match std::env::var("ADMIN_OPEN") {
+            Ok(v) => matches!(v.trim(), "1" | "true" | "yes" | "on"),
+            Err(_) => cfg!(debug_assertions),
+        };
+        let users = parse_users(&std::env::var("ADMIN_USERS").unwrap_or_default());
         let economy_file = std::env::var("ECONOMY_FILE")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
                 PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/data/economy.json"))
             });
+        if let (Some(db), false) = (&db, users.is_empty()) {
+            match sqlx::query("UPDATE accounts SET is_admin = true WHERE lower(username) = ANY($1) AND NOT is_admin")
+                .bind(&users)
+                .execute(db)
+                .await
+            {
+                Ok(r) if r.rows_affected() > 0 => info!("{} Account(s) aus ADMIN_USERS zu Admins gemacht", r.rows_affected()),
+                Ok(_) => {}
+                Err(e) => warn!("ADMIN_USERS eintragen: {e}"),
+            }
+        }
+        if open {
+            warn!("ADMIN_OPEN: jeder darf Admin-Menü und Balancing-Editor benutzen");
+        } else if db.is_none() {
+            warn!("Keine Datenbank: niemand ist Admin (Admin-Rechte hängen an Accounts)");
+        }
         Admin {
-            token,
+            open,
+            users,
+            db,
             economy_file,
         }
     }
 
-    /// Ohne `ADMIN_TOKEN` braucht es keine Anmeldung.
-    pub fn open(&self) -> bool {
-        self.token.is_none()
-    }
-
-    /// Stimmt der Token? Vergleich ohne früh abzubrechen, damit die Laufzeit nichts verrät.
-    pub fn check(&self, given: &str) -> bool {
-        let Some(token) = &self.token else {
-            return true;
-        };
-        let (a, b) = (token.as_bytes(), given.as_bytes());
-        let mut diff = a.len() ^ b.len();
-        for (i, &x) in a.iter().enumerate() {
-            diff |= (x ^ b.get(i).copied().unwrap_or(0)) as usize;
+    #[cfg(test)]
+    pub fn for_tests() -> Admin {
+        Admin {
+            open: false,
+            users: Vec::new(),
+            db: None,
+            economy_file: PathBuf::new(),
         }
-        diff == 0
     }
 
-    fn allows(&self, headers: &HeaderMap) -> bool {
-        self.open()
-            || headers
-                .get("x-admin-token")
-                .and_then(|v| v.to_str().ok())
-                .is_some_and(|t| self.check(t))
+    /// Jeder ist Admin, ohne Anmeldung.
+    pub fn open(&self) -> bool {
+        self.open
     }
+
+    /// Gibt es überhaupt einen Weg, Admin zu sein?
+    pub fn enabled(&self) -> bool {
+        self.open || self.db.is_some()
+    }
+
+    /// Ist der Spieler mit diesem Token Admin?
+    pub async fn check(&self, player_token: &str) -> bool {
+        if self.open {
+            return true;
+        }
+        let (Some(db), false) = (&self.db, player_token.is_empty()) else {
+            return false;
+        };
+        let row: Option<(String, bool)> =
+            sqlx::query_as("SELECT username, is_admin FROM accounts WHERE player_token = $1")
+                .bind(player_token)
+                .fetch_optional(db)
+                .await
+                .unwrap_or_else(|e| {
+                    warn!("Admin prüfen: {e}");
+                    None
+                });
+        row.is_some_and(|(name, is_admin)| is_admin || self.users.contains(&name.to_lowercase()))
+    }
+
+    async fn allows(&self, headers: &HeaderMap) -> bool {
+        let token = headers
+            .get("x-player-token")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        self.check(token).await
+    }
+}
+
+fn parse_users(list: &str) -> Vec<String> {
+    list.split(',')
+        .map(|u| u.trim().to_lowercase())
+        .filter(|u| !u.is_empty())
+        .collect()
 }
 
 pub fn router(hub: Arc<Hub>) -> Router {
@@ -100,11 +165,12 @@ pub fn router(hub: Arc<Hub>) -> Router {
 }
 
 async fn status(State(hub): State<Arc<Hub>>) -> Response {
-    Json(serde_json::json!({ "enabled": true, "open": hub.admin.open() })).into_response()
+    Json(serde_json::json!({ "enabled": hub.admin.enabled(), "open": hub.admin.open() }))
+        .into_response()
 }
 
 async fn login(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> StatusCode {
-    if hub.admin.allows(&headers) {
+    if hub.admin.allows(&headers).await {
         StatusCode::NO_CONTENT
     } else {
         StatusCode::UNAUTHORIZED
@@ -117,7 +183,7 @@ async fn load(State(hub): State<Arc<Hub>>) -> Response {
 }
 
 async fn save(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: String) -> Response {
-    if !hub.admin.allows(&headers) {
+    if !hub.admin.allows(&headers).await {
         return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
     }
     let economy = match Economy::parse(&body) {
@@ -157,7 +223,7 @@ async fn save(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: String) -> 
             economy: world.economy.def.clone(),
         });
     }
-    tracing::info!("Wirtschaftsdaten gespeichert: {}", path.display());
+    info!("Wirtschaftsdaten gespeichert: {}", path.display());
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -201,7 +267,7 @@ async fn remove_player(
     headers: HeaderMap,
     Path((id, pid)): Path<(u32, u32)>,
 ) -> Response {
-    if !hub.admin.allows(&headers) {
+    if !hub.admin.allows(&headers).await {
         return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
     }
     let (_, m) = match running(&hub, id) {
@@ -223,7 +289,7 @@ async fn save_now(
     headers: HeaderMap,
     Path(id): Path<u32>,
 ) -> Response {
-    if !hub.admin.allows(&headers) {
+    if !hub.admin.allows(&headers).await {
         return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
     }
     let (game, _) = match running(&hub, id) {
@@ -242,7 +308,7 @@ async fn load_now(
     headers: HeaderMap,
     Path(id): Path<u32>,
 ) -> Response {
-    if !hub.admin.allows(&headers) {
+    if !hub.admin.allows(&headers).await {
         return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
     }
     let (_, m) = match running(&hub, id) {
@@ -252,7 +318,7 @@ async fn load_now(
     match hub.load_world(id) {
         Ok(world) => {
             m.replace_world(world);
-            tracing::info!("Spiel {id}: Spielstand geladen");
+            info!("Spiel {id}: Spielstand geladen");
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => (StatusCode::UNPROCESSABLE_ENTITY, e).into_response(),
@@ -264,7 +330,7 @@ async fn new_game(
     headers: HeaderMap,
     Path(id): Path<u32>,
 ) -> Response {
-    if !hub.admin.allows(&headers) {
+    if !hub.admin.allows(&headers).await {
         return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
     }
     let (_, m) = match running(&hub, id) {
@@ -278,7 +344,7 @@ async fn new_game(
                 map,
                 hub.economy.lock().unwrap().clone(),
             ));
-            tracing::info!("Spiel {id}: neu angefangen");
+            info!("Spiel {id}: neu angefangen");
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -290,7 +356,7 @@ async fn end_game(
     headers: HeaderMap,
     Path(id): Path<u32>,
 ) -> Response {
-    if !hub.admin.allows(&headers) {
+    if !hub.admin.allows(&headers).await {
         return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
     }
     hub.end_game(id);
@@ -302,21 +368,24 @@ async fn end_game(
 mod tests {
     use super::*;
 
+    fn admin(open: bool) -> Admin {
+        Admin {
+            open,
+            users: parse_users(" Jan, ritter_kunibert ,,"),
+            db: None,
+            economy_file: PathBuf::new(),
+        }
+    }
+
     #[test]
-    fn token_wird_genau_verglichen() {
-        let admin = Admin {
-            token: Some("geheim".into()),
-            economy_file: PathBuf::new(),
-        };
-        assert!(admin.check("geheim"));
-        assert!(!admin.check("geheim2"));
-        assert!(!admin.check("gehei"));
-        assert!(!admin.check(""));
-        let none = Admin {
-            token: None,
-            economy_file: PathBuf::new(),
-        };
-        assert!(none.check(""), "ohne ADMIN_TOKEN ist jeder Admin");
-        assert!(none.allows(&HeaderMap::new()));
+    fn admin_namen_lesen() {
+        assert_eq!(admin(false).users, vec!["jan", "ritter_kunibert"]);
+    }
+
+    #[tokio::test]
+    async fn ohne_datenbank_niemand_ausser_offen() {
+        assert!(!admin(false).check("irgendein-token-1234").await);
+        assert!(!admin(false).allows(&HeaderMap::new()).await);
+        assert!(admin(true).check("").await, "ADMIN_OPEN: jeder ist Admin");
     }
 }

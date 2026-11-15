@@ -20,7 +20,7 @@ use tracing::{info, warn};
 
 #[tokio::main]
 async fn main() {
-    // Lokale Einstellungen (DATABASE_URL, ADMIN_TOKEN …) aus `.env`, falls vorhanden.
+    // Lokale Einstellungen (DATABASE_URL, ADMIN_USERS …) aus `.env`, falls vorhanden.
     let _ = dotenvy::dotenv();
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -29,14 +29,13 @@ async fn main() {
         .init();
 
     let store = Arc::new(maps_api::MapStore::from_env());
-    let admin = admin::Admin::from_env();
+    // Accounts zuerst: an ihnen hängen die Admin-Rechte.
+    let accounts = accounts::Accounts::from_env().await;
+    let admin = admin::Admin::from_env(accounts.pool()).await;
     let economy = economy::Economy::load(&admin.economy_file).unwrap_or_else(|e| {
         warn!("Wirtschaftsdaten ungültig ({e}), nehme die eingebauten");
         economy::Economy::parse(economy::ECONOMY_JSON).expect("eingebaute economy.json ist gültig")
     });
-    if admin.open() {
-        warn!("Kein ADMIN_TOKEN gesetzt: jeder darf Admin-Menü und Balancing-Editor benutzen");
-    }
     // Laufende Spiele liegen hier und werden beim Start fortgesetzt.
     let saves_dir = std::env::var("SAVES_DIR")
         .map(std::path::PathBuf::from)
@@ -45,7 +44,6 @@ async fn main() {
         });
     let hub = Arc::new(lobby::Hub::new(store.clone(), admin, economy, saves_dir));
     hub.restore();
-    let accounts = accounts::Accounts::from_env().await;
 
     let app = Router::new()
         .route("/lobby", get(lobby::ws_handler))
@@ -83,8 +81,7 @@ async fn shutdown_signal() {
     };
     #[cfg(unix)]
     let term = async {
-        if let Ok(mut s) =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         {
             s.recv().await;
         }

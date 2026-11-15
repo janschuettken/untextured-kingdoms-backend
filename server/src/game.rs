@@ -273,8 +273,6 @@ pub struct GameQuery {
     /// Nur Admin (zum Testen): als dieser Spieler des Spiels spielen.
     #[serde(rename = "as")]
     play_as: Option<u32>,
-    /// Admin-Token für `as` (ohne `ADMIN_TOKEN` am Server egal).
-    admin: Option<String>,
 }
 
 /// Die laufende Karte eines Spiels im Dateiformat mit aktuellem Stand (z. B. abgeholzter Wald).
@@ -312,13 +310,22 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
         .game
         .zip(q.token.as_deref())
         .and_then(|(id, token)| hub.membership(id, token));
-    // Admin "Spielen als": anderer Startplatz desselben Spiels.
+    // Admin "Spielen als": anderer Startplatz desselben Spiels (Admin ist, wem der eigene Token gehört).
+    let may_play_as =
+        q.play_as.is_some() && hub.admin.check(q.token.as_deref().unwrap_or("")).await;
     let found = found.and_then(|(game, state, seat)| {
-        let Some(pid) = q.play_as else { return Some((game, state, seat)) };
-        if !hub.admin.check(q.admin.as_deref().unwrap_or("")) {
+        let Some(pid) = q.play_as else {
+            return Some((game, state, seat));
+        };
+        if !may_play_as {
             return None;
         }
-        let spawn = *game.meta.lock().unwrap().spawns.get((pid as usize).checked_sub(1)?)?;
+        let spawn = *game
+            .meta
+            .lock()
+            .unwrap()
+            .spawns
+            .get((pid as usize).checked_sub(1)?)?;
         Some((game, state, (pid, spawn)))
     });
     let Some((game, state, (player_id, spawn))) = found else {
@@ -588,7 +595,7 @@ async fn handle_msg(
             }
         }
         ClientMsg::AdminLogin { token } => {
-            *is_admin = hub.admin.check(&token);
+            *is_admin = hub.admin.check(&token).await;
             let _ = out_tx.send(ServerMsg::AdminStatus { ok: *is_admin }).await;
         }
         ClientMsg::AdminGive { goods, taler } => {

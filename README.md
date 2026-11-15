@@ -220,15 +220,17 @@ Im Spiel gibt es ein Admin-Menü (Waren und Taler geben, Tempo) und den Balancin
 (`/balance.html` im Frontend), in dem man alle Werte aus `economy.json` ändert: Kosten, Stufen, Rezepte,
 Zeiten, Lager, Transport. Gespeichert wird auf dem Server, geprüft wie beim Start, und es gilt sofort für alle.
 
-Vorerst braucht es dafür keine Anmeldung: Ohne `ADMIN_TOKEN` ist jeder Admin (Login kommt später). Wer den Server
-öffentlich laufen lässt und das nicht will, setzt einen Token; dann muss man ihn im Admin-Menü eingeben. Den Token legst
-du selbst fest, er steht nirgends im Code.
+Admin-Rechte hängen am Account (Spalte `is_admin` in der Tabelle `accounts`). Admin-Menü, Balancing-Speichern und
+„Spielen als“ gehen nur, wenn man in der Lobby mit so einem Account angemeldet ist. Den ersten Admin setzt man über
+`ADMIN_USERS` (Namen durch Komma getrennt, z. B. `ADMIN_USERS=Jan` in `.env`): Wer so heißt, ist Admin und bekommt
+`is_admin` beim nächsten Start fest eingetragen. Weitere Admins per SQL:
+`UPDATE accounts SET is_admin = true WHERE lower(username) = lower('Name');`
 
-- Lokal (PowerShell): `$env:ADMIN_TOKEN = "dein-geheimes-wort"; cargo run -p server`
-- Lokal (bash): `ADMIN_TOKEN=dein-geheimes-wort cargo run -p server`
-- Docker: in `.env` die Zeile `ADMIN_TOKEN=...` setzen, dann `docker compose up -d`.
+Ohne Datenbank gibt es keine Accounts, also keine Admins. Für die lokale Entwicklung ist im Debug-Build (`cargo run`)
+deshalb jeder Admin (`ADMIN_OPEN`, Standard an im Debug-Build, aus im Release-Build/Docker; `ADMIN_OPEN=0` bzw. `1`
+überschreibt das).
 
-Im Spiel oben rechts auf „Admin“ klicken (mit Token: ihn eingeben, der Browser merkt ihn sich). Dort gibt es auch das
+Im Spiel oben rechts auf „Admin“ klicken. Dort gibt es auch das
 Lauftempo (König, Träger, Karren; wird in `economy.json` gespeichert) und das Spieltempo für alle (25–800 %,
 gilt bis zum Neustart des Servers).
 Gespeichert wird nach `ECONOMY_FILE`, lokal standardmäßig `server/data/economy.json` im Repo: so lassen sich
@@ -294,14 +296,15 @@ Container kompiliert. Die Schritt-für-Schritt-Anleitung für den VPS mit Apache
 Kurz:
 
 ```bash
-cp .env.example .env          # DB_PASSWORD und ADMIN_TOKEN setzen
+cp .env.example .env          # DB_PASSWORD und ADMIN_USERS setzen
 docker compose up -d --build  # Spiel läuft dann auf http://127.0.0.1:8081
 ./deploy/update.sh            # neue Version von dev holen und neu starten
 ```
 
 - `server`: das Rust-Programm (schlankes Debian-Image), nur intern erreichbar. Beim Stoppen speichert es
   alle laufenden Spiele (Volume `game_data`).
-- `db`: PostgreSQL für die Accounts (Volume `db_data`), nur intern erreichbar.
+- `db`: PostgreSQL für die Accounts (Volume `db_data`), nur auf `127.0.0.1:5433` (für DBeaver per SSH-Tunnel).
+- `adminer`: die Datenbank im Browser ansehen (wie phpMyAdmin), nur auf `127.0.0.1:8082`, per SSH-Tunnel.
 - `web`: aus dem Frontend-Repo gebaut. Caddy liefert den Client aus und reicht `/ws`, `/lobby` und `/api`
   an den Server weiter. Lauscht nur auf `127.0.0.1:8081`; HTTPS macht der Webserver davor
   (Apache-Beispiel: `deploy/apache-vhost.conf`).

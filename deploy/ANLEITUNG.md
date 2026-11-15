@@ -6,10 +6,11 @@ eingerichtet) und leitet alles an Docker weiter. In Docker laufen drei Container
 ```
 Browser ──https/wss──▶ Apache :443 ──▶ 127.0.0.1:8081  web (Caddy: Client-Dateien)
                                                          ├─ /api, /lobby, /ws ──▶ server (Rust, :8080 intern)
-                                                         └─────────────────────▶ db (PostgreSQL, intern)
+                                                         └─────────────────────▶ db (PostgreSQL)
+                         127.0.0.1:8082  adminer (Datenbank im Browser) ──────▶ db
 ```
 
-Von außen erreichbar ist nur Apache. Server und Datenbank haben gar keinen offenen Port, `web` nur auf 127.0.0.1.
+Von außen erreichbar ist nur Apache. `web`, `adminer` und die Datenbank lauschen nur auf 127.0.0.1, der Server gar nicht.
 
 ## 1. Docker prüfen (einmalig)
 
@@ -47,15 +48,13 @@ Sind die Repos privat, fragt Git nach Zugangsdaten. Dann als Passwort ein GitHub
 cd /opt/untextured-kingdoms/untextured-kingdoms-backend
 cp .env.example .env
 echo "DB_PASSWORD=$(openssl rand -hex 24)"
-echo "ADMIN_TOKEN=$(openssl rand -hex 16)"
 nano .env
 ```
 
-Die zwei ausgegebenen Zeilen in `.env` eintragen (die leeren Zeilen dort ersetzen). `DATABASE_URL` bleibt leer.
-
-- `DB_PASSWORD` brauchst du nie wieder von Hand, es muss nur gleich bleiben (nicht mehr ändern, sobald die
-  Datenbank angelegt ist).
-- `ADMIN_TOKEN` gibst du im Spiel im Admin-Menü ein. Ohne Token wäre jeder Besucher Admin.
+- Die ausgegebene Zeile `DB_PASSWORD=...` in `.env` eintragen. Es muss danach gleich bleiben (nicht mehr ändern,
+  sobald die Datenbank angelegt ist). Du brauchst es nur zum Anmelden in Adminer oder DBeaver.
+- `ADMIN_USERS=Jan` steht schon drin: Dein Account mit diesem Namen wird Admin (siehe Schritt 6).
+- `DATABASE_URL` bleibt leer.
 
 ## 4. Bauen und starten
 
@@ -121,6 +120,23 @@ Der Client nimmt dafür automatisch die Adresse der Seite (https → wss), da is
 Karteneditor (`/editor.html`) und Balancing (`/balance.html`) gehen auch; Karten speichern ist auf dem Server
 absichtlich aus.
 
+### Admin werden
+
+Admin-Rechte hängen am Account, ein Token gibt es nicht mehr.
+
+1. In der Lobby einen Account mit dem Namen aus `ADMIN_USERS` anlegen (z. B. `Jan`) und angemeldet bleiben.
+2. Fertig: Admin-Menü im Spiel und Speichern im Balancing gehen sofort. Beim nächsten Neustart wird `is_admin`
+   zusätzlich fest in die Datenbank geschrieben.
+
+Weitere Admins in Adminer (Tabelle `accounts`, Spalte `is_admin` auf `true`) oder per SQL:
+
+```bash
+docker compose exec db psql -U uk untextured_kingdoms -c "UPDATE accounts SET is_admin = true WHERE lower(username) = lower('Name');"
+```
+
+Wichtig: Wer in `ADMIN_USERS` steht, ist Admin, sobald es einen Account mit dem Namen gibt. Lege den Account also
+gleich nach dem ersten Start selbst an, bevor es jemand anderes tut.
+
 ## 7. Neue Version ausrollen
 
 ```bash
@@ -131,6 +147,36 @@ cd /opt/untextured-kingdoms/untextured-kingdoms-backend
 Das Skript holt in beiden Repos den neuesten Stand von `dev`, baut neu, startet neu, räumt alte Images auf und
 prüft am Ende, ob das Spiel antwortet. Laufende Spiele werden beim Stoppen gespeichert und laufen danach weiter;
 Spieler sehen kurz „verbinde neu“. Wartende Lobbys gehen beim Neustart verloren.
+
+## Datenbank ansehen
+
+Die Datenbank ist von außen nicht erreichbar. Du kommst über einen SSH-Tunnel von deinem PC aus dran.
+
+### Im Browser mit Adminer (wie phpMyAdmin)
+
+Auf deinem PC (PowerShell), Tunnel öffnen und offen lassen:
+
+```powershell
+ssh -L 8082:localhost:8082 dein-benutzer@untexturedkingdoms.jan-schuettken.de
+```
+
+Dann im Browser <http://localhost:8082> öffnen und anmelden:
+
+| Feld | Wert |
+| --- | --- |
+| System | PostgreSQL |
+| Server | `db` |
+| Benutzer | `uk` |
+| Passwort | `DB_PASSWORD` aus `.env` |
+| Datenbank | `untextured_kingdoms` |
+
+Die Accounts stehen in der Tabelle `accounts`. Tunnel schließen = Fenster mit `ssh` schließen.
+
+### Mit DBeaver (Programm auf dem PC)
+
+Neue Verbindung → PostgreSQL. Reiter „SSH“: SSH-Tunnel an, Host `untexturedkingdoms.jan-schuettken.de`, dein
+SSH-Benutzer und Passwort oder Schlüssel. Reiter „Main“: Host `127.0.0.1`, Port `5433`, Datenbank
+`untextured_kingdoms`, Benutzer `uk`, Passwort = `DB_PASSWORD`.
 
 ## Daten und Sicherung
 
@@ -153,7 +199,8 @@ docker compose exec -T db pg_dump -U uk untextured_kingdoms > accounts-$(date +%
 | --- | --- |
 | Browser zeigt „503 Service Unavailable“ | Container läuft nicht: `docker compose ps`, `docker compose logs --tail 50` |
 | Seite lädt, aber Lobby verbindet nie | WebSocket kommt nicht durch: `proxy_wstunnel` aktiv? `upgrade=websocket` in der ProxyPass-Zeile? Apache neu geladen? |
+| Admin-Menü sagt „Nur für Admins“ | In der Lobby angemeldet? Heißt der Account wie in `ADMIN_USERS`? Nach Änderung an `.env`: `docker compose up -d` |
 | `docker compose` meckert „DB_PASSWORD in .env setzen“ | `.env` fehlt oder `DB_PASSWORD=` ist leer |
 | Build bricht mit „killed“ ab | Zu wenig RAM, Swap anlegen (Schritt 1) |
 | Accounts gehen nicht, Log sagt „password authentication failed“ | `DB_PASSWORD` wurde nach dem ersten Start geändert. Altes Passwort wieder eintragen |
-| Port 8081 schon belegt | In `.env` `WEB_PORT=8082` setzen und in Apache die beiden `8081` ebenfalls ändern |
+| Port 8081 schon belegt | In `.env` `WEB_PORT=8083` setzen und in Apache die beiden `8081` ebenfalls ändern |
