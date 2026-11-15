@@ -1,10 +1,12 @@
 //! HTTP-Schnittstelle für den Karteneditor.
 //!
-//! - `GET  /api/maps`         Namen aller Karten im Kartenordner, `can_save`: darf dieser Spieler speichern?
+//! - `GET  /api/maps`         Namen aller Karten im Kartenordner, `can_save`/`can_delete`: darf dieser Spieler speichern/löschen?
 //! - `GET  /api/maps/{name}`  Kartendatei als Text
 //! - `POST /api/maps/check`   Text prüfen, liefert [`protocol::MapCheck`]
-//! - `PUT  /api/maps/{name}`  Karte speichern: nur Admins (Kopfzeile `X-Player-Token`, siehe `admin.rs`)
+//! - `PUT  /api/maps/{name}`  Karte speichern: nur Admins und Nutzer mit `can_edit_maps` (Kopfzeile `X-Player-Token`, siehe `admin.rs`)
 //!   und nur wenn nicht abgeschaltet ([`MapStore::can_save`])
+//! - `DELETE /api/maps/{name}` Karte löschen: nur Admins, nicht die letzte. Laufende Spiele haben ihre
+//!   Karte im Spielstand und laufen weiter.
 //! - `GET  /api/maps/generate?width=..&height=..&players=..&seed=..`  Zufallskarte erzeugen
 //!
 //! `GET /api/games/{id}/map` (die laufende Karte eines Spiels mit aktuellem Stand) liegt in `game.rs`.
@@ -38,7 +40,59 @@ impl MapStore {
             Ok("0") | Ok("false") | Ok("off") => false,
             _ => true,
         };
-        MapStore { dir, can_save }
+        let store = MapStore { dir, can_save };
+        // Docker: Karten aus dem Image ins Volume, wenn sie dort fehlen und nicht gelöscht wurden.
+        if let Ok(seed) = std::env::var("MAPS_SEED_DIR") {
+            store.seed_from(std::path::Path::new(&seed));
+        }
+        store
+    }
+
+    /// Hier merkt sich der Ordner gelöschte Karten (je Name eine leere Datei),
+    /// damit sie beim nächsten Start nicht aus `MAPS_SEED_DIR` wiederkommen.
+    fn deleted_dir(&self) -> PathBuf {
+        self.dir.join(".deleted")
+    }
+
+    fn seed_from(&self, seed: &std::path::Path) {
+        let Ok(entries) = std::fs::read_dir(seed) else {
+            return;
+        };
+        let _ = std::fs::create_dir_all(&self.dir);
+        for e in entries.flatten() {
+            let src = e.path();
+            let Some(name) = src
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .filter(|_| src.extension().is_some_and(|x| x == "txt"))
+            else {
+                continue;
+            };
+            let Some(dst) = self.path(name) else { continue };
+            if dst.exists() || self.deleted_dir().join(name).exists() {
+                continue;
+            }
+            match std::fs::copy(&src, &dst) {
+                Ok(_) => tracing::info!("Karte {name} aus {} übernommen", seed.display()),
+                Err(e) => tracing::warn!("Karte {name} übernehmen: {e}"),
+            }
+        }
+    }
+
+    /// Karte löschen und als gelöscht merken.
+    pub fn delete(&self, name: &str) -> Result<(), (StatusCode, String)> {
+        let path = self
+            .path(name)
+            .filter(|p| p.exists())
+            .ok_or((StatusCode::NOT_FOUND, "Karte nicht gefunden".to_string()))?;
+        if self.names().len() <= 1 {
+            return Err((StatusCode::CONFLICT, "Die letzte Karte bleibt".to_string()));
+        }
+        let err = |e: std::io::Error| (StatusCode::INTERNAL_SERVER_ERROR, format!("Löschen fehlgeschlagen: {e}"));
+        std::fs::create_dir_all(self.deleted_dir()).map_err(err)?;
+        std::fs::write(self.deleted_dir().join(name), "").map_err(err)?;
+        std::fs::remove_file(path).map_err(err)?;
+        Ok(())
     }
 
     pub fn path(&self, name: &str) -> Option<PathBuf> {
@@ -62,20 +116,21 @@ pub fn router<S: Clone + Send + Sync + 'static>(hub: Arc<Hub>) -> Router<S> {
         .route("/api/maps", get(list))
         .route("/api/maps/check", post(check))
         .route("/api/maps/generate", get(generate))
-        .route("/api/maps/{name}", get(load).put(save))
+        .route("/api/maps/{name}", get(load).put(save).delete(remove))
         // 1024 × 1024 Felder mit Ressourcen sind gut 2 MB Text.
         .layer(DefaultBodyLimit::max(8 * 1024 * 1024))
         .with_state(hub)
 }
 
-/// Darf der Spieler hinter dieser Anfrage Karten speichern?
-async fn may_save(hub: &Hub, headers: &HeaderMap) -> bool {
-    hub.store.can_save && hub.admin.check(header_token(headers)).await
-}
-
 async fn list(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
-    let can_save = may_save(&hub, &headers).await;
-    Json(serde_json::json!({ "maps": hub.store.names(), "can_save": can_save })).into_response()
+    let r = hub.admin.rights(header_token(&headers)).await;
+    let on = hub.store.can_save;
+    Json(serde_json::json!({
+        "maps": hub.store.names(),
+        "can_save": on && (r.admin || r.maps),
+        "can_delete": on && r.admin,
+    }))
+    .into_response()
 }
 
 impl MapStore {
@@ -142,8 +197,8 @@ async fn save(
         return (StatusCode::FORBIDDEN, "Speichern ist auf diesem Server abgeschaltet (MAP_EDITOR_SAVE)")
             .into_response();
     }
-    if !hub.admin.check(header_token(&headers)).await {
-        return (StatusCode::UNAUTHORIZED, "Karten speichern nur für Admins").into_response();
+    if !hub.admin.can_edit_maps(header_token(&headers)).await {
+        return (StatusCode::UNAUTHORIZED, "Karten speichern nur mit Recht „Karteneditor“").into_response();
     }
     let Some(path) = store.path(&name) else {
         return (StatusCode::BAD_REQUEST, "Ungültiger Name: nur a-z, 0-9, - und _").into_response();
@@ -152,9 +207,28 @@ async fn save(
     if !result.errors.is_empty() {
         return (StatusCode::UNPROCESSABLE_ENTITY, Json(result)).into_response();
     }
+    // Wer eine gelöschte Karte neu speichert, will sie wieder haben.
+    let _ = std::fs::remove_file(store.deleted_dir().join(&name));
     if let Err(e) = std::fs::create_dir_all(&store.dir).and_then(|_| std::fs::write(&path, body)) {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Speichern fehlgeschlagen: {e}")).into_response();
     }
     tracing::info!("Karte {name} gespeichert");
     Json(result).into_response()
+}
+
+async fn remove(State(hub): State<Arc<Hub>>, headers: HeaderMap, Path(name): Path<String>) -> Response {
+    if !hub.store.can_save {
+        return (StatusCode::FORBIDDEN, "Karten ändern ist auf diesem Server abgeschaltet (MAP_EDITOR_SAVE)")
+            .into_response();
+    }
+    if !hub.admin.check(header_token(&headers)).await {
+        return (StatusCode::UNAUTHORIZED, "Karten löschen nur für Admins").into_response();
+    }
+    match hub.store.delete(&name) {
+        Ok(()) => {
+            tracing::info!("Karte {name} gelöscht");
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err((status, msg)) => (status, msg).into_response(),
+    }
 }

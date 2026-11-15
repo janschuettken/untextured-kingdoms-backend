@@ -15,11 +15,13 @@ COPY server/maps /usr/local/share/untextured-kingdoms/maps
 USER game
 ENV PORT=8080
 # Karten liegen im Volume, damit im Editor gespeicherte Karten Updates überleben.
-# Beim Start kommen Karten aus dem Repo dazu, die dort noch fehlen (vorhandene bleiben unangetastet).
+# Beim Start kommen Karten aus dem Repo dazu, die dort fehlen (vorhandene bleiben unangetastet,
+# im Editor gelöschte kommen nicht wieder).
 ENV MAPS_DIR=/data/maps
+ENV MAPS_SEED_DIR=/usr/local/share/untextured-kingdoms/maps
 # Balancing aus dem Editor landet hier (Volume), fehlt die Datei, gelten die eingebauten Werte.
 ENV ECONOMY_FILE=/data/economy.json
 # Laufende Spiele (je Spiel eine Datei), werden beim Start fortgesetzt.
 ENV SAVES_DIR=/data/games
 EXPOSE 8080
-CMD ["sh", "-c", "mkdir -p /data/maps && (cp -rn /usr/local/share/untextured-kingdoms/maps/. /data/maps/ || true) && exec server"]
+CMD ["server"]

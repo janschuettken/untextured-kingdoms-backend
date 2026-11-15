@@ -17,11 +17,13 @@
 //!
 //! - `GET  /api/admin`    `{ "enabled": bool, "open": bool }`: `open` = ohne Anmeldung
 //! - `POST /api/admin`    Ist dieser Spieler Admin? (Kopfzeile `X-Player-Token`), 204 oder 401
-//! - `GET  /api/admin/users`  nur Admin: alle Accounts `[{ id, username, admin, fixed, created, last_login, game }]`
+//! - `GET  /api/admin/users`  nur Admin: alle Accounts `[{ id, username, admin, fixed, maps, created, last_login, game }]`
 //!   (`fixed` = steht in `ADMIN_USERS`, bleibt Admin)
 //!   (Zeiten in Unix-Sekunden, `game` = Spiel, in dem der Account gerade einen Platz hat)
 //! - `POST /api/admin/users/{id}/impersonate`  nur Admin: als dieser Nutzer anmelden → `{ username, token }`
 //! - `POST /api/admin/users/{id}/admin`  nur Admin: `{ admin: bool }` Admin-Recht setzen (nicht bei sich selbst)
+//! - `POST /api/admin/users/{id}/maps`   nur Admin: `{ allowed: bool }` Karteneditor freischalten (`can_edit_maps`)
+//! - `POST /api/rights`  Rechte des Spielers (Kopfzeile `X-Player-Token`): `{ admin, maps }`
 //! - `GET  /api/games/{id}/players`  alle Spieler des Spiels: `[{ id, name, online, buildings }]`
 //! - `POST /api/games/{id}/players/{pid}/remove`  nur Admin: Reich eines (nicht verbundenen) Spielers entfernen
 //! - `POST /api/games/{id}/save`     nur Admin: Spiel jetzt speichern
@@ -123,27 +125,56 @@ impl Admin {
 
     /// Ist der Spieler mit diesem Token Admin?
     pub async fn check(&self, player_token: &str) -> bool {
+        self.rights(player_token).await.admin
+    }
+
+    /// Darf der Spieler mit diesem Token Karten speichern (Admin oder `can_edit_maps`)?
+    pub async fn can_edit_maps(&self, player_token: &str) -> bool {
+        let r = self.rights(player_token).await;
+        r.admin || r.maps
+    }
+
+    /// Rechte des Spielers mit diesem Token.
+    pub async fn rights(&self, player_token: &str) -> Rights {
         if self.open {
-            return true;
+            return Rights {
+                admin: true,
+                maps: true,
+            };
         }
         let (Some(db), false) = (&self.db, player_token.is_empty()) else {
-            return false;
+            return Rights::default();
         };
-        let row: Option<(String, bool)> =
-            sqlx::query_as("SELECT username, is_admin FROM accounts WHERE player_token = $1")
-                .bind(player_token)
-                .fetch_optional(db)
-                .await
-                .unwrap_or_else(|e| {
-                    warn!("Admin prüfen: {e}");
-                    None
-                });
-        row.is_some_and(|(name, is_admin)| is_admin || self.users.contains(&name.to_lowercase()))
+        let row: Option<(String, bool, bool)> = sqlx::query_as(
+            "SELECT username, is_admin, can_edit_maps FROM accounts WHERE player_token = $1",
+        )
+        .bind(player_token)
+        .fetch_optional(db)
+        .await
+        .unwrap_or_else(|e| {
+            warn!("Rechte prüfen: {e}");
+            None
+        });
+        match row {
+            Some((name, is_admin, maps)) => Rights {
+                admin: is_admin || self.users.contains(&name.to_lowercase()),
+                maps,
+            },
+            None => Rights::default(),
+        }
     }
 
     async fn allows(&self, headers: &HeaderMap) -> bool {
         self.check(header_token(headers)).await
     }
+}
+
+/// Was ein Spieler darf.
+#[derive(Default, Clone, Copy)]
+pub struct Rights {
+    pub admin: bool,
+    /// Karteneditor (Karten speichern).
+    pub maps: bool,
 }
 
 pub fn header_token(headers: &HeaderMap) -> &str {
@@ -166,6 +197,8 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/api/admin/users", get(list_users))
         .route("/api/admin/users/{id}/impersonate", post(impersonate))
         .route("/api/admin/users/{id}/admin", post(set_admin))
+        .route("/api/admin/users/{id}/maps", post(set_maps))
+        .route("/api/rights", post(rights))
         .route("/api/economy", get(load).put(save))
         .route("/api/economy/file", get(download))
         .route("/api/games/{id}/players", get(players))
@@ -210,7 +243,7 @@ fn db_error(e: sqlx::Error) -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, "account.error").into_response()
 }
 
-type UserRow = (i64, String, bool, i64, Option<i64>, String);
+type UserRow = (i64, String, bool, bool, i64, Option<i64>, String);
 
 async fn list_users(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
     let db = match admin_db(&hub, &headers).await {
@@ -218,7 +251,7 @@ async fn list_users(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response
         Err(r) => return r,
     };
     let rows: Vec<UserRow> = match sqlx::query_as(
-        "SELECT id, username, is_admin, extract(epoch FROM created_at)::bigint, \
+        "SELECT id, username, is_admin, can_edit_maps, extract(epoch FROM created_at)::bigint, \
          extract(epoch FROM last_login)::bigint, player_token FROM accounts ORDER BY lower(username)",
     )
     .fetch_all(&db)
@@ -229,12 +262,12 @@ async fn list_users(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response
     };
     let list: Vec<_> = rows
         .into_iter()
-        .map(|(id, username, is_admin, created, last_login, token)| {
+        .map(|(id, username, is_admin, maps, created, last_login, token)| {
             // Über ADMIN_USERS ist man immer Admin, egal was in der Tabelle steht.
             let fixed = hub.admin.users.contains(&username.to_lowercase());
             let game = hub.game_of(&token).map(|g| g.id);
             serde_json::json!({
-                "id": id, "username": username, "admin": is_admin || fixed, "fixed": fixed,
+                "id": id, "username": username, "admin": is_admin || fixed, "fixed": fixed, "maps": maps,
                 "created": created, "last_login": last_login, "game": game,
             })
         })
@@ -313,7 +346,10 @@ async fn download(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
     let text = hub.economy.lock().unwrap().to_json();
     (
         [
-            (axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8"),
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/json; charset=utf-8",
+            ),
             (
                 axum::http::header::CONTENT_DISPOSITION,
                 "attachment; filename=\"economy.json\"",
@@ -322,6 +358,41 @@ async fn download(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
         text,
     )
         .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct SetMaps {
+    allowed: bool,
+}
+
+async fn set_maps(
+    State(hub): State<Arc<Hub>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<SetMaps>,
+) -> Response {
+    let db = match admin_db(&hub, &headers).await {
+        Ok(db) => db,
+        Err(r) => return r,
+    };
+    match sqlx::query("UPDATE accounts SET can_edit_maps = $1 WHERE id = $2")
+        .bind(body.allowed)
+        .bind(id)
+        .execute(&db)
+        .await
+    {
+        Ok(r) if r.rows_affected() == 0 => (StatusCode::NOT_FOUND, "admin.no_user").into_response(),
+        Ok(_) => {
+            info!("Account {id}: Karteneditor = {}", body.allowed);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => db_error(e),
+    }
+}
+
+async fn rights(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
+    let r = hub.admin.rights(header_token(&headers)).await;
+    Json(serde_json::json!({ "admin": r.admin, "maps": r.admin || r.maps })).into_response()
 }
 
 async fn load(State(hub): State<Arc<Hub>>) -> Response {

@@ -185,7 +185,10 @@ Gebaut für 1000 × 1000 Felder mit etwa 8 Spielern:
 - `cargo test --release -p server -- --ignored --nocapture` erzeugt und prüft eine 1000er-Karte mit
   8 Spielern und gibt die Zeiten aus.
 
-Speichern dürfen nur Admins (wie beim Balancing, siehe „Admin und Balancing“; lokal im Debug-Build jeder).
+Speichern dürfen Admins und Nutzer mit dem Recht „Karteneditor“ (`accounts.can_edit_maps`, schaltet ein Admin auf
+der Admin-Seite frei; lokal im Debug-Build jeder). Den Link zum Editor gibt es nur in der Lobby und nur für sie.
+Löschen (`DELETE /api/maps/{name}`) dürfen nur Admins; die letzte Karte bleibt. Gelöschte Karten merkt sich der
+Kartenordner in `.deleted/`, damit sie nicht aus `MAPS_SEED_DIR` (in Docker die Karten aus dem Image) wiederkommen.
 `MAP_EDITOR_SAVE=0` schaltet Speichern ganz ab. In Docker liegen die Karten im Volume `game_data` (`/data/maps`),
 damit gespeicherte Karten Updates überleben; beim Start kommen Karten aus dem Repo dazu, die dort noch fehlen.
 Eine Karte, die es schon im Volume gibt, wird vom Repo nicht überschrieben.
@@ -233,7 +236,7 @@ deshalb jeder Admin (`ADMIN_OPEN`, Standard an im Debug-Build, aus im Release-Bu
 überschreibt das).
 
 Nutzerverwaltung: In der Lobby sehen Admins oben den Link „Admin“ (`/admin.html`): alle Accounts, Admin-Recht
-geben/nehmen und „Anmelden als“ (der Browser übernimmt den Spieler-Token des Nutzers und merkt sich den eigenen; in der
+geben/nehmen, Karteneditor erlauben/sperren und „Anmelden als“ (der Browser übernimmt den Spieler-Token des Nutzers und merkt sich den eigenen; in der
 Lobby geht es mit „Zurück zu …“ zurück). Schnittstelle: `/api/admin/users…` in `server/src/admin.rs`.
 
 Im Spiel oben rechts auf „Admin“ klicken. Dort gibt es auch das

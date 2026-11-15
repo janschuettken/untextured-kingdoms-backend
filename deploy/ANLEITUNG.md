@@ -117,7 +117,9 @@ sudo systemctl reload apache2
 Entwicklertools (F12 → Netzwerk → „WS“) siehst du `wss://untexturedkingdoms.jan-schuettken.de/lobby` mit Status 101.
 Der Client nimmt dafür automatisch die Adresse der Seite (https → wss), da ist nichts einzustellen.
 
-Karteneditor (`/editor.html`) und Balancing (`/balance.html`) gehen auch. Speichern darf in beiden nur ein Admin.
+Balancing (`/balance.html`) speichern darf nur ein Admin. Den Karteneditor (Link in der Lobby) sehen nur Admins und
+Nutzer, denen ein Admin auf der Admin-Seite „Karteneditor erlauben“ gegeben hat. Karten löschen (Knopf „Löschen“
+im Editor) dürfen nur Admins; die letzte Karte bleibt immer, gelöschte Karten kommen auch bei Updates nicht wieder.
 Im Editor gespeicherte Karten liegen im Volume `game_data` und überleben Updates. Neue Karten aus dem Repo kommen
 beim Start dazu, eine gleichnamige Karte im Volume wird aber nicht überschrieben.
 
@@ -130,7 +132,7 @@ Admin-Rechte hängen am Account, ein Token gibt es nicht mehr.
    zusätzlich fest in die Datenbank geschrieben.
 
 Als Admin siehst du in der Lobby oben den Link **Admin** (`/admin.html`). Dort stehen alle Nutzer. Du kannst
-anderen Admin-Rechte geben oder nehmen und dich mit „Anmelden als“ als jeder Nutzer anmelden. In der Lobby steht
+anderen Admin-Rechte oder den Karteneditor geben oder nehmen und dich mit „Anmelden als“ als jeder Nutzer anmelden. In der Lobby steht
 dann oben „Zurück zu Jan“, damit kommst du wieder in deinen eigenen Account.
 
 Weitere Admins gehen auch in Adminer (Tabelle `accounts`, Spalte `is_admin` auf `true`) oder per SQL:
