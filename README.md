@@ -10,7 +10,8 @@ mit Multiplayer-Fokus. Der Browser-Client liegt in
 server/     Spielserver in Rust (tokio + axum): Lobby unter /lobby, jedes Spiel mit eigenem Thread unter /ws (20 Ticks/s)
 protocol/   Netzwerk-Nachrichten zwischen Server und Client (einzige Quelle der Wahrheit)
 Dockerfile          baut das Server-Image
-docker-compose.yml  startet das komplette Spiel (Server + Frontend mit Caddy)
+docker-compose.yml  startet das komplette Spiel (Server + Datenbank + Frontend mit Caddy)
+deploy/             Anleitung, Apache-vHost und Update-Skript für den VPS
 ```
 
 Aktueller Stand: Der Server lädt die Karte aus `server/maps/zwei-burgen.txt`, schickt sie jedem neuen
@@ -286,57 +287,27 @@ Nachrichten werden nur in `protocol/src/lib.rs` definiert. Ablauf bei einer Änd
 
 ## Deployment mit Docker
 
-Auf dem Server brauchst du **nur Docker und Git**, kein Rust und kein Node.
-Alles wird beim Bauen im Container kompiliert.
+Auf dem Server brauchst du **nur Docker und Git**, kein Rust und kein Node. Alles wird beim Bauen im
+Container kompiliert. Die Schritt-für-Schritt-Anleitung für den VPS mit Apache steht in
+[`deploy/ANLEITUNG.md`](deploy/ANLEITUNG.md).
 
-### 1. Docker installieren (einmalig, Linux-Server z. B. Ubuntu/Debian)
-
-```bash
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER   # danach einmal ab- und wieder anmelden
-docker --version
-docker compose version
-```
-
-Für lokale Tests auf Windows/macOS gibt es Docker Desktop: <https://www.docker.com/products/docker-desktop/>
-
-### 2. Repos holen und konfigurieren
-
-Beide Repos nebeneinander klonen (siehe oben), dann:
+Kurz:
 
 ```bash
-cd untextured-kingdoms-backend
-cp .env.example .env
+cp .env.example .env          # DB_PASSWORD und ADMIN_TOKEN setzen
+docker compose up -d --build  # Spiel läuft dann auf http://127.0.0.1:8081
+./deploy/update.sh            # neue Version von dev holen und neu starten
 ```
 
-In `.env` setzt du `SITE_ADDRESS`:
-
-- `:80` zum Testen ohne Domain (nur HTTP, Aufruf über die Server-IP)
-- deine Domain, z. B. `rts.example.de`, für automatisches HTTPS über Let's Encrypt.
-  Die Domain muss per DNS-A-Record auf den Server zeigen und die Ports 80 und 443 müssen offen sein.
-
-### 3. Bauen und starten
-
-```bash
-docker compose up -d --build
-```
-
-Der erste Build dauert ein paar Minuten (Rust kompiliert alles), danach geht es schneller.
-
-### Nützliche Befehle
+- `server`: das Rust-Programm (schlankes Debian-Image), nur intern erreichbar. Beim Stoppen speichert es
+  alle laufenden Spiele (Volume `game_data`).
+- `db`: PostgreSQL für die Accounts (Volume `db_data`), nur intern erreichbar.
+- `web`: aus dem Frontend-Repo gebaut. Caddy liefert den Client aus und reicht `/ws`, `/lobby` und `/api`
+  an den Server weiter. Lauscht nur auf `127.0.0.1:8081`; HTTPS macht der Webserver davor
+  (Apache-Beispiel: `deploy/apache-vhost.conf`).
 
 ```bash
 docker compose ps               # Was läuft?
 docker compose logs -f server   # Server-Logs live ansehen
-docker compose down             # Alles stoppen
-
-# Neue Version ausrollen
-git pull && git -C ../untextured-kingdoms-frontend pull && docker compose up -d --build
+docker compose down             # Alles stoppen (Daten bleiben in den Volumes)
 ```
-
-### Was dabei passiert
-
-- `server`: Das Rust-Programm läuft in einem schlanken Debian-Image (ca. 30 MB) und ist nur intern erreichbar.
-- `db`: PostgreSQL für die Accounts (Volume `db_data`).
-- `web`: wird aus dem Frontend-Repo gebaut. Caddy liefert den Client aus, leitet `/ws` und `/lobby` an den Server weiter
-  und kümmert sich um HTTPS-Zertifikate.

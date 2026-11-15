@@ -225,6 +225,17 @@ impl Hub {
             .map_err(|e| format!("{}: {e}", path.display()))
     }
 
+    /// Alle laufenden Spiele speichern (beim Herunterfahren des Servers).
+    pub fn save_all(&self) {
+        let games: Vec<Arc<Game>> = self.games.lock().unwrap().values().cloned().collect();
+        for game in games {
+            match self.save_game(&game) {
+                Ok(()) => info!("Spiel {} gespeichert", game.id),
+                Err(e) => warn!("Spiel {}: Speichern beim Beenden fehlgeschlagen: {e}", game.id),
+            }
+        }
+    }
+
     /// Welt aus der Spieldatei neu laden (Admin: "Laden").
     pub fn load_world(&self, id: u32) -> Result<World, String> {
         let path = self.save_path(id);

@@ -54,7 +54,7 @@ async fn main() {
         .route("/api/games/{id}/map", get(game::current_map))
         .with_state(hub.clone())
         .merge(maps_api::router(store))
-        .merge(admin::router(hub))
+        .merge(admin::router(hub.clone()))
         .merge(accounts::router(accounts));
 
     let port: u16 = std::env::var("PORT")
@@ -67,5 +67,32 @@ async fn main() {
         game::TICK_RATE
     );
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    // Bei Strg+C oder SIGTERM (docker stop) erst alle Spiele speichern, dann beenden.
+    // Offene WebSockets halten den Server nicht auf: nach dem Signal sofort speichern und beenden.
+    tokio::select! {
+        r = axum::serve(listener, app) => r.unwrap(),
+        _ = shutdown_signal() => {},
+    }
+    info!("Server wird beendet, speichere laufende Spiele");
+    hub.save_all();
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let term = async {
+        if let Ok(mut s) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            s.recv().await;
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = term => {},
+    }
 }

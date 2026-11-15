@@ -1,18 +1,24 @@
 # Startet das komplette Spiel. Erwartet das Frontend-Repo direkt daneben:
 #   ./untextured-kingdoms-backend   (dieses Repo)
 #   ./untextured-kingdoms-frontend
+#
+# Nach außen geht nur der Dienst "web", und auch der nur auf 127.0.0.1 (Standard Port 8081).
+# HTTPS macht der Webserver davor (bei uns Apache, siehe deploy/apache-vhost.conf).
 services:
   server:
     build: .
     restart: unless-stopped
+    # Beim Stoppen speichert der Server alle laufenden Spiele, dafür etwas Zeit lassen.
+    stop_grace_period: 30s
     environment:
       RUST_LOG: info
-      # Admin-Menü und Balancing-Editor: Token in .env setzen, leer = aus.
+      # Admin-Menü und Balancing-Editor: Token in .env setzen, leer = jeder ist Admin.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       # Accounts: eigene DATABASE_URL oder der Dienst "db" unten.
-      DATABASE_URL: ${DATABASE_URL:-postgres://uk:${DB_PASSWORD:-uk}@db:5432/untextured_kingdoms}
+      DATABASE_URL: ${DATABASE_URL:-postgres://uk:${DB_PASSWORD:?DB_PASSWORD in .env setzen}@db:5432/untextured_kingdoms}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - game_data:/data
 
@@ -21,8 +27,13 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: uk
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-uk}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD in .env setzen}
       POSTGRES_DB: untextured_kingdoms
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uk -d untextured_kingdoms"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     volumes:
       - db_data:/var/lib/postgresql/data
 
@@ -32,17 +43,9 @@ services:
     depends_on:
       - server
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    environment:
-      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
-    volumes:
-      - caddy_data:/data
-      - caddy_config:/config
+      # Nur lokal erreichbar; Apache leitet https://<domain>/ hierher weiter.
+      - "127.0.0.1:${WEB_PORT:-8081}:80"
 
 volumes:
   game_data:
   db_data:
-  caddy_data:
-  caddy_config:
