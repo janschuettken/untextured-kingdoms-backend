@@ -13,4 +13,8 @@ carrying: Good | null,
 /**
  * Läuft oben auf der Mauer (Wehrgang) statt am Boden.
  */
-on_wall: boolean, };
+on_wall: boolean, 
+/**
+ * Arbeiter ist in seinem Gebäude (steht dort und arbeitet): außen nicht zu sehen.
+ */
+inside: boolean, };

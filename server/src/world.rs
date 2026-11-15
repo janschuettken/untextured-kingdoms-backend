@@ -126,6 +126,8 @@ pub struct World {
     pay_timer: HashMap<u32, f32>,
     /// Spieler, deren Sold am letzten Zahltag nicht gereicht hat.
     unpaid: HashSet<u32>,
+    /// Neue Betriebe: trägt der Arbeiter selbst? Im Spiel immer ja; Tests für Träger schalten es ab.
+    pub(crate) worker_carries_default: bool,
     /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
     hub_goods: HashMap<u32, storage::HubGoods>,
 }
@@ -190,6 +192,7 @@ impl World {
             pay_timer: HashMap::new(),
             unpaid: HashSet::new(),
             hub_goods: HashMap::new(),
+            worker_carries_default: true,
         }
     }
 
@@ -372,7 +375,7 @@ impl World {
             stores: None,
             keep_in_stock: Vec::new(),
             gate: GateMode::Auto,
-            worker_carries: false,
+            worker_carries: self.worker_carries_default,
             stop_at: Vec::new(),
         };
         let status = if settings.recipe.is_some() { BuildingStatus::Working } else { BuildingStatus::Idle };
@@ -893,8 +896,23 @@ impl World {
                 moving: !u.path.is_empty(),
                 carrying: u.carrying.map(|g| g.good),
                 on_wall: u.on_wall,
+                inside: self.inside(u),
             })
             .collect()
+    }
+
+    /// Arbeiter steht ohne Weg und Last an seinem Gebäude: er ist drinnen.
+    fn inside(&self, u: &Unit) -> bool {
+        if u.kind != UnitKind::Worker || !u.path.is_empty() || u.carrying.is_some() {
+            return false;
+        }
+        if matches!(u.gather, Some(gather::Gather::Working { .. } | gather::Gather::ToTile(_))) {
+            return false;
+        }
+        let Some(b) = u.home.and_then(|h| self.buildings.iter().find(|b| b.id == h)) else { return false };
+        let dx = (b.x as f32 - u.pos.0).max(u.pos.0 - (b.x + b.w) as f32).max(0.0);
+        let dy = (b.y as f32 - u.pos.1).max(u.pos.1 - (b.y + b.h) as f32).max(0.0);
+        dx * dx + dy * dy <= 2.0 * 2.0
     }
 }
 
