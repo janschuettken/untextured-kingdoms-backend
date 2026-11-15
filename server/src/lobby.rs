@@ -171,7 +171,7 @@ impl Hub {
     }
 
     /// Das Spiel, in dem dieser Token einen Platz hat.
-    fn game_of(&self, token: &str) -> Option<Arc<Game>> {
+    pub fn game_of(&self, token: &str) -> Option<Arc<Game>> {
         let games: Vec<Arc<Game>> = self.games.lock().unwrap().values().cloned().collect();
         games
             .into_iter()

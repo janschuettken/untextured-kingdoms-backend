@@ -117,10 +117,11 @@ sudo systemctl reload apache2
 Entwicklertools (F12 → Netzwerk → „WS“) siehst du `wss://untexturedkingdoms.jan-schuettken.de/lobby` mit Status 101.
 Der Client nimmt dafür automatisch die Adresse der Seite (https → wss), da ist nichts einzustellen.
 
-Karteneditor (`/editor.html`) und Balancing (`/balance.html`) gehen auch; Karten speichern ist auf dem Server
-absichtlich aus.
+Karteneditor (`/editor.html`) und Balancing (`/balance.html`) gehen auch. Speichern darf in beiden nur ein Admin.
+Im Editor gespeicherte Karten liegen im Volume `game_data` und überleben Updates. Neue Karten aus dem Repo kommen
+beim Start dazu, eine gleichnamige Karte im Volume wird aber nicht überschrieben.
 
-### Admin werden
+### Admin werden und Nutzer verwalten
 
 Admin-Rechte hängen am Account, ein Token gibt es nicht mehr.
 
@@ -128,7 +129,11 @@ Admin-Rechte hängen am Account, ein Token gibt es nicht mehr.
 2. Fertig: Admin-Menü im Spiel und Speichern im Balancing gehen sofort. Beim nächsten Neustart wird `is_admin`
    zusätzlich fest in die Datenbank geschrieben.
 
-Weitere Admins in Adminer (Tabelle `accounts`, Spalte `is_admin` auf `true`) oder per SQL:
+Als Admin siehst du in der Lobby oben den Link **Admin** (`/admin.html`). Dort stehen alle Nutzer. Du kannst
+anderen Admin-Rechte geben oder nehmen und dich mit „Anmelden als“ als jeder Nutzer anmelden. In der Lobby steht
+dann oben „Zurück zu Jan“, damit kommst du wieder in deinen eigenen Account.
+
+Weitere Admins gehen auch in Adminer (Tabelle `accounts`, Spalte `is_admin` auf `true`) oder per SQL:
 
 ```bash
 docker compose exec db psql -U uk untextured_kingdoms -c "UPDATE accounts SET is_admin = true WHERE lower(username) = lower('Name');"

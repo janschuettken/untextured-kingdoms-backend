@@ -1,9 +1,10 @@
 //! HTTP-Schnittstelle für den Karteneditor.
 //!
-//! - `GET  /api/maps`         Namen aller Karten im Kartenordner
+//! - `GET  /api/maps`         Namen aller Karten im Kartenordner, `can_save`: darf dieser Spieler speichern?
 //! - `GET  /api/maps/{name}`  Kartendatei als Text
 //! - `POST /api/maps/check`   Text prüfen, liefert [`protocol::MapCheck`]
-//! - `PUT  /api/maps/{name}`  Karte speichern (nur wenn erlaubt, siehe [`MapStore::can_save`])
+//! - `PUT  /api/maps/{name}`  Karte speichern: nur Admins (Kopfzeile `X-Player-Token`, siehe `admin.rs`)
+//!   und nur wenn nicht abgeschaltet ([`MapStore::can_save`])
 //! - `GET  /api/maps/generate?width=..&height=..&players=..&seed=..`  Zufallskarte erzeugen
 //!
 //! `GET /api/games/{id}/map` (die laufende Karte eines Spiels mit aktuellem Stand) liegt in `game.rs`.
@@ -12,19 +13,19 @@ use std::{path::PathBuf, sync::Arc};
 
 use axum::{
     extract::{DefaultBodyLimit, Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 
-use crate::map::GameMap;
+use crate::{admin::header_token, lobby::Hub, map::GameMap};
 
 /// Ort der Kartendateien.
 pub struct MapStore {
     pub dir: PathBuf,
-    /// Speichern über die API erlaubt? Standard: in Debug-Builds (lokal mit
-    /// `cargo run`) ja, im Release-Build (Docker) nein. `MAP_EDITOR_SAVE=1/0` überschreibt.
+    /// Speichern über die API überhaupt erlaubt (dann nur für Admins)? Standard ja,
+    /// `MAP_EDITOR_SAVE=0` schaltet es ab.
     pub can_save: bool,
 }
 
@@ -34,9 +35,8 @@ impl MapStore {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/maps")));
         let can_save = match std::env::var("MAP_EDITOR_SAVE").as_deref() {
-            Ok("1") | Ok("true") => true,
-            Ok(_) => false,
-            Err(_) => cfg!(debug_assertions),
+            Ok("0") | Ok("false") | Ok("off") => false,
+            _ => true,
         };
         MapStore { dir, can_save }
     }
@@ -57,7 +57,7 @@ fn valid_name(name: &str) -> bool {
         && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
-pub fn router<S: Clone + Send + Sync + 'static>(store: Arc<MapStore>) -> Router<S> {
+pub fn router<S: Clone + Send + Sync + 'static>(hub: Arc<Hub>) -> Router<S> {
     Router::new()
         .route("/api/maps", get(list))
         .route("/api/maps/check", post(check))
@@ -65,11 +65,17 @@ pub fn router<S: Clone + Send + Sync + 'static>(store: Arc<MapStore>) -> Router<
         .route("/api/maps/{name}", get(load).put(save))
         // 1024 × 1024 Felder mit Ressourcen sind gut 2 MB Text.
         .layer(DefaultBodyLimit::max(8 * 1024 * 1024))
-        .with_state(store)
+        .with_state(hub)
 }
 
-async fn list(State(store): State<Arc<MapStore>>) -> Response {
-    Json(serde_json::json!({ "maps": store.names(), "can_save": store.can_save })).into_response()
+/// Darf der Spieler hinter dieser Anfrage Karten speichern?
+async fn may_save(hub: &Hub, headers: &HeaderMap) -> bool {
+    hub.store.can_save && hub.admin.check(header_token(headers)).await
+}
+
+async fn list(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
+    let can_save = may_save(&hub, &headers).await;
+    Json(serde_json::json!({ "maps": hub.store.names(), "can_save": can_save })).into_response()
 }
 
 impl MapStore {
@@ -90,8 +96,8 @@ impl MapStore {
     }
 }
 
-async fn load(State(store): State<Arc<MapStore>>, Path(name): Path<String>) -> Response {
-    match store.read(&name) {
+async fn load(State(hub): State<Arc<Hub>>, Path(name): Path<String>) -> Response {
+    match hub.store.read(&name) {
         Some(text) => text.into_response(),
         None => (StatusCode::NOT_FOUND, "Karte nicht gefunden").into_response(),
     }
@@ -125,10 +131,19 @@ async fn generate(Query(p): Query<GenerateParams>) -> Response {
     tokio::task::spawn_blocking(move || crate::mapgen::generate(&params)).await.expect("Generator").into_response()
 }
 
-async fn save(State(store): State<Arc<MapStore>>, Path(name): Path<String>, body: String) -> Response {
+async fn save(
+    State(hub): State<Arc<Hub>>,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    body: String,
+) -> Response {
+    let store = &hub.store;
     if !store.can_save {
         return (StatusCode::FORBIDDEN, "Speichern ist auf diesem Server abgeschaltet (MAP_EDITOR_SAVE)")
             .into_response();
+    }
+    if !hub.admin.check(header_token(&headers)).await {
+        return (StatusCode::UNAUTHORIZED, "Karten speichern nur für Admins").into_response();
     }
     let Some(path) = store.path(&name) else {
         return (StatusCode::BAD_REQUEST, "Ungültiger Name: nur a-z, 0-9, - und _").into_response();

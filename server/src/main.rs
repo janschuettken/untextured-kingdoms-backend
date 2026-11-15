@@ -42,7 +42,7 @@ async fn main() {
         .unwrap_or_else(|_| {
             std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/data/games"))
         });
-    let hub = Arc::new(lobby::Hub::new(store.clone(), admin, economy, saves_dir));
+    let hub = Arc::new(lobby::Hub::new(store, admin, economy, saves_dir));
     hub.restore();
 
     let app = Router::new()
@@ -51,7 +51,7 @@ async fn main() {
         .route("/health", get(|| async { "ok" }))
         .route("/api/games/{id}/map", get(game::current_map))
         .with_state(hub.clone())
-        .merge(maps_api::router(store))
+        .merge(maps_api::router(hub.clone()))
         .merge(admin::router(hub.clone()))
         .merge(accounts::router(accounts));
 

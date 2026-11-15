@@ -185,8 +185,10 @@ Gebaut für 1000 × 1000 Felder mit etwa 8 Spielern:
 - `cargo test --release -p server -- --ignored --nocapture` erzeugt und prüft eine 1000er-Karte mit
   8 Spielern und gibt die Zeiten aus.
 
-Speichern ist im Debug-Build (`cargo run`) an und im Release-Build (Docker) aus, damit auf dem
-öffentlichen Server niemand Karten überschreibt. `MAP_EDITOR_SAVE=1` bzw. `0` überschreibt das.
+Speichern dürfen nur Admins (wie beim Balancing, siehe „Admin und Balancing“; lokal im Debug-Build jeder).
+`MAP_EDITOR_SAVE=0` schaltet Speichern ganz ab. In Docker liegen die Karten im Volume `game_data` (`/data/maps`),
+damit gespeicherte Karten Updates überleben; beim Start kommen Karten aus dem Repo dazu, die dort noch fehlen.
+Eine Karte, die es schon im Volume gibt, wird vom Repo nicht überschrieben.
 
 ## Ordner nebeneinander
 
@@ -229,6 +231,10 @@ Admin-Rechte hängen am Account (Spalte `is_admin` in der Tabelle `accounts`). A
 Ohne Datenbank gibt es keine Accounts, also keine Admins. Für die lokale Entwicklung ist im Debug-Build (`cargo run`)
 deshalb jeder Admin (`ADMIN_OPEN`, Standard an im Debug-Build, aus im Release-Build/Docker; `ADMIN_OPEN=0` bzw. `1`
 überschreibt das).
+
+Nutzerverwaltung: In der Lobby sehen Admins oben den Link „Admin“ (`/admin.html`): alle Accounts, Admin-Recht
+geben/nehmen und „Anmelden als“ (der Browser übernimmt den Spieler-Token des Nutzers und merkt sich den eigenen; in der
+Lobby geht es mit „Zurück zu …“ zurück). Schnittstelle: `/api/admin/users…` in `server/src/admin.rs`.
 
 Im Spiel oben rechts auf „Admin“ klicken. Dort gibt es auch das
 Lauftempo (König, Träger, Karren; wird in `economy.json` gespeichert) und das Spieltempo für alle (25–800 %,

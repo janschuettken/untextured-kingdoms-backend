@@ -17,6 +17,11 @@
 //!
 //! - `GET  /api/admin`    `{ "enabled": bool, "open": bool }`: `open` = ohne Anmeldung
 //! - `POST /api/admin`    Ist dieser Spieler Admin? (Kopfzeile `X-Player-Token`), 204 oder 401
+//! - `GET  /api/admin/users`  nur Admin: alle Accounts `[{ id, username, admin, fixed, created, last_login, game }]`
+//!   (`fixed` = steht in `ADMIN_USERS`, bleibt Admin)
+//!   (Zeiten in Unix-Sekunden, `game` = Spiel, in dem der Account gerade einen Platz hat)
+//! - `POST /api/admin/users/{id}/impersonate`  nur Admin: als dieser Nutzer anmelden → `{ username, token }`
+//! - `POST /api/admin/users/{id}/admin`  nur Admin: `{ admin: bool }` Admin-Recht setzen (nicht bei sich selbst)
 //! - `GET  /api/games/{id}/players`  alle Spieler des Spiels: `[{ id, name, online, buildings }]`
 //! - `POST /api/games/{id}/players/{pid}/remove`  nur Admin: Reich eines (nicht verbundenen) Spielers entfernen
 //! - `POST /api/games/{id}/save`     nur Admin: Spiel jetzt speichern
@@ -135,12 +140,15 @@ impl Admin {
     }
 
     async fn allows(&self, headers: &HeaderMap) -> bool {
-        let token = headers
-            .get("x-player-token")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        self.check(token).await
+        self.check(header_token(headers)).await
     }
+}
+
+pub fn header_token(headers: &HeaderMap) -> &str {
+    headers
+        .get("x-player-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
 }
 
 fn parse_users(list: &str) -> Vec<String> {
@@ -153,6 +161,9 @@ fn parse_users(list: &str) -> Vec<String> {
 pub fn router(hub: Arc<Hub>) -> Router {
     Router::new()
         .route("/api/admin", get(status).post(login))
+        .route("/api/admin/users", get(list_users))
+        .route("/api/admin/users/{id}/impersonate", post(impersonate))
+        .route("/api/admin/users/{id}/admin", post(set_admin))
         .route("/api/economy", get(load).put(save))
         .route("/api/games/{id}/players", get(players))
         .route("/api/games/{id}/players/{pid}/remove", post(remove_player))
@@ -174,6 +185,121 @@ async fn login(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> StatusCode {
         StatusCode::NO_CONTENT
     } else {
         StatusCode::UNAUTHORIZED
+    }
+}
+
+// ---------- Nutzerverwaltung ----------
+
+/// Admin geprüft und Datenbank da? Sonst die passende Antwort.
+#[allow(clippy::result_large_err)]
+async fn admin_db(hub: &Hub, headers: &HeaderMap) -> Result<PgPool, Response> {
+    if !hub.admin.allows(headers).await {
+        return Err((StatusCode::UNAUTHORIZED, "admin.denied").into_response());
+    }
+    hub.admin
+        .db
+        .clone()
+        .ok_or_else(|| (StatusCode::SERVICE_UNAVAILABLE, "account.disabled").into_response())
+}
+
+fn db_error(e: sqlx::Error) -> Response {
+    warn!("Nutzerverwaltung: {e}");
+    (StatusCode::INTERNAL_SERVER_ERROR, "account.error").into_response()
+}
+
+type UserRow = (i64, String, bool, i64, Option<i64>, String);
+
+async fn list_users(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
+    let db = match admin_db(&hub, &headers).await {
+        Ok(db) => db,
+        Err(r) => return r,
+    };
+    let rows: Vec<UserRow> = match sqlx::query_as(
+        "SELECT id, username, is_admin, extract(epoch FROM created_at)::bigint, \
+         extract(epoch FROM last_login)::bigint, player_token FROM accounts ORDER BY lower(username)",
+    )
+    .fetch_all(&db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return db_error(e),
+    };
+    let list: Vec<_> = rows
+        .into_iter()
+        .map(|(id, username, is_admin, created, last_login, token)| {
+            // Über ADMIN_USERS ist man immer Admin, egal was in der Tabelle steht.
+            let fixed = hub.admin.users.contains(&username.to_lowercase());
+            let game = hub.game_of(&token).map(|g| g.id);
+            serde_json::json!({
+                "id": id, "username": username, "admin": is_admin || fixed, "fixed": fixed,
+                "created": created, "last_login": last_login, "game": game,
+            })
+        })
+        .collect();
+    Json(list).into_response()
+}
+
+async fn impersonate(
+    State(hub): State<Arc<Hub>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    let db = match admin_db(&hub, &headers).await {
+        Ok(db) => db,
+        Err(r) => return r,
+    };
+    let row: Option<(String, String)> =
+        match sqlx::query_as("SELECT username, player_token FROM accounts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&db)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return db_error(e),
+        };
+    let Some((username, token)) = row else {
+        return (StatusCode::NOT_FOUND, "admin.no_user").into_response();
+    };
+    info!("Admin meldet sich als {username} an");
+    Json(serde_json::json!({ "username": username, "token": token })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct SetAdmin {
+    admin: bool,
+}
+
+async fn set_admin(
+    State(hub): State<Arc<Hub>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<SetAdmin>,
+) -> Response {
+    let db = match admin_db(&hub, &headers).await {
+        Ok(db) => db,
+        Err(r) => return r,
+    };
+    // Sich selbst nicht entmachten, sonst sperrt man sich aus.
+    let me: Option<(i64,)> = sqlx::query_as("SELECT id FROM accounts WHERE player_token = $1")
+        .bind(header_token(&headers))
+        .fetch_optional(&db)
+        .await
+        .unwrap_or(None);
+    if me.is_some_and(|(mine,)| mine == id) {
+        return (StatusCode::CONFLICT, "admin.not_self").into_response();
+    }
+    match sqlx::query("UPDATE accounts SET is_admin = $1 WHERE id = $2")
+        .bind(body.admin)
+        .bind(id)
+        .execute(&db)
+        .await
+    {
+        Ok(r) if r.rows_affected() == 0 => (StatusCode::NOT_FOUND, "admin.no_user").into_response(),
+        Ok(_) => {
+            info!("Account {id}: Admin = {}", body.admin);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => db_error(e),
     }
 }
 
