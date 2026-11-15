@@ -614,6 +614,7 @@
       "w": 4,
       "h": 4,
       "max_hp": 300,
+      "placement": {"resources": ["farmland"], "min_share_percent": 50},
       "service_radius": 0,
       "no_entrance": false,
       "spawns": [],
@@ -1047,112 +1048,128 @@
       "building": "woodcutter",
       "inputs": [],
       "outputs": [{"good": "wood", "amount": 1}],
-      "seconds": 6
+      "seconds": 6,
+      "unattended_percent": 0
     },
     {
       "id": "quarry_stone",
       "building": "quarry",
       "inputs": [],
       "outputs": [{"good": "stone", "amount": 1}],
-      "seconds": 8
+      "seconds": 8,
+      "unattended_percent": 0
     },
     {
       "id": "mine_ore",
       "building": "mine",
       "inputs": [],
       "outputs": [{"good": "iron_ore", "amount": 1}],
-      "seconds": 10
+      "seconds": 10,
+      "unattended_percent": 0
     },
     {
       "id": "grow_grain",
       "building": "farm",
       "inputs": [],
       "outputs": [{"good": "grain", "amount": 5}],
-      "seconds": 20
+      "seconds": 20,
+      "unattended_percent": 0
     },
     {
       "id": "saw_boards",
       "building": "sawmill",
       "inputs": [{"good": "wood", "amount": 2}],
       "outputs": [{"good": "boards", "amount": 1}],
-      "seconds": 8
+      "seconds": 5,
+      "unattended_percent": 0
     },
     {
       "id": "cut_blocks",
       "building": "stonemason",
       "inputs": [{"good": "stone", "amount": 2}],
       "outputs": [{"good": "blocks", "amount": 1}],
-      "seconds": 10
+      "seconds": 10,
+      "unattended_percent": 0
     },
     {
       "id": "make_spear",
       "building": "spear_maker",
       "inputs": [{"good": "wood", "amount": 1}],
       "outputs": [{"good": "spear", "amount": 1}],
-      "seconds": 8
+      "seconds": 8,
+      "unattended_percent": 0
     },
     {
       "id": "make_longbow",
       "building": "bowyer",
       "inputs": [{"good": "wood", "amount": 2}],
       "outputs": [{"good": "longbow", "amount": 1}],
-      "seconds": 10
+      "seconds": 10,
+      "unattended_percent": 0
     },
     {
       "id": "make_crossbow",
       "building": "bowyer",
       "inputs": [{"good": "wood", "amount": 1}, {"good": "iron", "amount": 1}],
       "outputs": [{"good": "crossbow", "amount": 1}],
-      "seconds": 15
+      "seconds": 15,
+      "unattended_percent": 0
     },
     {
       "id": "make_light_armor",
       "building": "tannery",
       "inputs": [{"good": "leather", "amount": 2}],
       "outputs": [{"good": "light_armor", "amount": 1}],
-      "seconds": 15
+      "seconds": 15,
+      "unattended_percent": 0
     },
     {
       "id": "make_saddle",
       "building": "tannery",
       "inputs": [{"good": "leather", "amount": 2}, {"good": "boards", "amount": 1}],
       "outputs": [{"good": "saddle", "amount": 1}],
-      "seconds": 20
+      "seconds": 20,
+      "unattended_percent": 0
     },
     {
       "id": "smelt_iron",
       "building": "smelter",
       "inputs": [{"good": "iron_ore", "amount": 2}, {"good": "wood", "amount": 1}],
       "outputs": [{"good": "iron", "amount": 1}],
-      "seconds": 12
+      "seconds": 12,
+      "unattended_percent": 0
     },
     {
       "id": "forge_sword",
       "building": "smithy",
       "inputs": [{"good": "iron", "amount": 1}],
       "outputs": [{"good": "sword", "amount": 1}],
-      "seconds": 15
+      "seconds": 15,
+      "unattended_percent": 0
     },
     {
       "id": "forge_armor",
       "building": "smithy",
       "inputs": [{"good": "iron", "amount": 2}, {"good": "leather", "amount": 1}],
       "outputs": [{"good": "armor", "amount": 1}],
-      "seconds": 20
+      "seconds": 20,
+      "unattended_percent": 0
     },
     {
       "id": "grind_flour",
       "building": "mill",
       "inputs": [{"good": "grain", "amount": 1}],
       "outputs": [{"good": "flour", "amount": 2}],
-      "seconds": 8
+      "seconds": 8,
+      "unattended_percent": 0
     },
     {
       "id": "bake_bread",
       "building": "bakery",
       "inputs": [{"good": "flour", "amount": 1}],
       "outputs": [{"good": "bread", "amount": 5}],
-      "seconds": 10
+      "seconds": 10,
+      "unattended_percent": 0
     },
     {
       "id": "raise_pigs",
