@@ -30,7 +30,8 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use protocol::{
-    GamePhase, GameSummary, LobbyClientMsg, LobbyGame, LobbyMember, LobbyServerMsg, LobbySlot, Text,
+    AiLevel, GamePhase, GameSummary, LobbyClientMsg, LobbyGame, LobbyMember, LobbyServerMsg,
+    LobbySlot, Text,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -51,6 +52,29 @@ const MAX_NAME: usize = 24;
 pub struct Member {
     pub token: String,
     pub name: String,
+    /// Computergegner: seine Stärke. Sein Token ist kein gültiger Browser-Token
+    /// (siehe `computer_token`), also kann sich niemand damit anmelden.
+    #[serde(default)]
+    pub computer: Option<AiLevel>,
+}
+
+impl Member {
+    fn human(token: &str, name: &str) -> Member {
+        Member {
+            token: token.into(),
+            name: name.into(),
+            computer: None,
+        }
+    }
+
+    pub fn is_human(&self) -> bool {
+        self.computer.is_none()
+    }
+}
+
+/// Token eines Computergegners: enthält `:`, das kein Browser-Token enthalten darf.
+fn computer_token(game: u32, n: u64) -> String {
+    format!("computer:{game}:{n}")
 }
 
 /// Was sich an einem Spiel ändert (wer wo sitzt, Phase).
@@ -75,6 +99,20 @@ impl Meta {
 
     fn members(&self) -> impl Iterator<Item = &Member> {
         self.slots.iter().flatten()
+    }
+
+    /// Nur die Menschen (ohne Computergegner).
+    fn humans(&self) -> impl Iterator<Item = &Member> {
+        self.members().filter(|m| m.is_human())
+    }
+
+    /// Computergegner mit ihrer Spieler-Nummer (Startplatz + 1).
+    pub fn computers(&self) -> Vec<(u32, AiLevel)> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| Some((i as u32 + 1, s.as_ref()?.computer?)))
+            .collect()
     }
 }
 
@@ -185,6 +223,9 @@ impl Hub {
         let seat = {
             let meta = game.meta.lock().unwrap();
             let slot = meta.slot_of(token)?;
+            if meta.slots[slot].as_ref().is_some_and(|m| !m.is_human()) {
+                return None;
+            }
             (slot as u32 + 1, meta.spawns[slot])
         };
         Some((game, running, seat))
@@ -294,12 +335,15 @@ impl Hub {
                         host: file.host,
                         slots: file.slots,
                     };
+                    let computers = meta.computers();
                     let game = Arc::new(Game {
                         id: file.id,
                         meta: Mutex::new(meta),
                         running: OnceLock::new(),
                     });
-                    let m = Arc::new(Match::new(world, file.map, file.map_text, file.speed));
+                    let mut m = Match::new(world, file.map, file.map_text, file.speed);
+                    m.set_computers(&computers);
+                    let m = Arc::new(m);
                     let _ = game.running.set(m.clone());
                     self.games.lock().unwrap().insert(file.id, game.clone());
                     self.next_game.fetch_max(file.id + 1, Ordering::Relaxed);
@@ -373,8 +417,10 @@ impl Hub {
                     member: s.as_ref().map(|m| LobbyMember {
                         id: public_id(&m.token),
                         name: m.name.clone(),
-                        online: lobby_online.contains(&m.token)
+                        online: !m.is_human()
+                            || lobby_online.contains(&m.token)
                             || in_game.contains(&(i as u32 + 1)),
+                        computer: m.computer,
                     }),
                 })
                 .collect();
@@ -437,10 +483,7 @@ impl Hub {
         let (text, map) = self.read_map(map_name)?;
         let id = self.next_game.fetch_add(1, Ordering::Relaxed);
         let mut slots = vec![None; map.spawns.len()];
-        slots[0] = Some(Member {
-            token: token.into(),
-            name: name.into(),
-        });
+        slots[0] = Some(Member::human(token, name));
         let meta = Meta {
             map_name: map_name.into(),
             map_text: text,
@@ -475,10 +518,7 @@ impl Hub {
         let Some(free) = meta.slots.iter().position(|s| s.is_none()) else {
             return err("lobby.game_full");
         };
-        meta.slots[free] = Some(Member {
-            token: token.into(),
-            name: name.into(),
-        });
+        meta.slots[free] = Some(Member::human(token, name));
         Ok(())
     }
 
@@ -491,7 +531,8 @@ impl Hub {
             if let Some(i) = meta.slot_of(token) {
                 meta.slots[i] = None;
             }
-            let next = meta.members().next().map(|m| m.token.clone());
+            // Computergegner halten kein Spiel am Leben und werden nie Gastgeber.
+            let next = meta.humans().next().map(|m| m.token.clone());
             if meta.host == token {
                 if let Some(next) = &next {
                     meta.host = next.clone();
@@ -572,6 +613,54 @@ impl Hub {
         Ok(())
     }
 
+    /// Gastgeber setzt einen Computergegner auf einen freien Startplatz.
+    fn add_computer(&self, token: &str, slot: u32, level: AiLevel) -> Reply {
+        let Some(game) = self.game_of(token) else {
+            return err("lobby.not_in_game");
+        };
+        let mut meta = game.meta.lock().unwrap();
+        if meta.host != token {
+            return err("lobby.not_host");
+        }
+        if meta.phase != GamePhase::Waiting {
+            return err("lobby.game_running");
+        }
+        let slot = slot as usize;
+        if meta.slots.get(slot).is_none_or(|s| s.is_some()) {
+            return err("lobby.slot_taken");
+        }
+        meta.slots[slot] = Some(Member {
+            token: computer_token(game.id, self.next_conn.fetch_add(1, Ordering::Relaxed)),
+            name: format!("Computer {}", slot + 1),
+            computer: Some(level),
+        });
+        Ok(())
+    }
+
+    /// Gastgeber nimmt einen Computergegner wieder heraus.
+    fn remove_computer(&self, token: &str, slot: u32) -> Reply {
+        let Some(game) = self.game_of(token) else {
+            return err("lobby.not_in_game");
+        };
+        let mut meta = game.meta.lock().unwrap();
+        if meta.host != token {
+            return err("lobby.not_host");
+        }
+        if meta.phase != GamePhase::Waiting {
+            return err("lobby.game_running");
+        }
+        let slot = slot as usize;
+        if meta
+            .slots
+            .get(slot)
+            .is_none_or(|s| s.as_ref().is_none_or(|m| m.is_human()))
+        {
+            return err("lobby.not_computer");
+        }
+        meta.slots[slot] = None;
+        Ok(())
+    }
+
     fn start(self: &Arc<Hub>, token: &str) -> Reply {
         let Some(game) = self.game_of(token) else {
             return err("lobby.not_in_game");
@@ -593,12 +682,9 @@ impl Hub {
                 }
             }
             meta.phase = GamePhase::Running;
-            Arc::new(Match::new(
-                world,
-                meta.map_name.clone(),
-                meta.map_text.clone(),
-                100,
-            ))
+            let mut m = Match::new(world, meta.map_name.clone(), meta.map_text.clone(), 100);
+            m.set_computers(&meta.computers());
+            Arc::new(m)
         };
         let _ = game.running.set(m.clone());
         info!("Spiel {} gestartet", game.id);
@@ -623,6 +709,8 @@ impl Hub {
             LobbyClientMsg::TakeSlot { slot } => self.take_slot(token, slot),
             LobbyClientMsg::SetMap { map } => self.set_map(token, &map),
             LobbyClientMsg::StartGame => self.start(token),
+            LobbyClientMsg::AddComputer { slot, level } => self.add_computer(token, slot, level),
+            LobbyClientMsg::RemoveComputer { slot } => self.remove_computer(token, slot),
         }
     }
 }
@@ -742,6 +830,51 @@ mod tests {
         hub.leave(B).unwrap();
         assert!(hub.game(id).is_none());
         assert!(!hub.save_path(id).exists());
+    }
+
+    #[test]
+    fn computergegner_in_der_lobby() {
+        let hub = hub();
+        hub.create(A, "Anna", "zwei-burgen").unwrap();
+        let id = hub.game_of(A).unwrap().id;
+        hub.join(B, "Bert", id).unwrap();
+        assert!(
+            hub.add_computer(B, 2, AiLevel::Easy).is_err(),
+            "nur der Gastgeber"
+        );
+        assert!(
+            hub.add_computer(A, 1, AiLevel::Easy).is_err(),
+            "Platz ist besetzt"
+        );
+        hub.add_computer(A, 2, AiLevel::Normal).unwrap();
+        let token = {
+            let game = hub.game(id).unwrap();
+            let meta = game.meta.lock().unwrap();
+            assert_eq!(meta.computers(), vec![(3, AiLevel::Normal)]);
+            meta.slots[2].as_ref().unwrap().token.clone()
+        };
+        assert!(
+            !valid_token(&token),
+            "mit dem Token kann sich kein Browser anmelden"
+        );
+        assert!(hub.remove_computer(A, 1).is_err(), "dort sitzt ein Mensch");
+        hub.start(A).unwrap();
+        assert!(hub.remove_computer(A, 2).is_err(), "läuft schon");
+        let (_, m, _) = hub.membership(id, A).unwrap();
+        assert!(
+            m.world.lock().unwrap().has_player(3),
+            "Computer hat sein Reich"
+        );
+        assert!(
+            hub.membership(id, &token).is_none(),
+            "niemand spielt als Computer"
+        );
+        assert_eq!(m.computers.lock().unwrap().len(), 1);
+        // Bleiben nur Computer übrig, ist das Spiel aus.
+        hub.leave(A).unwrap();
+        assert!(hub.game(id).is_some());
+        hub.leave(B).unwrap();
+        assert!(hub.game(id).is_none());
     }
 
     #[test]

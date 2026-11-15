@@ -27,6 +27,7 @@ use tokio::sync::broadcast;
 use tracing::{info, warn};
 
 use crate::{
+    ai::{self, Computer},
     lobby::{Game, Hub},
     world::World,
 };
@@ -71,6 +72,8 @@ pub struct Match {
     /// Gesetzt, wenn das Spiel beendet wird: der Thread hört auf.
     pub stop: AtomicBool,
     next_conn: AtomicU64,
+    /// Computergegner in diesem Spiel. Reihenfolge beim Sperren: nach `world`.
+    pub(crate) computers: Mutex<Vec<Computer>>,
 }
 
 impl Match {
@@ -86,7 +89,13 @@ impl Match {
             game_speed: AtomicU32::new(speed),
             stop: AtomicBool::new(false),
             next_conn: AtomicU64::new(1),
+            computers: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Diese Startplätze spielt der Computer (Spieler-Nummer, Stärke).
+    pub fn set_computers(&mut self, list: &[(u32, protocol::AiLevel)]) {
+        *self.computers.get_mut().unwrap() = ai::computers(list);
     }
 
     pub fn is_online(&self, player: u32) -> bool {
@@ -190,7 +199,16 @@ fn step(state: &Match, tick: u64) {
     let (units, stocks, paths, infos) = {
         let mut world = state.world.lock().unwrap();
         let speed = state.game_speed.load(Ordering::Relaxed) as f32 / 100.0;
-        world.step(speed / TICK_RATE as f32);
+        let dt = speed / TICK_RATE as f32;
+        // Computergegner geben ihre Befehle wie Menschen, über denselben Weg.
+        for computer in state.computers.lock().unwrap().iter_mut() {
+            for cmd in computer.think(&world, dt) {
+                if let Err(text) = apply_command(&mut world, &state.ticks, computer.player, cmd) {
+                    computer.rejected(&text);
+                }
+            }
+        }
+        world.step(dt);
         // Unter dem Lock verschicken, damit neue Clients nichts doppelt oder gar nicht sehen.
         for event in world.take_events() {
             let _ = state.ticks.send(event);
@@ -474,82 +492,15 @@ async fn handle_msg(
                 c.view = Some((x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)));
             }
         }
+        // Nicht über `apply_command`: nur der Mensch bekommt das rote X bei unerreichbarem Ziel.
         ClientMsg::MoveUnits { unit_ids, x, y } => {
-            let reachable = state.world.lock().unwrap().order_move(player_id, &unit_ids, (x, y));
+            let reachable = state
+                .world
+                .lock()
+                .unwrap()
+                .order_move(player_id, &unit_ids, (x, y));
             if !reachable {
                 drop(out_tx.try_send(ServerMsg::MoveUnreachable { x, y }));
-            }
-        }
-        ClientMsg::PlaceBuilding {
-            kind,
-            x,
-            y,
-            rotation,
-            level,
-        } => {
-            let mut world = state.world.lock().unwrap();
-            match world.place_building_rotated(player_id, kind, x, y, rotation, level) {
-                // Noch unter dem Lock verschicken, damit die Reihenfolge stimmt.
-                Ok(building) => {
-                    // Erst die Mauerstücke, die einem Tor oder Turm weichen mussten.
-                    for event in world.take_events() {
-                        let _ = state.ticks.send(event);
-                    }
-                    let _ = state.ticks.send(ServerMsg::BuildingPlaced { building });
-                }
-                Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
-            }
-        }
-        ClientMsg::DemolishBuilding { building_id } => {
-            let mut world = state.world.lock().unwrap();
-            match world.demolish(player_id, building_id) {
-                Ok(()) => drop(state.ticks.send(ServerMsg::BuildingRemoved { building_id })),
-                Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
-            }
-        }
-        ClientMsg::ConfigureBuilding {
-            building_id,
-            settings,
-        } => {
-            let mut world = state.world.lock().unwrap();
-            match world.configure(player_id, building_id, settings) {
-                Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
-                Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
-            }
-        }
-        ClientMsg::ReleaseTrees { building_id } => {
-            let mut world = state.world.lock().unwrap();
-            match world.release_trees(player_id, building_id) {
-                Ok(()) => {
-                    let _ = state.ticks.send(ServerMsg::BuildingRemoved { building_id });
-                    for event in world.take_events() {
-                        let _ = state.ticks.send(event);
-                    }
-                }
-                Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
-            }
-        }
-        ClientMsg::MoveBuilding {
-            building_id,
-            x,
-            y,
-            rotation,
-        } => {
-            let mut world = state.world.lock().unwrap();
-            match world.move_building(player_id, building_id, x, y, rotation) {
-                // Für die Clients: alt weg, neu da (Belegung, Anschlüsse der Mauern).
-                Ok(building) => {
-                    let _ = state.ticks.send(ServerMsg::BuildingRemoved { building_id });
-                    let _ = state.ticks.send(ServerMsg::BuildingPlaced { building });
-                }
-                Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
-            }
-        }
-        ClientMsg::UpgradeBuilding { building_id } => {
-            let mut world = state.world.lock().unwrap();
-            match world.upgrade(player_id, building_id) {
-                Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
-                Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
             }
         }
         ClientMsg::WatchUnit { unit_id } => {
@@ -559,37 +510,17 @@ async fn handle_msg(
                 c.watch_info = None;
             }
         }
-        ClientMsg::TrainUnits {
-            building_id,
-            kind,
-            count,
-            spread,
-        } => {
+        msg @ (ClientMsg::PlaceBuilding { .. }
+        | ClientMsg::DemolishBuilding { .. }
+        | ClientMsg::ConfigureBuilding { .. }
+        | ClientMsg::ReleaseTrees { .. }
+        | ClientMsg::MoveBuilding { .. }
+        | ClientMsg::UpgradeBuilding { .. }
+        | ClientMsg::TrainUnits { .. }
+        | ClientMsg::CancelTraining { .. }
+        | ClientMsg::Trade { .. }) => {
             let mut world = state.world.lock().unwrap();
-            let result = if spread {
-                world.train_spread(player_id, building_id, kind, count)
-            } else {
-                world.train(player_id, building_id, kind, count)
-            };
-            match result {
-                Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
-                Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
-            }
-        }
-        ClientMsg::CancelTraining { building_id } => {
-            let mut world = state.world.lock().unwrap();
-            match world.cancel_training(player_id, building_id) {
-                Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
-                Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
-            }
-        }
-        ClientMsg::Trade { good, amount, sell } => {
-            if let Err(text) = state
-                .world
-                .lock()
-                .unwrap()
-                .trade(player_id, good, amount, sell)
-            {
+            if let Err(text) = apply_command(&mut world, &state.ticks, player_id, msg) {
                 let _ = out_tx.try_send(ServerMsg::Rejected { text });
             }
         }
@@ -628,4 +559,89 @@ async fn handle_msg(
             }
         }
     }
+}
+
+/// Spielbefehl eines Spielers auf die Welt anwenden und die Änderungen an alle melden.
+/// Menschen (über den WebSocket) und Computergegner (`ai`) gehen beide hier durch,
+/// so gelten für alle dieselben Regeln. Andere Nachrichten tun hier nichts.
+pub fn apply_command(
+    world: &mut World,
+    ticks: &broadcast::Sender<ServerMsg>,
+    player_id: u32,
+    msg: ClientMsg,
+) -> Result<(), protocol::Text> {
+    // Alles noch unter dem Lock verschicken, damit die Reihenfolge stimmt.
+    let send = |msg: ServerMsg| drop(ticks.send(msg));
+    match msg {
+        ClientMsg::MoveUnits { unit_ids, x, y } => {
+            world.order_move(player_id, &unit_ids, (x, y));
+        }
+        ClientMsg::PlaceBuilding {
+            kind,
+            x,
+            y,
+            rotation,
+            level,
+        } => {
+            let building = world.place_building_rotated(player_id, kind, x, y, rotation, level)?;
+            // Erst die Mauerstücke, die einem Tor oder Turm weichen mussten.
+            for event in world.take_events() {
+                send(event);
+            }
+            send(ServerMsg::BuildingPlaced { building });
+        }
+        ClientMsg::DemolishBuilding { building_id } => {
+            world.demolish(player_id, building_id)?;
+            send(ServerMsg::BuildingRemoved { building_id });
+        }
+        ClientMsg::ConfigureBuilding {
+            building_id,
+            settings,
+        } => {
+            let building = world.configure(player_id, building_id, settings)?;
+            send(ServerMsg::BuildingChanged { building });
+        }
+        ClientMsg::ReleaseTrees { building_id } => {
+            world.release_trees(player_id, building_id)?;
+            send(ServerMsg::BuildingRemoved { building_id });
+            for event in world.take_events() {
+                send(event);
+            }
+        }
+        ClientMsg::MoveBuilding {
+            building_id,
+            x,
+            y,
+            rotation,
+        } => {
+            let building = world.move_building(player_id, building_id, x, y, rotation)?;
+            // Für die Clients: alt weg, neu da (Belegung, Anschlüsse der Mauern).
+            send(ServerMsg::BuildingRemoved { building_id });
+            send(ServerMsg::BuildingPlaced { building });
+        }
+        ClientMsg::UpgradeBuilding { building_id } => {
+            let building = world.upgrade(player_id, building_id)?;
+            send(ServerMsg::BuildingChanged { building });
+        }
+        ClientMsg::TrainUnits {
+            building_id,
+            kind,
+            count,
+            spread,
+        } => {
+            let building = if spread {
+                world.train_spread(player_id, building_id, kind, count)?
+            } else {
+                world.train(player_id, building_id, kind, count)?
+            };
+            send(ServerMsg::BuildingChanged { building });
+        }
+        ClientMsg::CancelTraining { building_id } => {
+            let building = world.cancel_training(player_id, building_id)?;
+            send(ServerMsg::BuildingChanged { building });
+        }
+        ClientMsg::Trade { good, amount, sell } => world.trade(player_id, good, amount, sell)?,
+        _ => {}
+    }
+    Ok(())
 }

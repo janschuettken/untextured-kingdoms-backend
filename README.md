@@ -267,6 +267,25 @@ als“ einen anderen Startplatz übernehmen (`/ws?game=..&token=..&as=<nr>`) ode
 - Jeder ist höchstens in einem Spiel. Verlassen gibt den Platz frei; ist niemand mehr da, wird das Spiel beendet.
 - Code: `server/src/lobby.rs` (Lobby, Speichern), `server/src/game.rs` (Spiel-Thread, WebSocket eines Spiels).
 
+## Computergegner
+
+- In der Lobby setzt der Gastgeber auf einen freien Startplatz einen Computer (`add_computer`, Stärke `easy` oder
+  `normal`) und nimmt ihn mit `remove_computer` wieder weg. Der Computer gilt immer als da; verlassen alle Menschen
+  das Spiel, endet es trotzdem. Mit dem Token eines Computers kann sich niemand verbinden.
+- Code: `server/src/ai/`. Der Computer gibt dieselben Befehle wie der Browser (`ClientMsg`), sie gehen durch
+  `game::apply_command`, also mit denselben Regeln und Kosten. Bauplätze prüft er vorher mit `World::check_placement`
+  (dieselben Prüfungen wie beim Bauen, ohne etwas zu ändern).
+- Ablauf alle paar Sekunden: fehlende Wohnungen, Essen und Lager zuerst, dann die Bauliste, dann ein Mauerring mit
+  einem Tor je Seite (Abstand passt sich dem Gelände an, z. B. bleibt er vor einem Burggraben), dann Ausbauten.
+  Nebenbei: Höchstbestände in Betrieben eintragen (Sägewerk hört bei genug Brettern auf), Soldaten ausbilden und
+  stehende Soldaten vor dem Bergfried sammeln.
+- Was eine Stärke ausmacht (Bauliste, Ausbauten, Armee, Mauerart, Tempo), steht als Daten in
+  `server/src/ai/profile.rs`; eine neue Stufe ist ein neues Profil. Wo er baut, regelt `layout.rs`: innen Wohnhäuser,
+  Lager und Werkstätten, außen Abbaubetriebe am Vorkommen, frei bleiben Ring und Straßen zu den Toren, ein Feld Weg
+  zwischen allen Gebäuden.
+- Er rechnet jedes Mal aus dem Spielstand, gespeichert wird nur seine Stärke (im Startplatz der Spieldatei).
+- Kampf gibt es noch nicht; Angreifen und Verteidigen kommen dazu, sobald es ihn gibt.
+
 ## Accounts (PostgreSQL)
 
 Optional kann man sich einen Account anlegen (Name und Passwort). Er bindet die Browser-Id an den Namen: Wer sich

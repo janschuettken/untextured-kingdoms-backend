@@ -2,6 +2,7 @@
 //! gleichzeitig, jedes mit eigener Welt und eigenem Thread (`/ws?game=..`).
 
 mod accounts;
+mod ai;
 mod admin;
 mod economy;
 mod game;

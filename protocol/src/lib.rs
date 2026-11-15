@@ -198,6 +198,26 @@ pub enum LobbyClientMsg {
     SetMap { map: String },
     /// Nur Gastgeber: Spiel starten.
     StartGame,
+    /// Nur Gastgeber, nur vor dem Start: einen Computergegner auf diesen freien Startplatz setzen.
+    AddComputer {
+        slot: u32,
+        #[serde(default)]
+        level: AiLevel,
+    },
+    /// Nur Gastgeber, nur vor dem Start: den Computergegner von diesem Startplatz nehmen.
+    RemoveComputer { slot: u32 },
+}
+
+/// Stärke eines Computergegners. Was jede Stufe tut, steht im Server (`server/src/ai/`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AiLevel {
+    /// Baut langsam, kleine Armee, Palisade.
+    #[default]
+    Easy,
+    /// Baut schneller, mehr Soldaten, Steinmauer.
+    Normal,
 }
 
 /// Nachrichten der Lobby an den Client.
@@ -267,8 +287,11 @@ pub struct LobbyMember {
     /// Öffentliche Id (nicht der geheime Token).
     pub id: String,
     pub name: String,
-    /// Gerade verbunden (Lobby oder Spiel).
+    /// Gerade verbunden (Lobby oder Spiel). Computergegner sind immer da.
     pub online: bool,
+    /// Gesetzt bei einem Computergegner: seine Stärke.
+    #[serde(default)]
+    pub computer: Option<AiLevel>,
 }
 
 /// Art eines Feldes.

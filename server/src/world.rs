@@ -78,6 +78,11 @@ impl Unit {
         }
     }
 
+    /// Läuft die Einheit gerade (hat noch Wegpunkte)?
+    pub fn is_moving(&self) -> bool {
+        !self.path.is_empty()
+    }
+
     /// Träger und Karren gehorchen keinen Befehlen, sie arbeiten von selbst.
     fn is_transport(&self) -> bool {
         matches!(self.kind, UnitKind::Carrier | UnitKind::Cart)
@@ -161,6 +166,18 @@ fn entrance_tile(x: u32, y: u32, w: u32, h: u32, rotation: u8) -> (i64, i64) {
 
 /// Fehlertext für den Client (Schlüssel, übersetzt wird dort).
 type Refusal = Text;
+
+/// Ergebnis der Prüfungen vor dem Bauen (siehe `World::placement_plan`).
+struct PlacementPlan {
+    def: BuildingDef,
+    rotation: u8,
+    level: u8,
+    w: u32,
+    h: u32,
+    cost: Vec<GoodAmount>,
+    walls: Vec<u32>,
+    entrance: Option<(u32, u32)>,
+}
 
 /// Name eines Rohstoffs wie im Protokoll (`forest`, ...), für Text-Platzhalter.
 fn resource_key(r: ResourceKind) -> String {
@@ -417,16 +434,34 @@ impl World {
         self.place_building_at(player, kind, (x, y), rotation, level, false)
     }
 
-    /// Wie `place_building_rotated`; `free`: kostet nichts (Startgebäude).
-    fn place_building_at(
-        &mut self,
+    /// Prüft, ob der Bau so ginge (Platz, Regeln, Kosten), ohne etwas zu ändern.
+    /// Dieselben Regeln wie `place_building_rotated`; der Computergegner sucht damit Bauplätze.
+    pub fn check_placement(
+        &self,
+        player: u32,
+        kind: BuildingKind,
+        (x, y): (u32, u32),
+        rotation: u8,
+        level: u8,
+    ) -> Result<(), Refusal> {
+        let plan = self.placement_plan(player, kind, (x, y), rotation, level, false)?;
+        let stock = self.stocks.get(&player).ok_or_else(|| Text::new("error.not_enough"))?;
+        if !stock.has_all(&plan.cost) {
+            return Err(Text::new("error.not_enough"));
+        }
+        Ok(())
+    }
+
+    /// Alle Prüfungen vor dem Bauen außer dem Bezahlen.
+    fn placement_plan(
+        &self,
         player: u32,
         kind: BuildingKind,
         (x, y): (u32, u32),
         rotation: u8,
         level: u8,
         free: bool,
-    ) -> Result<BuildingState, Refusal> {
+    ) -> Result<PlacementPlan, Refusal> {
         let def = self.economy.building(kind).ok_or_else(|| Text::new("error.unknown_building"))?.clone();
         let rotation = rotation % 4;
         let level = level.max(1);
@@ -434,7 +469,6 @@ impl World {
             return Err(Text::new("error.max_level"));
         }
         let (w, h) = if rotation % 2 == 1 { (def.h, def.w) } else { (def.w, def.h) };
-        let max_hp = def.max_hp;
         // `first_free`: das erste Gebäude dieser Art ist gratis.
         let cost = if free || (def.first_free && !self.owns(player, kind)) { Vec::new() } else { level_cost(&def, level) };
         if let Some(max) = def.max_per_player {
@@ -455,6 +489,22 @@ impl World {
         if def.road_speed_percent == 0 && self.units.iter().any(|u| !u.is_civilian() && covers(u.pos)) {
             return Err(Text::new("error.unit_in_way"));
         }
+        Ok(PlacementPlan { def, rotation, level, w, h, cost, walls, entrance })
+    }
+
+    /// Wie `place_building_rotated`; `free`: kostet nichts (Startgebäude).
+    fn place_building_at(
+        &mut self,
+        player: u32,
+        kind: BuildingKind,
+        (x, y): (u32, u32),
+        rotation: u8,
+        level: u8,
+        free: bool,
+    ) -> Result<BuildingState, Refusal> {
+        let PlacementPlan { def, rotation, level, w, h, cost, walls, entrance } =
+            self.placement_plan(player, kind, (x, y), rotation, level, free)?;
+        let max_hp = def.max_hp;
         self.pay(player, &cost)?;
         for id in walls {
             if self.demolish(player, id).is_ok() {
