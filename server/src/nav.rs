@@ -73,6 +73,10 @@ pub struct NavGrid {
     clusters: Vec<Vec<Region>>,
     cw: i32,
     ch: i32,
+    /// Lauftempo je Feld in Prozent (Wege > 100).
+    speed: Vec<u16>,
+    /// Schnellstes Feld, für die Schätzung der Restkosten.
+    max_speed: u16,
     scratch: RefCell<Scratch>,
 }
 
@@ -127,6 +131,8 @@ impl NavGrid {
             clusters: vec![Vec::new(); (cw * ch) as usize],
             cw,
             ch,
+            speed: vec![100; n],
+            max_speed: 100,
             scratch: RefCell::new(Scratch::default()),
         };
         if blocked.iter().any(|&b| b) {
@@ -143,6 +149,25 @@ impl NavGrid {
             nav.link_cluster(c);
         }
         nav
+    }
+
+    /// Lauftempo auf einem Feld in Prozent (100 = normal, Wege schneller).
+    pub fn set_speed(&mut self, x: i32, y: i32, percent: u16) {
+        if !self.inside(x, y) {
+            return;
+        }
+        let i = self.idx(x, y);
+        self.speed[i] = percent.max(1);
+        self.max_speed = self.max_speed.max(percent);
+    }
+
+    /// Tempofaktor an einer Stelle (1.0 = normal).
+    pub fn speed_at(&self, p: (f32, f32)) -> f32 {
+        let (x, y) = (p.0.floor() as i32, p.1.floor() as i32);
+        if !self.inside(x, y) {
+            return 1.0;
+        }
+        self.speed[self.idx(x, y)] as f32 / 100.0
     }
 
     /// Feld blockieren (`true`) oder wieder freigeben. Mehrfaches Blockieren
@@ -406,9 +431,12 @@ impl NavGrid {
         // und die Suche liefert dort das Feld, das dem Ziel am nächsten ist.
         let target = goal;
 
+        // Kosten je Schritt sinken auf Wegen; die Schätzung rechnet mit dem
+        // schnellsten Feld, damit sie nie zu hoch liegt.
+        let fastest = self.max_speed as u32;
         let heuristic = |(x, y): (i32, i32)| {
             let (dx, dy) = ((x - target.0).unsigned_abs(), (y - target.1).unsigned_abs());
-            10 * dx.max(dy) + 4 * dx.min(dy)
+            (10 * dx.max(dy) + 4 * dx.min(dy)) * 100 / fastest
         };
         let mut open = BinaryHeap::new();
         let si = self.idx(start.0, start.1);
@@ -439,7 +467,7 @@ impl NavGrid {
                 if s.allowed[self.region[j] as usize] != stamp {
                     continue;
                 }
-                let c = ci + if dx != 0 && dy != 0 { 14 } else { 10 };
+                let c = ci + if dx != 0 && dy != 0 { 1400 } else { 1000 } / self.speed[j] as u32;
                 if s.seen[j] != stamp || c < s.cost[j] {
                     s.seen[j] = stamp;
                     s.cost[j] = c;
@@ -523,7 +551,12 @@ impl NavGrid {
         let mut i = 0;
         while i < points.len() {
             let mut j = (i + SMOOTH_LOOKAHEAD).min(points.len() - 1);
-            while j > i && !self.line_walkable(cur, points[j]) {
+            // Mit Wegen: nur über gleich schnelle Felder abkürzen, sonst schneidet
+            // die Linie den Weg ab, den die Suche extra genommen hat.
+            let roads = self.max_speed > 100;
+            let here = self.speed_at(cur);
+            let uniform = |j: usize| !roads || points[i..=j].iter().all(|&p| self.speed_at(p) == here);
+            while j > i && !(uniform(j) && self.line_walkable(cur, points[j])) {
                 j -= 1;
             }
             result.push(points[j]);

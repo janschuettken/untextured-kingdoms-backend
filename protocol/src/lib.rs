@@ -572,6 +572,10 @@ pub enum BuildingKind {
     Armory,
     /// Kornspeicher: Lager nur für Lebensmittel.
     Granary,
+    /// Weg aus Holzbohlen: darauf läuft man schneller.
+    WoodPath,
+    /// Gepflasterter Weg: darauf läuft man noch schneller.
+    StonePath,
 }
 
 /// Gruppe im Baumenü.
@@ -586,6 +590,7 @@ pub enum BuildingCategory {
     Workshop,
     Food,
     Military,
+    Road,
 }
 
 /// Eine Ausbaustufe. Stufe 1 ist das Bauen selbst.
@@ -680,6 +685,10 @@ pub struct BuildingDef {
     /// Darf auf Schrägen stehen (Mauern folgen dem Gelände).
     #[serde(default)]
     pub on_ramps: bool,
+    /// Weg: das Feld bleibt begehbar, und man läuft hier so viel Prozent schneller.
+    /// 0 = kein Weg.
+    #[serde(default)]
+    pub road_speed_percent: u32,
     /// Das erste Gebäude dieser Art je Spieler kostet nichts.
     #[serde(default)]
     pub first_free: bool,

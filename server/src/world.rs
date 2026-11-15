@@ -451,8 +451,8 @@ impl World {
             let (ux, uy) = (p.0.floor() as i64, p.1.floor() as i64);
             ux >= x as i64 && uy >= y as i64 && ux < (x + w) as i64 && uy < (y + h) as i64
         };
-        // Träger weichen aus, alle anderen Einheiten stehen im Weg.
-        if self.units.iter().any(|u| !u.is_civilian() && covers(u.pos)) {
+        // Träger weichen aus, alle anderen Einheiten stehen im Weg (nicht bei Wegen).
+        if def.road_speed_percent == 0 && self.units.iter().any(|u| !u.is_civilian() && covers(u.pos)) {
             return Err(Text::new("error.unit_in_way"));
         }
         self.pay(player, &cost)?;
@@ -498,14 +498,7 @@ impl World {
         if let Some((ex, ey)) = entrance {
             self.entrances.insert((ey * self.map.width + ex) as usize, b.id);
         }
-        for ty in y..y + h {
-            for tx in x..x + w {
-                self.occupied[(ty * self.map.width + tx) as usize] = b.id;
-                if gate::blocks(&b, tx, ty) {
-                    self.map.nav.set_blocked(tx as i32, ty as i32, true);
-                }
-            }
-        }
+        self.set_footprint(&b, true);
         self.buildings.push(b.clone());
         if !def.hub {
             let (cap, limits) = self.inventory_limits(b.kind);
@@ -516,7 +509,9 @@ impl World {
         if def.hub {
             self.update_capacity(player);
         }
-        self.make_room(&b);
+        if def.road_speed_percent == 0 {
+            self.make_room(&b);
+        }
         let spawns: Vec<_> = def.spawns.iter().chain(def.levels.iter().take(level as usize).flat_map(|l| &l.spawns)).copied().collect();
         for s in spawns {
             for n in 0..s.count {
@@ -583,7 +578,8 @@ impl World {
                 if self.occupied[i] != 0 && !ignore.contains(&self.occupied[i]) {
                     return Err(Text::new("error.occupied"));
                 }
-                if self.entrances.get(&i).is_some_and(|b| !ignore.contains(b)) {
+                // Wege dürfen vor Türen liegen, sie bleiben ja begehbar.
+                if def.road_speed_percent == 0 && self.entrances.get(&i).is_some_and(|b| !ignore.contains(b)) {
                     return Err(Text::new("error.blocks_entrance"));
                 }
                 let r = self.map.resources[i];
@@ -675,12 +671,17 @@ impl World {
         Ok(b)
     }
 
-    /// Felder eines Gebäudes belegen (`true`) oder freigeben.
-    fn set_footprint(&mut self, b: &BuildingState, on: bool) {
+    /// Felder eines Gebäudes belegen (`true`) oder freigeben. Wege blockieren
+    /// nicht, sondern machen das Feld schneller.
+    pub(super) fn set_footprint(&mut self, b: &BuildingState, on: bool) {
+        let road = self.economy.building(b.kind).map_or(0, |d| d.road_speed_percent);
         for ty in b.y..b.y + b.h {
             for tx in b.x..b.x + b.w {
                 self.occupied[(ty * self.map.width + tx) as usize] = if on { b.id } else { 0 };
-                if gate::blocks(b, tx, ty) {
+                if road > 0 {
+                    let pct = if on { (100 + road).min(u16::MAX as u32) as u16 } else { 100 };
+                    self.map.nav.set_speed(tx as i32, ty as i32, pct);
+                } else if gate::blocks(b, tx, ty) {
                     self.map.nav.set_blocked(tx as i32, ty as i32, on);
                 }
             }
@@ -775,14 +776,7 @@ impl World {
             }
             self.dirty_stocks.insert(b.owner);
         }
-        for ty in b.y..b.y + b.h {
-            for tx in b.x..b.x + b.w {
-                self.occupied[(ty * self.map.width + tx) as usize] = 0;
-                if gate::blocks(&b, tx, ty) {
-                    self.map.nav.set_blocked(tx as i32, ty as i32, false);
-                }
-            }
-        }
+        self.set_footprint(&b, false);
         self.drop_from_walls();
     }
 
@@ -1027,6 +1021,7 @@ impl World {
         let worker = self.economy.def.movement.worker_speed;
         let hungry: HashMap<u32, f32> = self.stocks.keys().map(|&p| (p, self.hunger_factor(p))).collect();
         let soldier: Vec<f32> = self.units.iter().map(|u| if u.kind.is_soldier() { self.soldier_speed(u.owner, u.kind) } else { 0.0 }).collect();
+        let nav = &self.map.nav;
         for (k, unit) in self.units.iter_mut().enumerate() {
             let speed = match unit.kind {
                 UnitKind::King => king,
@@ -1035,7 +1030,9 @@ impl World {
                 UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
             };
-            let mut budget = speed * dt;
+            // Auf Wegen schneller (oben auf der Mauer zählt der Boden nicht).
+            let road = if unit.on_wall { 1.0 } else { nav.speed_at(unit.pos) };
+            let mut budget = speed * road * dt;
             while budget > 0.0 {
                 let Some(&next) = unit.path.first() else { break };
                 let (dx, dy) = (next.0 - unit.pos.0, next.1 - unit.pos.1);
@@ -1456,6 +1453,44 @@ mod tests {
         w.spawn_player(1);
         assert_eq!(w.place_building(1, BuildingKind::Wall, 2, 0).unwrap_err().key, "error.on_resource");
         assert!(w.place_building(1, BuildingKind::Wall, 2, 1).is_ok());
+    }
+
+    #[test]
+    fn auf_wegen_schneller_und_der_weg_wird_genommen() {
+        // König bei (1.5, 1.5), Ziel (20.5, 1.5); ein Steinweg liegt einen Umweg weiter unten.
+        let run = |road: bool| {
+            let mut w = flat_world();
+            w.admin_give(1, &[GoodAmount { good: protocol::Good::Stone, amount: 500 }], 0);
+            if road {
+                for x in 1..=21 {
+                    w.place_building(1, BuildingKind::StonePath, x, 3).unwrap();
+                }
+                for y in [2, 1] {
+                    w.place_building(1, BuildingKind::StonePath, 21, y).unwrap();
+                }
+                w.place_building(1, BuildingKind::StonePath, 1, 2).unwrap();
+            }
+            let id = w.units[0].id;
+            assert!(w.order_move(1, &[id], (20.5, 1.5)));
+            let mut t = 0.0;
+            let mut via_road = false;
+            while (w.units[0].pos.0 - 20.5).abs() + (w.units[0].pos.1 - 1.5).abs() > 0.01 && t < 60.0 {
+                w.step(0.05);
+                t += 0.05;
+                via_road |= w.units[0].pos.1 > 3.0;
+            }
+            (t, via_road)
+        };
+        let (plain, _) = run(false);
+        let (fast, via_road) = run(true);
+        assert!(via_road, "nimmt den Weg");
+        assert!(fast < plain, "mit Weg {fast} s, ohne {plain} s");
+        // Wege blockieren nicht: man kann darüber laufen und davor bauen.
+        let mut w = flat_world();
+        w.admin_give(1, &[GoodAmount { good: protocol::Good::Stone, amount: 50 }], 0);
+        w.place_building(1, BuildingKind::StonePath, 5, 5).unwrap();
+        assert!(w.map.nav.is_open(5, 5));
+        assert!(w.economy.building(BuildingKind::StonePath).unwrap().road_speed_percent > 0);
     }
 
     #[test]

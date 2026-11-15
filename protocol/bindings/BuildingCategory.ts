@@ -3,4 +3,4 @@
 /**
  * Gruppe im Baumenü.
  */
-export type BuildingCategory = "housing" | "fortification" | "storage" | "raw" | "workshop" | "food" | "military";
+export type BuildingCategory = "housing" | "fortification" | "storage" | "raw" | "workshop" | "food" | "military" | "road";
