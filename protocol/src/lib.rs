@@ -71,7 +71,7 @@ pub enum ClientMsg {
         #[serde(default)]
         taler: u32,
     },
-    /// Nur Admin: Spieltempo für alle in Prozent (100 = normal, 25 bis 800).
+    /// Nur Admin: Spieltempo für alle in Prozent (100 = normal, 25 bis 800, 0 = Pause).
     AdminGameSpeed { percent: u32 },
     /// Sichtbereich des Clients in Feldern (Rechteck, Ecken eingeschlossen).
     /// Der Server schickt Einheiten nur für diesen Bereich (plus Rand) und
