@@ -7,7 +7,7 @@ mit Multiplayer-Fokus. Der Browser-Client liegt in
 ## Aufbau
 
 ```
-server/     Spielserver in Rust (tokio + axum, WebSocket unter /ws, feste Tick-Rate von 20/s)
+server/     Spielserver in Rust (tokio + axum): Lobby unter /lobby, jedes Spiel mit eigenem Thread unter /ws (20 Ticks/s)
 protocol/   Netzwerk-Nachrichten zwischen Server und Client (einzige Quelle der Wahrheit)
 Dockerfile          baut das Server-Image
 docker-compose.yml  startet das komplette Spiel (Server + Frontend mit Caddy)
@@ -168,7 +168,7 @@ Welche Karte der Server lädt, steuert `MAP=<name>` (ohne `.txt`, Standard `zwei
 | POST | `/api/maps/check` | Text prüfen: Größe, Startfelder, Fehler, Hinweise |
 | PUT | `/api/maps/{name}` | Karte speichern (nur ohne Fehler) |
 | GET | `/api/maps/generate?width=&height=&players=&seed=` | Zufallskarte als Text |
-| GET | `/api/maps/current` | Die laufende Karte mit aktuellem Stand (der Client lädt sie nach `welcome`) |
+| GET | `/api/games/{id}/map?token=` | Die laufende Karte eines Spiels mit aktuellem Stand (nur Mitspieler; der Client lädt sie nach `welcome`) |
 
 ## Große Karten
 
@@ -177,7 +177,7 @@ Gebaut für 1000 × 1000 Felder mit etwa 8 Spielern:
 - Wegsuche hierarchisch: erst über Gebiete in Blöcken zu 16 × 16 Feldern, dann feldgenau nur im
   Korridor. Ein Weg quer über eine 1000er-Karte dauert etwa 2 ms. Gebäude und Abholzen teilen nur die
   betroffenen Blöcke neu ein.
-- Die Karte geht nicht über den WebSocket, sondern als Text über `/api/maps/current` (2 MB, mit gzip
+- Die Karte geht nicht über den WebSocket, sondern als Text über `/api/games/{id}/map` (2 MB, mit gzip
   deutlich weniger). Danach kommen nur Änderungen (`resource_changed`, Gebäude).
 - Ticks gehen pro Client: nur Einheiten im Sichtbereich (`view`, plus Rand) und die eigenen, und davon
   nur neue oder veränderte; `gone` nennt Einheiten, die weg oder aus dem Bild sind.
@@ -237,15 +237,43 @@ Schnittstelle: siehe `server/src/admin.rs`.
 
 ### Spielstand
 
-Der Server speichert die ganze Welt (Gebäude, Lager, Einheiten, Ressourcen, Bevölkerung) alle 2 Minuten nach
-`SAVE_FILE`, lokal standardmäßig `server/data/save.json` (nicht im Repo), in Docker `/data/save.json` im Volume
-`game_data`. Beim Start wird er automatisch geladen, wenn er zur aktuellen Karte passt. Im Admin-Menü gibt es
-zusätzlich „Speichern“, „Laden“ und „Neues Spiel“ (`POST /api/save`, `/api/load`, `/api/new-game`); danach laden alle
-Browser neu.
+Jedes laufende Spiel speichert sich jede Minute nach `SAVES_DIR/<id>.json` (lokal `server/data/games/`, nicht im
+Repo, in Docker `/data/games` im Volume `game_data`), samt Karte und Startplätzen. Nach einem Neustart des Servers
+laufen alle gespeicherten Spiele weiter. Wartende Lobbys gehen beim Neustart verloren. Im Admin-Menü eines Spiels
+gibt es „Speichern“, „Laden“, „Neues Spiel“ und „Spiel beenden“ (`POST /api/games/{id}/save`, `/load`, `/new-game`,
+`/end`); danach laden alle Browser neu. `GET /api/games/{id}/players` listet die Spieler; als Admin kann man „Spielen
+als“ einen anderen Startplatz übernehmen (`/ws?game=..&token=..&as=<nr>`) oder ein Reich entfernen.
 
-Spieler bleiben nach dem Trennen erhalten. Der Browser merkt sich seine Spieler-Nummer und verbindet sich mit
-`/ws?player=<id>` wieder als derselbe Spieler. `GET /api/players` listet alle Spieler; im Admin-Menü kann man
-„Spielen als“ einen anderen (nicht verbundenen) Spieler wählen oder ihn entfernen (`POST /api/players/<id>/remove`).
+## Lobby und Spiele
+
+- Wer die Seite öffnet, landet in der Lobby (WebSocket `/lobby`). Dort legt man ein Spiel auf einer Karte an oder
+  tritt einem wartenden bei, sieht auf der Vorschau, wer wo startet, wechselt den Startplatz, und der Gastgeber startet.
+- Viele Spiele laufen gleichzeitig, jedes mit eigener Welt und eigenem Thread (`spiel-<id>`).
+- Spieler-Id: Der Browser erzeugt einmal einen geheimen Token und speichert ihn im `localStorage`. Wer neu lädt, kommt
+  mit demselben Token zurück in seine Lobby oder sein laufendes Spiel. Ein laufendes Spiel nimmt niemand Neues auf.
+  Zum Testen mit mehreren Spielern auf einem Rechner: ein privates Fenster oder ein anderer Browser.
+- Jeder ist höchstens in einem Spiel. Verlassen gibt den Platz frei; ist niemand mehr da, wird das Spiel beendet.
+- Code: `server/src/lobby.rs` (Lobby, Speichern), `server/src/game.rs` (Spiel-Thread, WebSocket eines Spiels).
+
+## Accounts (PostgreSQL)
+
+Optional kann man sich einen Account anlegen (Name und Passwort). Er bindet die Browser-Id an den Namen: Wer sich
+auf einem anderen Gerät anmeldet, ist wieder derselbe Spieler. Ohne `DATABASE_URL` sind Accounts aus, alles andere
+geht trotzdem. Passwörter werden mit Argon2 gehasht; die Tabellen legt der Server beim Start selbst an
+(`server/migrations/`). Schnittstelle: siehe `server/src/accounts.rs`.
+
+Lokal unter Windows:
+
+1. PostgreSQL installieren (<https://www.postgresql.org/download/windows/>), Port 5432.
+2. Mit `psql -U postgres` (oder pgAdmin):
+   ```sql
+   CREATE USER uk WITH PASSWORD 'dein-passwort';
+   CREATE DATABASE untextured_kingdoms OWNER uk;
+   ```
+3. In `.env` im Backend-Ordner (der Server liest sie beim Start):
+   `DATABASE_URL=postgres://uk:dein-passwort@localhost:5432/untextured_kingdoms`
+
+In Docker läuft die Datenbank als Dienst `db` mit (Passwort `DB_PASSWORD` in `.env`).
 
 ## Protokoll ändern
 
@@ -309,5 +337,6 @@ git pull && git -C ../untextured-kingdoms-frontend pull && docker compose up -d 
 ### Was dabei passiert
 
 - `server`: Das Rust-Programm läuft in einem schlanken Debian-Image (ca. 30 MB) und ist nur intern erreichbar.
-- `web`: wird aus dem Frontend-Repo gebaut. Caddy liefert den Client aus, leitet `/ws` an den Server weiter
+- `db`: PostgreSQL für die Accounts (Volume `db_data`).
+- `web`: wird aus dem Frontend-Repo gebaut. Caddy liefert den Client aus, leitet `/ws` und `/lobby` an den Server weiter
   und kümmert sich um HTTPS-Zertifikate.

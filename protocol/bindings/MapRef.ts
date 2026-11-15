@@ -2,7 +2,7 @@
 
 /**
  * Welche Karte gespielt wird. Die Karte selbst (Höhen, Ressourcen) holt der
- * Client als Text von `GET /api/maps/current` (Format wie `server/maps/*.txt`,
+ * Client als Text von `GET /api/games/{id}/map` (Format wie `server/maps/*.txt`,
  * mit dem aktuellen Stand der Ressourcen) und rechnet Eckhöhen selbst aus.
  * Änderungen danach kommen als [`ServerMsg::ResourceChanged`].
  */

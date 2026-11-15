@@ -152,6 +152,12 @@ pub enum ServerMsg {
     },
     /// Spielstand wurde geladen oder neu gestartet: Seite neu laden.
     Reload,
+    /// Dieses Spiel gibt es nicht (mehr), oder man ist dort kein Mitspieler.
+    /// Der Client geht zurück in die Lobby; die Verbindung wird geschlossen.
+    NotInGame,
+    /// Derselbe Spieler hat das Spiel in einem anderen Fenster geöffnet.
+    /// Dieses Fenster verbindet nicht neu.
+    OpenedElsewhere,
     /// Geplanter Weg der beobachteten Einheit (siehe `WatchUnit`), nächster Wegpunkt zuerst.
     /// Leer = steht. Kommt nur, wenn sich der Weg ändert.
     UnitPath {
@@ -163,6 +169,101 @@ pub enum ServerMsg {
     UnitInfo {
         info: UnitInfo,
     },
+}
+
+/// Nachrichten vom Client an die Lobby (WebSocket `/lobby`).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum LobbyClientMsg {
+    /// Als Erstes: wer man ist. `token` erzeugt der Browser einmal und
+    /// speichert ihn (geheim, nur der Server kennt ihn sonst).
+    Hello { token: String, name: String },
+    SetName { name: String },
+    Ping { client_time: f64 },
+    /// Neues Spiel (noch in der Lobby) auf einer Karte aus dem Kartenordner.
+    CreateGame { map: String },
+    /// Einem wartenden Spiel beitreten. Laufende Spiele nehmen niemanden auf.
+    JoinGame { game_id: u32 },
+    /// Das eigene Spiel verlassen (wartend oder laufend).
+    LeaveGame,
+    /// Startplatz wechseln (nur auf einen freien).
+    TakeSlot { slot: u32 },
+    /// Nur Gastgeber, nur vor dem Start: andere Karte.
+    SetMap { map: String },
+    /// Nur Gastgeber: Spiel starten.
+    StartGame,
+}
+
+/// Nachrichten der Lobby an den Client.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum LobbyServerMsg {
+    /// Antwort auf `hello`: die eigene öffentliche Id und die Karten zur Auswahl.
+    Welcome { you: String, maps: Vec<String> },
+    /// Kompletter Stand, kommt bei jeder Änderung neu.
+    State { games: Vec<GameSummary>, current: Option<LobbyGame> },
+    Pong { client_time: f64 },
+    Rejected { text: Text },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum GamePhase {
+    /// Wartet in der Lobby, man kann beitreten.
+    Waiting,
+    /// Läuft: nur die eigenen Mitspieler kommen (wieder) hinein.
+    Running,
+}
+
+/// Ein Spiel in der Übersicht.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GameSummary {
+    pub id: u32,
+    pub map: String,
+    pub phase: GamePhase,
+    pub host_name: String,
+    pub players: u32,
+    pub max_players: u32,
+}
+
+/// Das Spiel, in dem man selbst ist, mit allen Startplätzen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LobbyGame {
+    pub id: u32,
+    pub map: String,
+    pub width: u32,
+    pub height: u32,
+    pub phase: GamePhase,
+    /// Öffentliche Id des Gastgebers.
+    pub host: String,
+    /// Ein Eintrag je Startplatz der Karte, in derselben Reihenfolge.
+    pub slots: Vec<LobbySlot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LobbySlot {
+    /// Startfeld auf der Karte.
+    pub x: u32,
+    pub y: u32,
+    /// Spieler-Nummer im Spiel (bestimmt die Farbe).
+    pub player_id: u32,
+    pub member: Option<LobbyMember>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LobbyMember {
+    /// Öffentliche Id (nicht der geheime Token).
+    pub id: String,
+    pub name: String,
+    /// Gerade verbunden (Lobby oder Spiel).
+    pub online: bool,
 }
 
 /// Art eines Feldes.
@@ -179,7 +280,7 @@ pub enum TileKind {
 }
 
 /// Welche Karte gespielt wird. Die Karte selbst (Höhen, Ressourcen) holt der
-/// Client als Text von `GET /api/maps/current` (Format wie `server/maps/*.txt`,
+/// Client als Text von `GET /api/games/{id}/map` (Format wie `server/maps/*.txt`,
 /// mit dem aktuellen Stand der Ressourcen) und rechnet Eckhöhen selbst aus.
 /// Änderungen danach kommen als [`ServerMsg::ResourceChanged`].
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

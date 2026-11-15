@@ -307,6 +307,7 @@ impl World {
     }
 
     /// Neuer Spieler: bekommt einen König auf einem freien Startfeld.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn spawn_player(&mut self, player: u32) {
         let taken: Vec<(u32, u32)> = self
             .units
@@ -320,6 +321,11 @@ impl World {
             .copied()
             .find(|s| !taken.contains(s))
             .unwrap_or(spawns[player as usize % spawns.len()]);
+        self.spawn_player_at(player, (x, y));
+    }
+
+    /// Neuer Spieler auf einem bestimmten Startfeld (aus der Lobby).
+    pub fn spawn_player_at(&mut self, player: u32, (x, y): (u32, u32)) {
         let id = self.next_unit_id;
         self.next_unit_id += 1;
         // Noch kein Lager, also kein Platz: die Startgüter liegen „virtuell“ im Vorrat und

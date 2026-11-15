@@ -3,3 +3,4 @@
 server/data/*.bak
 server/data/*.tmp
 server/data/save.json
+server/data/games/

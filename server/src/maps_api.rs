@@ -6,7 +6,7 @@
 //! - `PUT  /api/maps/{name}`  Karte speichern (nur wenn erlaubt, siehe [`MapStore::can_save`])
 //! - `GET  /api/maps/generate?width=..&height=..&players=..&seed=..`  Zufallskarte erzeugen
 //!
-//! `GET /api/maps/current` (die laufende Karte mit aktuellem Stand) liegt in `main.rs`.
+//! `GET /api/games/{id}/map` (die laufende Karte eines Spiels mit aktuellem Stand) liegt in `game.rs`.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -69,18 +69,25 @@ pub fn router<S: Clone + Send + Sync + 'static>(store: Arc<MapStore>) -> Router<
 }
 
 async fn list(State(store): State<Arc<MapStore>>) -> Response {
-    let mut names: Vec<String> = std::fs::read_dir(&store.dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| {
-            let p = e.path();
-            (p.extension()? == "txt").then(|| p.file_stem()?.to_str().map(String::from))?
-        })
-        .filter(|n| valid_name(n))
-        .collect();
-    names.sort();
-    Json(serde_json::json!({ "maps": names, "can_save": store.can_save })).into_response()
+    Json(serde_json::json!({ "maps": store.names(), "can_save": store.can_save })).into_response()
+}
+
+impl MapStore {
+    /// Namen aller Karten im Kartenordner, sortiert.
+    pub fn names(&self) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let p = e.path();
+                (p.extension()? == "txt").then(|| p.file_stem()?.to_str().map(String::from))?
+            })
+            .filter(|n| valid_name(n))
+            .collect();
+        names.sort();
+        names
+    }
 }
 
 async fn load(State(store): State<Arc<MapStore>>, Path(name): Path<String>) -> Response {

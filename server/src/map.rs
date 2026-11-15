@@ -32,8 +32,8 @@ pub const STEPS_PER_LEVEL: u16 = 12;
 /// Höchste Höhenstufe.
 pub const MAX_LEVEL: u8 = 9;
 
-/// Die Standardkarte, beim Kompilieren eingebettet (Rückfall, falls der
-/// Kartenordner fehlt).
+/// Die Standardkarte, beim Kompilieren eingebettet (für Tests).
+#[cfg(test)]
 pub const DEFAULT_MAP: &str = include_str!("../maps/zwei-burgen.txt");
 
 /// Größte erlaubte Kartenseite.
