@@ -102,6 +102,7 @@ impl World {
                 w.spawn_workers(bi);
             }
         }
+        w.update_inventory_capacities();
         // Lagerplatz neu berechnen: die Lagerarten können sich seitdem geändert haben.
         let players: Vec<u32> = w.stocks.keys().copied().collect();
         for p in players {

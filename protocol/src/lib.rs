@@ -567,6 +567,9 @@ pub struct BuildingDef {
     /// Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
     #[serde(default)]
     pub hub_capacity: u32,
+    /// Betriebe: so viel passt je Ware ins eigene Lager. 0 = `transport.building_capacity`.
+    #[serde(default)]
+    pub building_storage: u32,
     pub levels: Vec<BuildingLevel>,
 }
 
@@ -818,6 +821,9 @@ pub struct BuildingSettings {
     /// Höchstbestand im Vorrat: liegt von einem Ergebnis so viel im Vorrat, macht der Betrieb Pause.
     #[serde(default)]
     pub stop_at: Vec<GoodAmount>,
+    /// Eigenes Lager des Betriebs je Ware; `None` = wie im Balancing für diese Gebäudeart.
+    #[serde(default)]
+    pub storage: Option<u32>,
 }
 
 /// Wie sich ein Tor verhält.

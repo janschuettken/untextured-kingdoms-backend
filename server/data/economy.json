@@ -1227,7 +1227,7 @@
     "cart_capacity": 20,
     "cart_speed": 2,
     "cart_min_load": 8,
-    "building_capacity": 12
+    "building_capacity": 20
   },
   "movement": {
     "king_speed": 1.5,

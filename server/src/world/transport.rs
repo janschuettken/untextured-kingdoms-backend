@@ -29,6 +29,8 @@ const IDLE_WAIT: f32 = 1.0;
 const FAIL_WAIT: f32 = 3.0;
 /// So nah (Felder vom Gebäuderand) muss ein Träger kommen, um zu laden.
 const REACH: f32 = 1.6;
+/// So nah am Eingangsfeld (Mitte) gilt man als „an der Tür“.
+const AT_DOOR: f32 = 0.9;
 
 /// Höchstens so viele Betriebe fährt ein Karren auf einer Sammelfahrt an.
 const TOUR_STOPS: usize = 4;
@@ -339,7 +341,7 @@ impl World {
         let Some(&bi) = index.get(&at) else {
             return self.fail(k, index);
         };
-        if dist_to(&self.buildings[bi], self.units[k].pos) > REACH {
+        if !self.at_door(&self.buildings[bi], self.units[k].pos) {
             return self.fail(k, index);
         }
         let owner = self.units[k].owner;
@@ -510,7 +512,7 @@ impl World {
             return;
         };
         let Some(&bi) = index.get(&home) else { return };
-        if dist_to(&self.buildings[bi], self.units[k].pos) > REACH {
+        if !self.at_door(&self.buildings[bi], self.units[k].pos) {
             self.route(k, home, index);
         }
     }
@@ -531,6 +533,18 @@ impl World {
     }
 
     /// Freies Feld am Rand eines Gebäudes, das `from` am nächsten liegt.
+    /// Steht die Einheit am Zugang des Gebäudes? Mit Eingang: genau dort (auch wenn
+    /// Gebäude direkt nebeneinander stehen, muss man hinlaufen), sonst am Rand.
+    pub(super) fn at_door(&self, b: &BuildingState, p: (f32, f32)) -> bool {
+        if let Some((ex, ey)) = b.entrance {
+            if self.map.nav.is_open(ex as i32, ey as i32) {
+                let (dx, dy) = (ex as f32 + 0.5 - p.0, ey as f32 + 0.5 - p.1);
+                return dx * dx + dy * dy <= AT_DOOR * AT_DOOR;
+            }
+        }
+        dist_to(b, p) <= REACH
+    }
+
     pub(super) fn door(&self, b: &BuildingState, from: (f32, f32)) -> Option<(f32, f32)> {
         // Gebäude mit Eingang: immer dorthin.
         if let Some((ex, ey)) = b.entrance {
@@ -723,8 +737,8 @@ mod tests {
         w.worker_carries_default = false; // hier tragen die Träger
         let orchard = w.place_building(1, BuildingKind::Orchard, 30, 2).unwrap();
         // Kein Lager: Obst bleibt liegen, bis das eigene Lager voll ist.
-        run(&mut w, 25.0 * 7.0 + 5.0);
         let cap = w.economy.def.transport.building_capacity;
+        run(&mut w, 25.0 * cap.div_ceil(2) as f32 + 30.0);
         assert_eq!(local(&w, orchard.id, Good::Fruit), cap);
         assert_eq!(
             w.buildings

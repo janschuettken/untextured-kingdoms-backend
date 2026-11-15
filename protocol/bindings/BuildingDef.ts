@@ -87,4 +87,8 @@ hub_goods: Array<Good>,
 /**
  * Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
  */
-hub_capacity: number, levels: Array<BuildingLevel>, };
+hub_capacity: number, 
+/**
+ * Betriebe: so viel passt je Ware ins eigene Lager. 0 = `transport.building_capacity`.
+ */
+building_storage: number, levels: Array<BuildingLevel>, };
