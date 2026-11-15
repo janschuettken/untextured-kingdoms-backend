@@ -12,6 +12,9 @@ use protocol::{BuildingSettings, BuildingState, BuildingStatus, ResourceKind, Se
 use super::{Refusal, World};
 use crate::map::resource_blocks;
 
+/// Höchstens so viel darf ein Spieler je Ware im Betrieb lagern lassen.
+pub const MAX_STORAGE: u32 = 200;
+
 /// Laufender Durchlauf eines Gebäudes.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Work {
@@ -263,7 +266,14 @@ impl World {
             // Rezept gewechselt: laufender Durchlauf verfällt (Eingänge sind verbraucht).
             self.work.remove(&id);
         }
+        if settings.storage.is_some_and(|n| n == 0 || n > MAX_STORAGE) {
+            return Err(Text::new("error.bad_amount"));
+        }
         self.buildings[i].settings = settings;
+        let cap = self.inventory_capacity(&self.buildings[i]);
+        if let Some(inv) = self.inventories.get_mut(&id) {
+            inv.capacity = cap;
+        }
         Ok(self.buildings[i].clone())
     }
 
@@ -374,6 +384,25 @@ mod tests {
         }
         assert!(seen > 0.0, "Tempo {seen}");
         assert!(sent < 60, "zu oft geschickt: {sent}");
+    }
+
+    #[test]
+    fn lager_im_betrieb_einstellbar() {
+        let mut w = world(&map(20, 10, (0, 9), &[]));
+        let b = w.place_building(1, BuildingKind::Bowyer, 2, 0).unwrap();
+        assert_eq!(w.inventories[&b.id].capacity, w.economy.def.transport.building_capacity);
+        let mut s = b.settings.clone();
+        s.storage = Some(5);
+        w.configure(1, b.id, s.clone()).unwrap();
+        assert_eq!(w.inventories[&b.id].capacity, 5);
+        s.storage = Some(0);
+        assert_eq!(w.configure(1, b.id, s).unwrap_err().key, "error.bad_amount");
+        let mut eco = w.economy.clone();
+        eco.def.buildings.iter_mut().find(|d| d.kind == BuildingKind::Bowyer).unwrap().building_storage = 30;
+        let saw = w.place_building(1, BuildingKind::Bowyer, 10, 0).unwrap();
+        w.set_economy(eco);
+        assert_eq!(w.inventories[&saw.id].capacity, 30, "Gebäudeart");
+        assert_eq!(w.inventories[&b.id].capacity, 5, "eigene Einstellung bleibt");
     }
 
     #[test]

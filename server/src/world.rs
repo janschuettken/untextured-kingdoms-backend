@@ -249,15 +249,29 @@ impl World {
         }
     }
 
+    /// Eigenes Lager eines Betriebs je Ware: Einstellung am Gebäude, sonst Gebäudeart, sonst Standard.
+    pub(crate) fn inventory_capacity(&self, b: &BuildingState) -> u32 {
+        let by_kind = self.economy.building(b.kind).map_or(0, |d| d.building_storage);
+        let cap = b.settings.storage.unwrap_or(if by_kind > 0 { by_kind } else { self.economy.def.transport.building_capacity });
+        cap.max(1)
+    }
+
+    /// Lagergrößen aller Betriebe neu setzen (Balancing geändert, Spielstand geladen).
+    pub(crate) fn update_inventory_capacities(&mut self) {
+        let caps: Vec<(u32, u32)> = self.buildings.iter().map(|b| (b.id, self.inventory_capacity(b))).collect();
+        for (id, cap) in caps {
+            if let Some(inv) = self.inventories.get_mut(&id) {
+                inv.capacity = cap;
+            }
+        }
+    }
+
     /// Neue Wirtschaftsdaten aus dem Balancing-Editor übernehmen. Stehende
     /// Gebäude bleiben; Lagergrößen passen sich an, Rezepte, die es nicht mehr
     /// gibt, laufen nicht weiter.
     pub fn set_economy(&mut self, economy: Economy) {
         self.economy = economy;
-        let cap = self.economy.def.transport.building_capacity;
-        for inv in self.inventories.values_mut() {
-            inv.capacity = cap;
-        }
+        self.update_inventory_capacities();
         let players: Vec<u32> = self.stocks.keys().copied().collect();
         for p in players {
             self.update_capacity(p);
@@ -384,6 +398,7 @@ impl World {
             gate: GateMode::Auto,
             worker_carries: self.worker_carries_default,
             stop_at: Vec::new(),
+            storage: None,
         };
         let status = if settings.recipe.is_some() { BuildingStatus::Working } else { BuildingStatus::Idle };
         let b = BuildingState {
@@ -421,7 +436,8 @@ impl World {
         }
         self.buildings.push(b.clone());
         if !def.hub {
-            self.inventories.insert(b.id, Stock::new(self.economy.def.transport.building_capacity));
+            let cap = self.inventory_capacity(&b);
+            self.inventories.insert(b.id, Stock::new(cap));
         }
         if def.hub {
             self.update_capacity(player);
@@ -979,9 +995,7 @@ impl World {
             return false;
         }
         let Some(b) = u.home.and_then(|h| self.buildings.iter().find(|b| b.id == h)) else { return false };
-        let dx = (b.x as f32 - u.pos.0).max(u.pos.0 - (b.x + b.w) as f32).max(0.0);
-        let dy = (b.y as f32 - u.pos.1).max(u.pos.1 - (b.y + b.h) as f32).max(0.0);
-        dx * dx + dy * dy <= 2.0 * 2.0
+        self.at_door(b, u.pos)
     }
 }
 

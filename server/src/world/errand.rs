@@ -11,8 +11,6 @@ use super::{gather::Gather, World};
 
 /// Wie lange ein Arbeiter wartet, bevor er wieder nach Arbeit schaut.
 const WAIT: f32 = 1.0;
-/// So nah (Felder vom Gebäuderand) muss er kommen, um zu laden.
-const REACH: f32 = 1.6;
 
 impl World {
     /// Hat der Spieler Träger oder Karren, die arbeiten (also eine Wohnung haben)?
@@ -162,12 +160,7 @@ impl World {
     }
 
     fn near(&self, k: usize, building: u32) -> bool {
-        self.buildings.iter().find(|b| b.id == building).is_some_and(|b| {
-            let p = self.units[k].pos;
-            let dx = (b.x as f32 - p.0).max(p.0 - (b.x + b.w) as f32).max(0.0);
-            let dy = (b.y as f32 - p.1).max(p.1 - (b.y + b.h) as f32).max(0.0);
-            (dx * dx + dy * dy).sqrt() <= REACH
-        })
+        self.buildings.iter().find(|b| b.id == building).is_some_and(|b| self.at_door(b, self.units[k].pos))
     }
 
     /// Zum Gebäude laufen. `false`, wenn es keinen freien Platz davor gibt.
@@ -281,5 +274,24 @@ mod tests {
             w.step(0.05);
         }
         assert_eq!(w.buildings.iter().find(|b| b.id == saw.id).unwrap().status, BuildingStatus::StockReserved);
+    }
+
+    #[test]
+    fn nebeneinander_wird_trotzdem_zur_tuer_gelaufen() {
+        let mut w = flat();
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        let store = w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap();
+        // Sägewerk direkt rechts neben dem Lager.
+        let saw = w.place_building(1, BuildingKind::Sawmill, store.x + store.w, 2).unwrap();
+        let worker = w.units.iter().position(|u| u.kind == UnitKind::Worker && u.home == Some(saw.id)).unwrap();
+        let mut walked = 0;
+        for _ in 0..20 * 120 {
+            w.step(0.05);
+            let u = &w.units[worker];
+            if u.carrying.is_some() && !u.path.is_empty() {
+                walked += 1;
+            }
+        }
+        assert!(walked > 20, "Arbeiter läuft sichtbar zwischen den Türen ({walked} Schritte)");
     }
 }
