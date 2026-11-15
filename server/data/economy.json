@@ -614,7 +614,6 @@
       "w": 4,
       "h": 4,
       "max_hp": 300,
-      "placement": {"resources": ["farmland"], "min_share_percent": 50},
       "service_radius": 0,
       "no_entrance": false,
       "spawns": [],

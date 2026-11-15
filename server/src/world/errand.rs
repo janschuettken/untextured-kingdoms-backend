@@ -57,7 +57,7 @@ impl World {
                 let id = self.buildings[bi].id;
                 if let Some(load) = self.units[k].carrying {
                     let inv = self.inventories.get_mut(&id).expect("Betrieb hat ein Lager");
-                    let fits = load.amount.min(inv.capacity.saturating_sub(inv.amount(load.good)));
+                    let fits = load.amount.min(inv.room(load.good));
                     inv.add(load.good, fits);
                     self.dirty_buildings.insert(id);
                     // Was nicht passt, geht in den Vorrat, damit nichts verloren geht.
@@ -167,7 +167,7 @@ impl World {
             .inputs
             .iter()
             .filter_map(|i| {
-                let want = (i.amount * 2).min(inv.capacity);
+                let want = (i.amount * 2).min(inv.capacity_of(i.good));
                 let keep = b.settings.keep_in_stock.iter().find(|g| g.good == i.good).map_or(0, |g| g.amount);
                 let there = stock.amount(i.good).saturating_sub(keep);
                 let amount = want.saturating_sub(inv.amount(i.good)).min(cap).min(there);

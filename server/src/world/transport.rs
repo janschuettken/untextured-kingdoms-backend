@@ -276,7 +276,7 @@ impl World {
             }
             for i in inputs.iter().filter(|i| moves(i.good)) {
                 let Some(hub) = self.nearest_hub_having(owner, u.pos, i.good) else { continue };
-                let want = (i.amount * 2).min(inv.capacity);
+                let want = (i.amount * 2).min(inv.capacity_of(i.good));
                 let have = inv.amount(i.good) + Reserved::get(&reserved.incoming, (b.id, i.good));
                 let keep = b.settings.keep_in_stock.iter().find(|g| g.good == i.good).map_or(0, |g| g.amount);
                 let there = stock
@@ -764,18 +764,14 @@ mod tests {
         assert!(central(&w, Good::Fruit) >= fruit + cap);
         // Ohne Träger: Kleinkram lässt auch der Karren liegen.
         w.units.retain(|u| u.kind != UnitKind::Carrier);
-        // Wenig liegt herum: dafür fährt der Karren nicht.
-        let min = w.economy.def.transport.cart_min_load;
-        let left = local(&w, orchard.id, Good::Fruit);
-        let inv = w.inventories.get_mut(&orchard.id).unwrap();
-        inv.take_all(&[GoodAmount {
-            good: Good::Fruit,
-            amount: left,
-        }]);
-        inv.add(Good::Fruit, min - 1);
+        // Wenig liegt herum: dafür fährt der Karren nicht. Erst anhalten und
+        // eine laufende Fahrt zu Ende fahren lassen.
         let mut s = orchard.settings.clone();
         s.paused = true;
         w.configure(1, orchard.id, s).unwrap();
+        run(&mut w, 40.0);
+        let min = w.economy.def.transport.cart_min_load;
+        set_fruit(&mut w, orchard.id, min - 1);
         run(&mut w, 30.0);
         assert_eq!(local(&w, orchard.id, Good::Fruit), min - 1);
     }
