@@ -37,18 +37,20 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 6}],
           "recipes": [],
-          "housing": 4,
+          "housing": 6,
           "spawns": [],
           "trains": []
         },
         {
           "cost": [{"good": "wood", "amount": 10}, {"good": "boards", "amount": 15}],
           "recipes": [],
-          "housing": 8,
+          "housing": 14,
           "spawns": [],
           "trains": []
         }
@@ -70,6 +72,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 3}],
@@ -103,6 +107,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "blocks", "amount": 3}],
@@ -136,6 +142,8 @@
       "garrison": 12,
       "on_walls": true,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 6}, {"good": "blocks", "amount": 10}],
@@ -169,6 +177,8 @@
       "garrison": 4,
       "on_walls": true,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 5}, {"good": "blocks", "amount": 14}],
@@ -202,6 +212,8 @@
       "garrison": 0,
       "on_walls": true,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 12}, {"good": "wood", "amount": 5}],
@@ -235,6 +247,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 3}],
@@ -268,6 +282,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 6}, {"good": "wood", "amount": 4}],
@@ -296,6 +312,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": true,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -327,6 +345,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": true,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 26}],
@@ -353,15 +373,18 @@
       "gate_radius": 0,
       "garrison": 0,
       "on_walls": false,
+      "first_free": false,
+      "hub_goods": ["grain", "flour", "bread", "fruit", "meat"],
+      "hub_capacity": 300,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}, {"good": "boards", "amount": 10}],
           "recipes": [],
-          "housing": 0
+          "housing": 0,
+          "spawns": [],
+          "trains": []
         }
-      ],
-      "hub_goods": ["grain", "flour", "bread", "fruit", "meat"],
-      "hub_capacity": 300
+      ]
     },
     {
       "kind": "armory",
@@ -379,6 +402,9 @@
       "gate_radius": 0,
       "garrison": 0,
       "on_walls": false,
+      "first_free": false,
+      "hub_goods": ["spear", "longbow", "crossbow", "sword", "armor", "light_armor", "saddle"],
+      "hub_capacity": 200,
       "levels": [
         {
           "cost": [
@@ -387,11 +413,11 @@
             {"good": "stone", "amount": 10}
           ],
           "recipes": [],
-          "housing": 0
+          "housing": 0,
+          "spawns": [],
+          "trains": []
         }
-      ],
-      "hub_goods": ["spear", "longbow", "crossbow", "sword", "armor", "light_armor", "saddle"],
-      "hub_capacity": 200
+      ]
     },
     {
       "kind": "cart_shed",
@@ -409,6 +435,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -428,14 +456,14 @@
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 30}],
           "recipes": [],
           "housing": 0,
-          "spawns": [{"kind": "cart", "count": 1}],
+          "spawns": [{"kind": "cart", "count": 1}, {"kind": "carrier", "count": 3}],
           "trains": []
         },
         {
           "cost": [{"good": "boards", "amount": 40}, {"good": "blocks", "amount": 15}],
           "recipes": [],
           "housing": 0,
-          "spawns": [{"kind": "cart", "count": 1}],
+          "spawns": [{"kind": "cart", "count": 2}, {"kind": "carrier", "count": 3}],
           "trains": []
         }
       ]
@@ -450,22 +478,16 @@
       "service_radius": 0,
       "no_entrance": false,
       "spawns": [],
-      "workers": 1,
+      "workers": 0,
       "walkway_from_level": 0,
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
-      "levels": [
-        {
-          "cost": [{"good": "wood", "amount": 26}, {"good": "boards", "amount": 30}],
-          "recipes": [],
-          "housing": 0,
-          "spawns": [],
-          "trains": []
-        }
-      ]
+      "hub_goods": [],
+      "hub_capacity": 0,
+      "levels": [{"cost": [], "recipes": [], "housing": 0, "spawns": [], "trains": []}]
     },
     {
       "kind": "woodcutter",
@@ -485,6 +507,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 10}],
@@ -513,6 +537,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -541,6 +567,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 15}],
@@ -568,6 +596,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -594,6 +624,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -620,6 +652,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -646,6 +680,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -672,6 +708,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 20}],
@@ -705,6 +743,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 20}],
@@ -738,6 +778,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -768,6 +810,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -809,6 +853,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 30}],
@@ -835,6 +881,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -866,6 +914,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -892,6 +942,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -926,6 +978,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 30}],
@@ -952,6 +1006,8 @@
       "garrison": 0,
       "on_walls": false,
       "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
       "levels": [
         {
           "cost": [
