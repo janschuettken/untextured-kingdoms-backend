@@ -1067,7 +1067,7 @@
       "id": "grow_grain",
       "building": "farm",
       "inputs": [],
-      "outputs": [{"good": "grain", "amount": 2}],
+      "outputs": [{"good": "grain", "amount": 5}],
       "seconds": 20
     },
     {
@@ -1143,15 +1143,15 @@
     {
       "id": "grind_flour",
       "building": "mill",
-      "inputs": [{"good": "grain", "amount": 2}],
-      "outputs": [{"good": "flour", "amount": 1}],
+      "inputs": [{"good": "grain", "amount": 1}],
+      "outputs": [{"good": "flour", "amount": 2}],
       "seconds": 8
     },
     {
       "id": "bake_bread",
       "building": "bakery",
       "inputs": [{"good": "flour", "amount": 1}],
-      "outputs": [{"good": "bread", "amount": 2}],
+      "outputs": [{"good": "bread", "amount": 5}],
       "seconds": 10
     },
     {
@@ -1179,7 +1179,7 @@
       "id": "grow_fruit",
       "building": "orchard",
       "inputs": [],
-      "outputs": [{"good": "fruit", "amount": 2}],
+      "outputs": [{"good": "fruit", "amount": 10}],
       "seconds": 25
     }
   ],
