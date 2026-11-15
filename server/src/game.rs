@@ -475,11 +475,10 @@ async fn handle_msg(
             }
         }
         ClientMsg::MoveUnits { unit_ids, x, y } => {
-            state
-                .world
-                .lock()
-                .unwrap()
-                .order_move(player_id, &unit_ids, (x, y));
+            let reachable = state.world.lock().unwrap().order_move(player_id, &unit_ids, (x, y));
+            if !reachable {
+                drop(out_tx.try_send(ServerMsg::MoveUnreachable { x, y }));
+            }
         }
         ClientMsg::PlaceBuilding {
             kind,

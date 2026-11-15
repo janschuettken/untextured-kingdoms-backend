@@ -808,9 +808,11 @@ impl World {
     }
 
     /// Bewegungsbefehl eines Spielers. Fremde Einheiten werden ignoriert.
-    pub fn order_move(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32)) {
+    /// Liefert false, wenn keine der Einheiten das Ziel erreichen kann; dann
+    /// läuft auch keine los. Wer nicht hinkommt, bleibt stehen.
+    pub fn order_move(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32)) -> bool {
         if !target.0.is_finite() || !target.1.is_finite() {
-            return;
+            return false;
         }
         let target = (
             target.0.clamp(0.0, self.map.width as f32 - 0.01),
@@ -827,6 +829,19 @@ impl World {
             _ => Vec::new(),
         }
         .into_iter();
+        // Ankunft „nah genug“: Klick auf ein Hindernis direkt am Weg zählt noch.
+        const REACH: f32 = 1.5;
+        let near = |p: (f32, f32), q: (f32, f32)| (p.0 - q.0).hypot(p.1 - q.1) <= REACH;
+        // Erst: kommt überhaupt jemand zum geklickten Punkt? Sonst läuft keiner los.
+        let reachable = chosen.iter().any(|&k| {
+            let u = &self.units[k];
+            let route = self.plan(player, u.pos, u.on_wall, target, target_wall);
+            near(route.0.last().copied().unwrap_or(u.pos), target)
+        });
+        if !reachable {
+            return false;
+        }
+        let mut orders = Vec::new();
         for (&k, &spot) in chosen.iter().zip(&spots) {
             let u = &self.units[k];
             let (to, wall) = match &mut room {
@@ -837,13 +852,32 @@ impl World {
                 }
                 None => (spot, target_wall),
             };
-            let (path, layers) = self.plan(player, u.pos, u.on_wall, to, wall);
+            let route = self.plan(player, u.pos, u.on_wall, to, wall);
+            let end = route.0.last().copied().unwrap_or(u.pos);
+            // Am Rand der Formation unerreichbar? Dann zum Zielpunkt selbst.
+            let (to, route) = if near(end, to) {
+                (to, route)
+            } else {
+                let direct = self.plan(player, u.pos, u.on_wall, target, wall);
+                let end = direct.0.last().copied().unwrap_or(u.pos);
+                if !near(end, target) {
+                    continue;
+                }
+                (target, direct)
+            };
+            orders.push((k, to, wall, route));
+        }
+        if orders.is_empty() {
+            return false;
+        }
+        for (k, to, wall, (path, layers)) in orders {
             let u = &mut self.units[k];
             u.path = path;
             u.layers = layers;
             u.target = Some(to);
             u.target_wall = wall;
         }
+        true
     }
 
     /// Ziele für eine Gruppe: ein enges Raster (`FORMATION_GAP`) um den
@@ -1422,6 +1456,25 @@ mod tests {
         w.spawn_player(1);
         assert_eq!(w.place_building(1, BuildingKind::Wall, 2, 0).unwrap_err().key, "error.on_resource");
         assert!(w.place_building(1, BuildingKind::Wall, 2, 1).is_ok());
+    }
+
+    #[test]
+    fn unerreichbares_ziel_niemand_laeuft_los() {
+        // Links Land, in der Mitte Wasser, rechts eine Insel.
+        let row = format!("{}{}{}", "0".repeat(8), "~".repeat(4), "0".repeat(8));
+        let text = format!("spawn 2 2\nspawn 3 3\n{}", format!("{row}\n").repeat(10));
+        let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people().without_start_building();
+        let mut world = World::new(GameMap::parse(&text).unwrap(), eco);
+        world.spawn_player(1);
+        let id = world.units[0].id;
+        let start = world.units[0].pos;
+        assert!(!world.order_move(1, &[id], (15.5, 5.5)), "Insel");
+        assert!(!world.order_move(1, &[id], (9.5, 5.5)), "Wasser");
+        world.step(0.5);
+        assert_eq!(world.units[0].pos, start, "nicht losgelaufen");
+        assert!(world.order_move(1, &[id], (6.5, 5.5)));
+        world.step(0.5);
+        assert_ne!(world.units[0].pos, start);
     }
 
     #[test]

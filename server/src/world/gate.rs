@@ -442,7 +442,8 @@ mod tests {
         s.gate = GateMode::Open;
         w.configure(1, id, s).unwrap();
         w.units.push(Unit::new(999, 2, UnitKind::King, (11.5, 14.5)));
-        w.order_move(1, &[w.units[k].id], (11.5, 20.5));
+        run(&mut w, 0.5); // Tor geht auf
+        assert!(w.order_move(1, &[w.units[k].id], (11.5, 20.5)));
         run(&mut w, 30.0);
         assert!(w.buildings[g].gate_open);
         assert!(w.units[k].pos.1 > 19.0, "Tor offen: König bei {:?}", w.units[k].pos);

@@ -212,14 +212,18 @@ mod tests {
     #[test]
     fn erstes_lager_ist_gratis() {
         let row = "0".repeat(40);
-        let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
-        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
+        let text = format!("spawn 4 16\n{}", format!("{row}\n").repeat(20));
+        // Mit Bergfried: dort ist Platz für die Erstattung beim Abriss.
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
         w.spawn_player(1);
-        assert!(w.economy.building(BuildingKind::Storehouse).unwrap().first_free);
+        // Welches Lager gratis ist, stellt Jan im Balance-Editor ein.
+        let Some(kind) = w.economy.def.buildings.iter().find(|d| d.first_free && d.hub && d.kind != BuildingKind::Keep).map(|d| d.kind) else {
+            return;
+        };
         let before = w.stocks[&1].state().goods;
-        let store = w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap().id;
+        let store = w.place_building(1, kind, 20, 2).unwrap().id;
         assert_eq!(w.stocks[&1].state().goods, before, "erstes Lager kostet nichts");
-        w.place_building(1, BuildingKind::Storehouse, 20, 12).unwrap();
+        w.place_building(1, kind, 20, 12).unwrap();
         let after = w.stocks[&1].state().goods;
         assert_ne!(after, before, "zweites Lager kostet");
         // Abriss erstattet wie üblich, solange noch eins bleibt.
