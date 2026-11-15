@@ -209,7 +209,7 @@ mod tests {
     fn flat() -> World {
         let row = "0".repeat(40);
         let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
-        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
         w.spawn_player(1);
         w
     }

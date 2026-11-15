@@ -611,7 +611,7 @@ mod tests {
         let text = format!("spawn 0 {}\n{}", h - 1, format!("{row}\n").repeat(h));
         let mut world = World::new(
             GameMap::parse(&text).unwrap(),
-            Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people(),
+            Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people(),
         );
         world.spawn_player(1);
         world

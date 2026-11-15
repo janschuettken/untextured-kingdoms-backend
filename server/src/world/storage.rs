@@ -181,7 +181,7 @@ mod tests {
     fn jedes_lager_kennt_seinen_bestand() {
         let row = "0".repeat(40);
         let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
-        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
         w.spawn_player(1);
         let keep = w.place_building(1, BuildingKind::Keep, 2, 2).unwrap().id;
         let store = w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap().id;
@@ -213,7 +213,7 @@ mod tests {
     fn erstes_lager_ist_gratis() {
         let row = "0".repeat(40);
         let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
-        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
         w.spawn_player(1);
         assert!(w.economy.building(BuildingKind::Storehouse).unwrap().first_free);
         let before = w.stocks[&1].state().goods;
@@ -237,7 +237,7 @@ mod tests {
     fn ohne_lager_kein_platz_startgueter_ziehen_ins_erste_lager() {
         let row = "0".repeat(40);
         let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
-        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
         w.spawn_player(1);
         assert_eq!(w.stocks[&1].capacity, 0, "ohne Lager kein Platz");
         let wood = w.stocks[&1].amount(Good::Wood);
@@ -255,7 +255,7 @@ mod tests {
     fn kornspeicher_nimmt_nur_lebensmittel() {
         let row = "0".repeat(40);
         let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
-        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
         w.spawn_player(1);
         w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 100 }], 0);
         let store = w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap().id;
@@ -281,7 +281,7 @@ mod tests {
     fn volles_lager_gibt_an_das_naechste_ab() {
         let row = "0".repeat(40);
         let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
-        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
         w.spawn_player(1);
         let keep = w.place_building(1, BuildingKind::Keep, 2, 2).unwrap().id;
         let store = w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap().id;

@@ -665,13 +665,16 @@ pub struct BuildingDef {
     /// So viele Einheiten finden oben Platz. 0 = so viele, wie draufpassen.
     #[serde(default)]
     pub garrison: u32,
-    /// Bergfried: Befestigungen dürfen nur in diesem Umkreis (Felder, ab Gebäudemitte)
-    /// gebaut werden. Hat keine Gebäudeart einen Umkreis, gilt keine Grenze.
+    /// Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte): die ganze Fläche
+    /// muss in diesem Umkreis liegen. 0 = überall.
     #[serde(default)]
-    pub fortify_radius: u32,
+    pub build_radius: u32,
     /// Darf direkt auf eigene Mauern gesetzt werden; die Mauer darunter wird abgerissen.
     #[serde(default)]
     pub on_walls: bool,
+    /// Darf auf Schrägen stehen (Mauern folgen dem Gelände).
+    #[serde(default)]
+    pub on_ramps: bool,
     /// Das erste Gebäude dieser Art je Spieler kostet nichts.
     #[serde(default)]
     pub first_free: bool,
@@ -737,6 +740,9 @@ pub struct EconomyDef {
     pub buildings: Vec<BuildingDef>,
     pub recipes: Vec<RecipeDef>,
     pub start_stock: Vec<GoodAmount>,
+    /// Steht beim Start schon an der Fahne des Spielers (z. B. der Bergfried).
+    #[serde(default)]
+    pub start_building: Option<BuildingKind>,
     /// Lagerplatz je Ware ohne Vorratslager.
     pub base_capacity: u32,
     /// Zusätzlicher Platz je Ware pro Vorratslager.

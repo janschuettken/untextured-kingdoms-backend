@@ -28,12 +28,19 @@ impl Economy {
         self
     }
 
-    /// Für Tests, die Mauern ohne Bergfried bauen: Befestigungen überall erlaubt.
+    /// Für Tests, die Mauern ohne Bergfried bauen: überall bauen erlaubt.
     #[cfg(test)]
-    pub fn without_fortify_radius(mut self) -> Economy {
+    pub fn without_build_radius(mut self) -> Economy {
         for b in &mut self.def.buildings {
-            b.fortify_radius = 0;
+            b.build_radius = 0;
         }
+        self
+    }
+
+    /// Für Tests, die ihre Gebäude selbst setzen: kein Bergfried an der Fahne.
+    #[cfg(test)]
+    pub fn without_start_building(mut self) -> Economy {
+        self.def.start_building = None;
         self
     }
 

@@ -380,7 +380,7 @@ mod tests {
     fn walled(wall_level: u8, gate_level: u8) -> World {
         let row = "0".repeat(24);
         let text = format!("spawn 2 2\n{}", format!("{row}\n").repeat(24));
-        let eco = crate::economy::Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people().without_fortify_radius();
+        let eco = crate::economy::Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people().without_build_radius();
         let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
         w.spawn_player(1);
         let lots: Vec<GoodAmount> =
@@ -535,8 +535,9 @@ mod tests {
         let removed = w.take_events().iter().filter(|e| matches!(e, ServerMsg::BuildingRemoved { .. })).count();
         assert_eq!(removed, 5, "drei Mauerstücke unterm Tor, zwei unterm Turm");
         assert_eq!(w.buildings.len(), walls - 5 + 2);
-        // Andere Gebäude dürfen nicht auf die Mauer.
-        assert!(w.place_building_rotated(1, BuildingKind::Staircase, 3, 10, 0, 1).is_err());
+        // Nur Gebäude mit `on_walls` dürfen auf die Mauer (die Treppe stellt Jan im Balance-Editor ein).
+        let stairs_on_walls = w.economy.building(BuildingKind::Staircase).unwrap().on_walls;
+        assert_eq!(w.place_building_rotated(1, BuildingKind::Staircase, 3, 10, 0, 1).is_ok(), stairs_on_walls);
         assert!(w.place_building_rotated(1, BuildingKind::House, 2, 9, 0, 1).is_err());
     }
 

@@ -61,7 +61,7 @@ mod tests {
     fn kaufen_und_verkaufen() {
         let row = "0".repeat(30);
         let text = format!("spawn 1 1\n{}", format!("{row}\n").repeat(30));
-        let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people();
+        let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people();
         let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
         w.spawn_player(1);
         let price = *w.economy.def.market.prices.iter().find(|p| p.good == Good::Bread).unwrap();

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use protocol::{
-    BuildingCategory, BuildingDef, GateMode,
+    BuildingDef, GateMode,
     BuildingKind, BuildingSettings, BuildingState, BuildingStatus, GoodAmount, PeopleState, ResourceKind, ServerMsg, StockState, Text,
     TileKind, UnitActivity, UnitInfo, UnitKind, UnitState,
 };
@@ -336,7 +336,47 @@ impl World {
         }
         stock.taler = self.economy.def.market.start_taler;
         self.stocks.insert(player, stock);
-        self.units.push(Unit::new(id, player, UnitKind::King, (x as f32 + 0.5, y as f32 + 0.5)));
+        // Startgebäude (Bergfried) an der Fahne, der König steht vor seinem Eingang.
+        let mut king = (x as f32 + 0.5, y as f32 + 0.5);
+        if let Some(kind) = self.economy.def.start_building {
+            if let Some(b) = self.place_start_building(player, kind, (x, y)) {
+                if let Some((ex, ey)) = b.entrance {
+                    king = (ex as f32 + 0.5, ey as f32 + 0.5);
+                }
+            }
+        }
+        self.units.push(Unit::new(id, player, UnitKind::King, king));
+    }
+
+    /// Startgebäude möglichst mittig auf die Fahne setzen; passt es dort nicht
+    /// (Hang, Wald, Wasser), den nächsten passenden Platz in der Nähe suchen.
+    fn place_start_building(&mut self, player: u32, kind: BuildingKind, (sx, sy): (u32, u32)) -> Option<BuildingState> {
+        let def = self.economy.building(kind)?.clone();
+        let mut placed = None;
+        'search: for ring in 0..=12i64 {
+            for dy in -ring..=ring {
+                for dx in -ring..=ring {
+                    if dx.abs().max(dy.abs()) != ring {
+                        continue;
+                    }
+                    for rotation in [0u8, 1, 2, 3] {
+                        let (w, h) = if rotation % 2 == 1 { (def.h, def.w) } else { (def.w, def.h) };
+                        let x = sx as i64 + dx - w as i64 / 2;
+                        let y = sy as i64 + dy - h as i64 / 2;
+                        if x < 0 || y < 0 {
+                            continue;
+                        }
+                        if let Ok(b) = self.place_building_at(player, kind, (x as u32, y as u32), rotation, 1, true) {
+                            // Mitspieler, die schon da sind, sollen ihn auch sehen.
+                            self.events.push(ServerMsg::BuildingPlaced { building: b.clone() });
+                            placed = Some(b);
+                            break 'search;
+                        }
+                    }
+                }
+            }
+        }
+        placed
     }
 
     /// Spieler geht: seine Einheiten und Gebäude verschwinden.
@@ -374,6 +414,19 @@ impl World {
         rotation: u8,
         level: u8,
     ) -> Result<BuildingState, Refusal> {
+        self.place_building_at(player, kind, (x, y), rotation, level, false)
+    }
+
+    /// Wie `place_building_rotated`; `free`: kostet nichts (Startgebäude).
+    fn place_building_at(
+        &mut self,
+        player: u32,
+        kind: BuildingKind,
+        (x, y): (u32, u32),
+        rotation: u8,
+        level: u8,
+        free: bool,
+    ) -> Result<BuildingState, Refusal> {
         let def = self.economy.building(kind).ok_or_else(|| Text::new("error.unknown_building"))?.clone();
         let rotation = rotation % 4;
         let level = level.max(1);
@@ -383,14 +436,14 @@ impl World {
         let (w, h) = if rotation % 2 == 1 { (def.h, def.w) } else { (def.w, def.h) };
         let max_hp = def.max_hp;
         // `first_free`: das erste Gebäude dieser Art ist gratis.
-        let cost = if def.first_free && !self.owns(player, kind) { Vec::new() } else { level_cost(&def, level) };
+        let cost = if free || (def.first_free && !self.owns(player, kind)) { Vec::new() } else { level_cost(&def, level) };
         if let Some(max) = def.max_per_player {
             let have = self.buildings.iter().filter(|b| b.owner == player && b.kind == kind).count();
             if have >= max as usize {
                 return Err(Text::new("error.limit_reached").arg("max", max));
             }
         }
-        self.check_fortify_radius(player, &def, (x, y), (w, h))?;
+        self.check_build_radius(player, &def, (x, y), (w, h))?;
         // Tore und Türme dürfen auf eigene Mauern; die kommen beim Bauen weg.
         let walls = if def.on_walls { self.walls_under(player, (x, y), (w, h)) } else { Vec::new() };
         let entrance = self.check_site(&def, (x, y), (w, h), rotation, &walls)?;
@@ -519,10 +572,12 @@ impl World {
                 let i = (ty * self.map.width + tx) as usize;
                 match self.map.tiles[i] {
                     TileKind::Water => return Err(Text::new("error.on_water")),
-                    TileKind::Ramp => return Err(Text::new("error.on_ramp")),
-                    TileKind::Ground => {}
+                    TileKind::Ramp if !def.on_ramps => return Err(Text::new("error.on_ramp")),
+                    _ => {}
                 }
-                if self.map.levels[i] != height {
+                // Auf Schrägen (`on_ramps`) reicht: höchstens eine Stufe Unterschied.
+                let diff = self.map.levels[i].abs_diff(height);
+                if diff > 1 || (diff == 1 && !def.on_ramps) {
                     return Err(Text::new("error.not_flat"));
                 }
                 if self.occupied[i] != 0 && !ignore.contains(&self.occupied[i]) {
@@ -863,25 +918,22 @@ impl World {
         spots
     }
 
-    /// Befestigungen nur im Umkreis eines eigenen Bergfrieds (`fortify_radius`):
+    /// Gebäude mit `build_radius` nur im Umkreis des eigenen Bergfrieds:
     /// die ganze Fläche muss drinliegen.
-    fn check_fortify_radius(&self, player: u32, def: &BuildingDef, at: (u32, u32), size: (u32, u32)) -> Result<(), Refusal> {
-        if def.category != BuildingCategory::Fortification || def.fortify_radius > 0 {
+    fn check_build_radius(&self, player: u32, def: &BuildingDef, at: (u32, u32), size: (u32, u32)) -> Result<(), Refusal> {
+        let r = def.build_radius;
+        if r == 0 {
             return Ok(());
         }
-        let Some(r) = self.economy.def.buildings.iter().map(|d| d.fortify_radius).max().filter(|&r| r > 0) else {
-            return Ok(());
-        };
         let corners = [(at.0, at.1), (at.0 + size.0, at.1), (at.0, at.1 + size.1), (at.0 + size.0, at.1 + size.1)];
-        let inside = self.buildings.iter().filter(|b| b.owner == player).any(|b| {
-            let radius = self.economy.building(b.kind).map_or(0, |d| d.fortify_radius) as f32;
+        let inside = self.buildings.iter().filter(|b| b.owner == player && b.kind == BuildingKind::Keep).any(|b| {
             let (cx, cy) = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
-            radius > 0.0 && corners.iter().all(|&(x, y)| (x as f32 - cx).hypot(y as f32 - cy) <= radius)
+            corners.iter().all(|&(x, y)| (x as f32 - cx).hypot(y as f32 - cy) <= r as f32)
         });
         if inside {
             Ok(())
         } else {
-            Err(Text::new("error.outside_fortify_radius").arg("r", r))
+            Err(Text::new("error.outside_build_radius").arg("r", r))
         }
     }
 
@@ -1102,7 +1154,7 @@ mod tests {
     fn ohne_wohnung_kein_arbeiter_zu_sehen() {
         let row = "0".repeat(40);
         let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
-        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap());
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building());
         w.spawn_player(1);
         w.admin_give(1, &[GoodAmount { good: protocol::Good::Wood, amount: 500 }], 0);
         let saw = w.place_building(1, BuildingKind::Woodcutter, 20, 2).unwrap();
@@ -1132,7 +1184,7 @@ mod tests {
     }
 
     fn eco() -> Economy {
-        Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people().without_fortify_radius()
+        Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people().without_build_radius()
     }
 
     fn flat_world() -> World {
@@ -1176,7 +1228,11 @@ mod tests {
         let water = (0..w * world.map.height).find(|&i| world.map.tiles[i as usize] == TileKind::Water).unwrap();
         assert!(world.place_building(1, BuildingKind::Wall, water % w, water / w).is_err());
         let ramp = (0..w * world.map.height).find(|&i| world.map.tiles[i as usize] == TileKind::Ramp).unwrap();
-        assert!(world.place_building(1, BuildingKind::Wall, ramp % w, ramp / w).is_err());
+        assert_eq!(world.place_building(1, BuildingKind::House, ramp % w, ramp / w).unwrap_err().key, "error.on_ramp");
+        // Mauern (`on_ramps`) dürfen auf Schrägen.
+        assert!(world.economy.building(BuildingKind::Wall).unwrap().on_ramps);
+        let r = world.place_building(1, BuildingKind::Wall, ramp % w, ramp / w);
+        assert!(r.as_ref().map_or_else(|e| e.key != "error.on_ramp" && e.key != "error.not_flat", |_| true), "{r:?}");
         assert!(world.place_building(1, BuildingKind::Keep, w - 2, w - 2).is_err(), "ragt aus der Karte");
         let king = world.units[0].pos;
         assert!(world.place_building(1, BuildingKind::Wall, king.0 as u32, king.1 as u32).is_err());
@@ -1323,17 +1379,40 @@ mod tests {
     fn befestigung_nur_im_umkreis_des_bergfrieds() {
         let row = "0".repeat(80);
         let text = format!("spawn 0 0\n{}", format!("{row}\n").repeat(20));
-        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people().without_start_building();
+        let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
         w.spawn_player(1);
         w.admin_give(1, &[GoodAmount { good: protocol::Good::Stone, amount: 500 }, GoodAmount { good: protocol::Good::Wood, amount: 500 }], 0);
-        assert_eq!(w.place_building(1, BuildingKind::Wall, 10, 10).unwrap_err().key, "error.outside_fortify_radius", "ohne Bergfried");
+        assert_eq!(w.place_building(1, BuildingKind::Wall, 10, 10).unwrap_err().key, "error.outside_build_radius", "ohne Bergfried");
         w.place_building(1, BuildingKind::Keep, 4, 4).unwrap();
-        let r = w.economy.building(BuildingKind::Keep).unwrap().fortify_radius;
+        let r = w.economy.building(BuildingKind::Wall).unwrap().build_radius;
+        assert!(r > 0);
         w.place_building(1, BuildingKind::Wall, 10, 10).unwrap();
-        assert_eq!(w.place_building(1, BuildingKind::Wall, 7 + r, 7).unwrap_err().key, "error.outside_fortify_radius");
+        assert_eq!(w.place_building(1, BuildingKind::Wall, 7 + r, 7).unwrap_err().key, "error.outside_build_radius");
         w.place_building(1, BuildingKind::Wall, 5 + r, 7).unwrap();
-        // Andere Gebäude dürfen weiter weg.
+        // Ohne eigenen Umkreis (0) dürfen Gebäude beliebig weit weg.
+        assert_eq!(w.economy.building(BuildingKind::House).unwrap().build_radius, 0);
         w.place_building(1, BuildingKind::House, 10 + r, 2).unwrap();
+    }
+
+    #[test]
+    fn bergfried_steht_an_der_fahne() {
+        let row = "0".repeat(40);
+        let text = format!("spawn 20 10\nspawn 5 5\n{}", format!("{row}\n").repeat(20));
+        let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people();
+        let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
+        w.spawn_player(1);
+        let keep = w.buildings.iter().find(|b| b.owner == 1 && b.kind == BuildingKind::Keep).expect("Bergfried gesetzt");
+        let (cx, cy) = (keep.x + keep.w / 2, keep.y + keep.h / 2);
+        assert_eq!((cx, cy), (20, 10), "mittig auf der Fahne");
+        let king = w.units.iter().find(|u| u.owner == 1 && u.kind == UnitKind::King).unwrap();
+        let (kx, ky) = (king.pos.0 as u32, king.pos.1 as u32);
+        assert!(!(kx >= keep.x && kx < keep.x + keep.w && ky >= keep.y && ky < keep.y + keep.h), "König nicht im Bergfried");
+        // Fahne nah am Rand: der Bergfried rückt nach innen.
+        w.spawn_player(2);
+        assert!(w.buildings.iter().any(|b| b.owner == 2 && b.kind == BuildingKind::Keep));
+        // Kein zweiter Bergfried.
+        assert!(w.place_building(1, BuildingKind::Keep, 30, 2).is_err());
     }
 
     #[test]
