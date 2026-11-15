@@ -153,6 +153,24 @@ Das Skript holt in beiden Repos den neuesten Stand von `dev`, baut neu, startet 
 prüft am Ende, ob das Spiel antwortet. Laufende Spiele werden beim Stoppen gespeichert und laufen danach weiter;
 Spieler sehen kurz „verbinde neu“. Wartende Lobbys gehen beim Neustart verloren.
 
+## Balancing auf dem Server ändern und ins Repo bringen
+
+Was du im Balancing-Editor auf dem Server speicherst, gilt sofort für alle Spiele. Es liegt im Volume
+(`/data/economy.json`), nicht im Git-Repo. Deshalb stört es auch kein `git pull`.
+
+So kommen die Werte ins Repo:
+
+1. Im Balancing-Editor (`/balance.html`, als Admin) auf **„economy.json herunterladen“** klicken.
+2. Die Datei auf deinem PC nach `untextured-kingdoms-backend\server\data\economy.json` kopieren, committen und
+   nach `dev` pushen. Das Format ist genau das der Datei im Repo, der Diff zeigt also nur deine Änderungen.
+
+Beim nächsten `./deploy/update.sh` vergleicht das Skript die Server-Fassung mit der aus dem Repo:
+
+- Beide sind gleich: Alles passt, es gibt nichts zu tun.
+- Sie weichen ab: **Es bleibt die Server-Fassung** und das Skript zeigt eine Warnung. Hast du absichtlich im Repo
+  geändert (z. B. lokal balanciert und gepusht), nimm `./deploy/update.sh --economy-from-repo`. Dann gilt die
+  Repo-Fassung, und die alte Server-Fassung bleibt als `/data/economy.json.vor-update` im Volume liegen.
+
 ## Datenbank ansehen
 
 Die Datenbank ist von außen nicht erreichbar. Du kommst über einen SSH-Tunnel von deinem PC aus dran.

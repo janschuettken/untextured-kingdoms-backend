@@ -29,6 +29,8 @@
 //! - `POST /api/games/{id}/new-game` nur Admin: neu anfangen (gleiche Karte, gleiche Mitspieler)
 //! - `POST /api/games/{id}/end`      nur Admin: Spiel ganz beenden, alle zurück in die Lobby
 //! - `GET  /api/economy`  die geltenden Wirtschaftsdaten als JSON
+//! - `GET  /api/economy/file`  nur Admin: die geltenden Daten als Datei `economy.json` (genau im
+//!   Format der Datei im Repo), zum Herunterladen und Committen
 //! - `PUT  /api/economy`  nur Admin: neue Daten prüfen, in die Datei schreiben und
 //!   sofort für alle Spiele übernehmen (`economy_changed` an alle Clients)
 //!
@@ -165,6 +167,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/api/admin/users/{id}/impersonate", post(impersonate))
         .route("/api/admin/users/{id}/admin", post(set_admin))
         .route("/api/economy", get(load).put(save))
+        .route("/api/economy/file", get(download))
         .route("/api/games/{id}/players", get(players))
         .route("/api/games/{id}/players/{pid}/remove", post(remove_player))
         .route("/api/games/{id}/save", post(save_now))
@@ -301,6 +304,24 @@ async fn set_admin(
         }
         Err(e) => db_error(e),
     }
+}
+
+async fn download(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
+    if !hub.admin.allows(&headers).await {
+        return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
+    }
+    let text = hub.economy.lock().unwrap().to_json();
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8"),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"economy.json\"",
+            ),
+        ],
+        text,
+    )
+        .into_response()
 }
 
 async fn load(State(hub): State<Arc<Hub>>) -> Response {

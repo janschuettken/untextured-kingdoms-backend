@@ -20,6 +20,20 @@ use tracing::{info, warn};
 
 #[tokio::main]
 async fn main() {
+    // `server economy-canonical < datei`: economy.json im Format des Servers ausgeben
+    // (für deploy/update.sh, um Server- und Repo-Fassung zu vergleichen).
+    if std::env::args().nth(1).as_deref() == Some("economy-canonical") {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).expect("stdin lesen");
+        match economy::Economy::parse(&text) {
+            Ok(e) => print!("{}", e.to_json()),
+            Err(e) => {
+                eprintln!("ungültig: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     // Lokale Einstellungen (DATABASE_URL, ADMIN_USERS …) aus `.env`, falls vorhanden.
     let _ = dotenvy::dotenv();
     tracing_subscriber::fmt()
