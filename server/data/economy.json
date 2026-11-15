@@ -61,7 +61,7 @@
     {
       "kind": "wall",
       "category": "fortification",
-      "build_radius": 30,
+      "build_radius": 50,
       "w": 1,
       "h": 1,
       "max_hp": 300,
@@ -100,7 +100,7 @@
     {
       "kind": "high_wall",
       "category": "fortification",
-      "build_radius": 30,
+      "build_radius": 50,
       "w": 1,
       "h": 1,
       "max_hp": 700,
@@ -139,7 +139,7 @@
     {
       "kind": "tower",
       "category": "fortification",
-      "build_radius": 30,
+      "build_radius": 50,
       "w": 3,
       "h": 3,
       "max_hp": 900,
@@ -177,7 +177,7 @@
     {
       "kind": "high_tower",
       "category": "fortification",
-      "build_radius": 30,
+      "build_radius": 50,
       "w": 2,
       "h": 2,
       "max_hp": 700,
@@ -215,7 +215,7 @@
     {
       "kind": "gate",
       "category": "fortification",
-      "build_radius": 30,
+      "build_radius": 50,
       "w": 3,
       "h": 1,
       "max_hp": 1200,
@@ -253,7 +253,7 @@
     {
       "kind": "palisade",
       "category": "fortification",
-      "build_radius": 30,
+      "build_radius": 50,
       "w": 1,
       "h": 1,
       "max_hp": 150,
@@ -292,7 +292,7 @@
     {
       "kind": "staircase",
       "category": "fortification",
-      "build_radius": 30,
+      "build_radius": 50,
       "w": 1,
       "h": 1,
       "max_hp": 300,

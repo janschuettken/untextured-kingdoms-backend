@@ -138,6 +138,11 @@ pub enum ServerMsg {
     Rejected {
         text: Text,
     },
+    /// Laufbefehl abgelehnt: keine der Einheiten kommt zu diesem Punkt.
+    MoveUnreachable {
+        x: f32,
+        y: f32,
+    },
     /// Antwort auf `admin_login`: angenommen oder nicht.
     AdminStatus {
         ok: bool,
