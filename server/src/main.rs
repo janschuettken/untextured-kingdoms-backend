@@ -497,7 +497,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, wanted: Option<u
                 }
                 Ok(ClientMsg::AdminGameSpeed { percent }) => {
                     if is_admin {
-                        let percent = percent.clamp(25, 800);
+                        // 0 = Pause, sonst 25–800 %.
+                        let percent = if percent == 0 { 0 } else { percent.clamp(25, 800) };
                         state.game_speed.store(percent, Ordering::Relaxed);
                         let _ = state.ticks.send(ServerMsg::GameSpeed { percent });
                         info!("Spieltempo {percent} %");
