@@ -9,8 +9,22 @@ services:
       RUST_LOG: info
       # Admin-Menü und Balancing-Editor: Token in .env setzen, leer = aus.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      # Accounts: eigene DATABASE_URL oder der Dienst "db" unten.
+      DATABASE_URL: ${DATABASE_URL:-postgres://uk:${DB_PASSWORD:-uk}@db:5432/untextured_kingdoms}
+    depends_on:
+      - db
     volumes:
       - game_data:/data
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: uk
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-uk}
+      POSTGRES_DB: untextured_kingdoms
+    volumes:
+      - db_data:/var/lib/postgresql/data
 
   web:
     build: ../untextured-kingdoms-frontend
@@ -29,5 +43,6 @@ services:
 
 volumes:
   game_data:
+  db_data:
   caddy_data:
   caddy_config:
