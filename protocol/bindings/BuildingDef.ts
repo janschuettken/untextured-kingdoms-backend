@@ -73,10 +73,10 @@ gate_radius: number,
  */
 garrison: number, 
 /**
- * Bergfried: Befestigungen dürfen nur in diesem Umkreis (Felder, ab Gebäudemitte)
- * gebaut werden. Hat keine Gebäudeart einen Umkreis, gilt keine Grenze.
+ * Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte): die ganze Fläche
+ * muss in diesem Umkreis liegen. 0 = überall.
  */
-fortify_radius: number, 
+build_radius: number, 
 /**
  * Darf direkt auf eigene Mauern gesetzt werden; die Mauer darunter wird abgerissen.
  */

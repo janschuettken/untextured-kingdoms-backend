@@ -281,7 +281,7 @@ mod tests {
         for y in 0..12 {
             text += &format!("{}{}\n", ".".repeat(28), if y < 4 { "WW" } else { ".." });
         }
-        let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people();
+        let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people();
         let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
         w.spawn_player(1);
         w

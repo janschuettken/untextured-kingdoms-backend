@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn speichern_und_laden() {
         let text = format!("spawn 1 1\n[terrain]\n{}[resources]\n{}", format!("{}\n", "0".repeat(20)).repeat(10), format!("{}WW\n", ".".repeat(18)).repeat(10));
-        let eco = || Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people();
+        let eco = || Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people();
         let mut w = World::new(GameMap::parse(&text).unwrap(), eco());
         w.spawn_player(1);
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();

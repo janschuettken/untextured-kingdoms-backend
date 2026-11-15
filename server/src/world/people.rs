@@ -111,7 +111,7 @@ mod tests {
     fn world() -> World {
         let row = "0".repeat(30);
         let text = format!("spawn 1 1\n{}", format!("{row}\n").repeat(30));
-        let mut eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap();
+        let mut eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building();
         eco.def.population.meal_seconds = 10.0;
         let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
         w.spawn_player(1);
