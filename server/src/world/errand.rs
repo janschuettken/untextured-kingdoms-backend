@@ -38,21 +38,17 @@ impl World {
                             self.units[k].carrying = Some(GoodAmount { good: load.good, amount: load.amount - fits });
                         }
                     }
+                    // Hände frei: gleich hier mitnehmen, was der Betrieb braucht (eine Tour statt zwei).
+                    if self.units[k].carrying.is_none() {
+                        self.pick_up_inputs(k, bi, hub, true);
+                    }
                 }
                 self.walk_home(k, bi);
                 false
             }
             Some(Gather::Fetch(hub)) => {
                 if self.near(k, hub) {
-                    if let Some(load) = self.missing_input(bi) {
-                        let stock = self.stocks.get_mut(&owner).expect("Spieler hat einen Vorrat");
-                        let got = load.amount.min(stock.amount(load.good));
-                        if got > 0 && stock.take_all(&[GoodAmount { good: load.good, amount: got }]) {
-                            self.dirty_stocks.insert(owner);
-                            self.hub_take(hub, load.good, got);
-                            self.units[k].carrying = Some(GoodAmount { good: load.good, amount: got });
-                        }
-                    }
+                    self.pick_up_inputs(k, bi, hub, false);
                 }
                 self.walk_home(k, bi);
                 false
@@ -140,6 +136,27 @@ impl World {
     }
 
     /// Der Eingang, der am meisten fehlt und im Vorrat liegt (Mindestbestand bleibt).
+    /// Am Lager `hub` fehlende Eingänge für den Betrieb aufladen (wenn er Lieferungen annimmt).
+    /// `only_here`: nur, was genau dieses Lager hat (beim Abliefern nebenbei mitnehmen).
+    fn pick_up_inputs(&mut self, k: usize, bi: usize, hub: u32, only_here: bool) {
+        let b = &self.buildings[bi];
+        if !b.settings.accept_deliveries || self.target_reached(bi) {
+            return;
+        }
+        let owner = b.owner;
+        let Some(mut load) = self.missing_input(bi) else { return };
+        if only_here {
+            load.amount = load.amount.min(self.hub_amount(hub, load.good));
+        }
+        let stock = self.stocks.get_mut(&owner).expect("Spieler hat einen Vorrat");
+        let got = load.amount.min(stock.amount(load.good));
+        if got > 0 && stock.take_all(&[GoodAmount { good: load.good, amount: got }]) {
+            self.dirty_stocks.insert(owner);
+            self.hub_take(hub, load.good, got);
+            self.units[k].carrying = Some(GoodAmount { good: load.good, amount: got });
+        }
+    }
+
     fn missing_input(&self, bi: usize) -> Option<GoodAmount> {
         let b = &self.buildings[bi];
         let recipe = b.settings.recipe.as_ref().and_then(|r| self.economy.recipe(r))?;
@@ -293,5 +310,29 @@ mod tests {
             }
         }
         assert!(walked > 20, "Arbeiter läuft sichtbar zwischen den Türen ({walked} Schritte)");
+    }
+
+    #[test]
+    fn abliefern_und_holen_auf_einer_tour() {
+        let mut w = flat();
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        let mason = w.place_building(1, BuildingKind::Stonemason, 25, 2).unwrap();
+        let worker = w.units.iter().position(|u| u.kind == UnitKind::Worker && u.home == Some(mason.id)).unwrap();
+        // Quader liegen schon fertig, Stein fehlt: hin mit Quadern, zurück mit Stein.
+        let inv = w.inventories.get_mut(&mason.id).unwrap();
+        let stone = inv.amount(Good::Stone);
+        inv.take_all(&[protocol::GoodAmount { good: Good::Stone, amount: stone }]);
+        inv.add(Good::Blocks, 4);
+        let mut last = None;
+        let mut swapped = false;
+        for _ in 0..20 * 60 {
+            w.step(0.05);
+            let now = w.units[worker].carrying.map(|g| g.good);
+            if last == Some(Good::Blocks) && now == Some(Good::Stone) {
+                swapped = true;
+            }
+            last = now; // direkt von Quadern zu Stein, ohne leer heimzulaufen
+        }
+        assert!(swapped, "Quader abgeliefert und gleich Stein mitgenommen");
     }
 }
