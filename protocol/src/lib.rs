@@ -51,7 +51,14 @@ pub enum ClientMsg {
     WatchUnit { unit_id: Option<u32> },
     /// In einer eigenen Kaserne `count` Soldaten dieser Art in Auftrag geben.
     /// Waren und Taler werden sofort bezahlt (alle, die bezahlbar sind).
-    TrainUnits { building_id: u32, kind: UnitKind, count: u32 },
+    TrainUnits {
+        building_id: u32,
+        kind: UnitKind,
+        count: u32,
+        /// Auf alle eigenen Kasernen verteilen, die diese Einheit ausbilden können.
+        #[serde(default)]
+        spread: bool,
+    },
     /// Den zuletzt in Auftrag gegebenen Soldaten streichen; die Kosten kommen ganz zurück.
     CancelTraining { building_id: u32 },
     /// Am Markt handeln: `sell` = verkaufen, sonst kaufen. Bezahlt wird in Talern.
@@ -555,6 +562,10 @@ pub struct BuildingDef {
     /// So viele Einheiten finden oben Platz. 0 = so viele, wie draufpassen.
     #[serde(default)]
     pub garrison: u32,
+    /// Bergfried: Befestigungen dürfen nur in diesem Umkreis (Felder, ab Gebäudemitte)
+    /// gebaut werden. Hat keine Gebäudeart einen Umkreis, gilt keine Grenze.
+    #[serde(default)]
+    pub fortify_radius: u32,
     /// Darf direkt auf eigene Mauern gesetzt werden; die Mauer darunter wird abgerissen.
     #[serde(default)]
     pub on_walls: bool,

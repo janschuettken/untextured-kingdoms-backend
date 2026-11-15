@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use protocol::{
-    GateMode,
+    BuildingCategory, BuildingDef, GateMode,
     BuildingKind, BuildingSettings, BuildingState, BuildingStatus, GoodAmount, PeopleState, ResourceKind, ServerMsg, StockState, Text,
     TileKind, UnitActivity, UnitInfo, UnitKind, UnitState,
 };
@@ -384,6 +384,7 @@ impl World {
                 return Err(Text::new("error.limit_reached").arg("max", max));
             }
         }
+        self.check_fortify_radius(player, &def, (x, y), (w, h))?;
         // Tore und Türme dürfen auf eigene Mauern; die kommen beim Bauen weg.
         let walls = if def.on_walls { self.walls_under(player, (x, y), (w, h)) } else { Vec::new() };
         let entrance = self.check_site(&def, (x, y), (w, h), rotation, &walls)?;
@@ -843,6 +844,28 @@ impl World {
         spots
     }
 
+    /// Befestigungen nur im Umkreis eines eigenen Bergfrieds (`fortify_radius`):
+    /// die ganze Fläche muss drinliegen.
+    fn check_fortify_radius(&self, player: u32, def: &BuildingDef, at: (u32, u32), size: (u32, u32)) -> Result<(), Refusal> {
+        if def.category != BuildingCategory::Fortification || def.fortify_radius > 0 {
+            return Ok(());
+        }
+        let Some(r) = self.economy.def.buildings.iter().map(|d| d.fortify_radius).max().filter(|&r| r > 0) else {
+            return Ok(());
+        };
+        let corners = [(at.0, at.1), (at.0 + size.0, at.1), (at.0, at.1 + size.1), (at.0 + size.0, at.1 + size.1)];
+        let inside = self.buildings.iter().filter(|b| b.owner == player).any(|b| {
+            let radius = self.economy.building(b.kind).map_or(0, |d| d.fortify_radius) as f32;
+            let (cx, cy) = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
+            radius > 0.0 && corners.iter().all(|&(x, y)| (x as f32 - cx).hypot(y as f32 - cy) <= radius)
+        });
+        if inside {
+            Ok(())
+        } else {
+            Err(Text::new("error.outside_fortify_radius").arg("r", r))
+        }
+    }
+
     /// Wie viele Einheiten noch auf das Gebäude am Ziel passen (`garrison`).
     /// None, wenn es keine Grenze hat.
     fn garrison_room(&self, player: u32, ordered: &[u32], target: (f32, f32)) -> Option<usize> {
@@ -1090,7 +1113,7 @@ mod tests {
     }
 
     fn eco() -> Economy {
-        Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people()
+        Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people().without_fortify_radius()
     }
 
     fn flat_world() -> World {
@@ -1270,6 +1293,23 @@ mod tests {
         w.order_move(1, &[ids[0]], (12.5, 12.5));
         let first = w.units.iter().find(|u| u.id == ids[0]).unwrap();
         assert_eq!(first.target, Some((12.5, 12.5)), "eigenes Feld zählt nicht als belegt");
+    }
+
+    #[test]
+    fn befestigung_nur_im_umkreis_des_bergfrieds() {
+        let row = "0".repeat(80);
+        let text = format!("spawn 0 0\n{}", format!("{row}\n").repeat(20));
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        w.spawn_player(1);
+        w.admin_give(1, &[GoodAmount { good: protocol::Good::Stone, amount: 500 }, GoodAmount { good: protocol::Good::Wood, amount: 500 }], 0);
+        assert_eq!(w.place_building(1, BuildingKind::Wall, 10, 10).unwrap_err().key, "error.outside_fortify_radius", "ohne Bergfried");
+        w.place_building(1, BuildingKind::Keep, 4, 4).unwrap();
+        let r = w.economy.building(BuildingKind::Keep).unwrap().fortify_radius;
+        w.place_building(1, BuildingKind::Wall, 10, 10).unwrap();
+        assert_eq!(w.place_building(1, BuildingKind::Wall, 7 + r, 7).unwrap_err().key, "error.outside_fortify_radius");
+        w.place_building(1, BuildingKind::Wall, 5 + r, 7).unwrap();
+        // Andere Gebäude dürfen weiter weg.
+        w.place_building(1, BuildingKind::House, 10 + r, 2).unwrap();
     }
 
     #[test]

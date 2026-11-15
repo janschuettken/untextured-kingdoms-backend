@@ -28,6 +28,15 @@ impl Economy {
         self
     }
 
+    /// Für Tests, die Mauern ohne Bergfried bauen: Befestigungen überall erlaubt.
+    #[cfg(test)]
+    pub fn without_fortify_radius(mut self) -> Economy {
+        for b in &mut self.def.buildings {
+            b.fortify_radius = 0;
+        }
+        self
+    }
+
     /// Liest und prüft die Wirtschaftsdaten.
     pub fn parse(json: &str) -> Result<Economy, String> {
         let def: EconomyDef = serde_json::from_str(json).map_err(|e| format!("economy.json: {e}"))?;

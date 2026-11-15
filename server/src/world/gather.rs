@@ -238,12 +238,28 @@ impl World {
             return;
         }
         let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
-        let Some(pos) = self.door(&b, center) else { return };
+        let Some(work) = self.door(&b, center) else { return };
+        // Neue Arbeiter kommen am Bergfried an (sonst am nächsten eigenen Lager)
+        // und laufen von dort zu ihrem Betrieb.
+        let start = self
+            .buildings
+            .iter()
+            .filter(|h| h.owner == b.owner && h.id != b.id && self.economy.building(h.kind).is_some_and(|d| d.hub))
+            .min_by_key(|h| {
+                let keep = h.kind != protocol::BuildingKind::Keep;
+                let d = (h.x as f32 + h.w as f32 / 2.0 - center.0).hypot(h.y as f32 + h.h as f32 / 2.0 - center.1);
+                (keep, d as u32)
+            })
+            .and_then(|h| self.door(h, center));
         for _ in 0..def.workers.max(1) {
             let id = self.next_unit_id;
             self.next_unit_id += 1;
-            let mut u = super::Unit::new(id, b.owner, UnitKind::Worker, pos);
+            let mut u = super::Unit::new(id, b.owner, UnitKind::Worker, start.unwrap_or(work));
             u.home = Some(b.id);
+            if let Some(from) = start {
+                u.path = self.map.nav.waypoints(from, work);
+                u.target = Some(work);
+            }
             self.units.push(u);
         }
     }
@@ -283,6 +299,9 @@ mod tests {
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
         let b = w.place_building(1, BuildingKind::Woodcutter, 18, 2).unwrap();
         assert_eq!(w.units.iter().filter(|u| u.kind == UnitKind::Worker).count(), 1);
+        let worker = w.units.iter().find(|u| u.kind == UnitKind::Worker).unwrap();
+        assert!(worker.pos.0 < 10.0, "kommt am Bergfried an, nicht im Betrieb: {:?}", worker.pos);
+        assert!(!worker.path.is_empty(), "läuft zum Betrieb");
         let before = w.stocks[&1].amount(Good::Wood);
         run(&mut w, 2.0);
         let worker = w.units.iter().find(|u| u.kind == UnitKind::Worker).unwrap();

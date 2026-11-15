@@ -33,7 +33,12 @@ impl World {
             let b = &self.buildings[i];
             let id = b.id;
             let gathers = self.economy.building(b.kind).is_some_and(|d| !d.gathers.is_empty());
-            let (p, rate) = if gathers {
+            let training = b.training.first().and_then(|&k| self.economy.unit(k)).map(|u| u.seconds.max(0.01));
+            let (p, rate) = if let Some(seconds) = training {
+                // Kaserne: Ausbildung der vordersten Einheit in der Warteschlange.
+                let left = b.training_left.max(0.0);
+                ((1.0 - left / seconds).clamp(0.0, 1.0), if left > 0.0 { 1.0 / seconds } else { 0.0 })
+            } else if gathers {
                 gathering.get(&id).copied().unwrap_or((0.0, 0.0))
             } else {
                 let recipe = b.settings.recipe.as_ref().and_then(|r| self.economy.recipe(r));

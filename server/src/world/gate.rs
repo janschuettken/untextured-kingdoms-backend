@@ -380,7 +380,7 @@ mod tests {
     fn walled(wall_level: u8, gate_level: u8) -> World {
         let row = "0".repeat(24);
         let text = format!("spawn 2 2\n{}", format!("{row}\n").repeat(24));
-        let eco = crate::economy::Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people();
+        let eco = crate::economy::Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people().without_fortify_radius();
         let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
         w.spawn_player(1);
         let lots: Vec<GoodAmount> =

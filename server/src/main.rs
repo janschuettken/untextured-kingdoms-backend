@@ -460,9 +460,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, wanted: Option<u
                         c.watch_info = None;
                     }
                 }
-                Ok(ClientMsg::TrainUnits { building_id, kind, count }) => {
+                Ok(ClientMsg::TrainUnits { building_id, kind, count, spread }) => {
                     let mut world = state.world.lock().unwrap();
-                    match world.train(player_id, building_id, kind, count) {
+                    let result = if spread {
+                        world.train_spread(player_id, building_id, kind, count)
+                    } else {
+                        world.train(player_id, building_id, kind, count)
+                    };
+                    match result {
                         Ok(building) => drop(state.ticks.send(ServerMsg::BuildingChanged { building })),
                         Err(text) => drop(out_tx.try_send(ServerMsg::Rejected { text })),
                     }
