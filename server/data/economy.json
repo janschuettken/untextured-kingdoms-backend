@@ -35,10 +35,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 6}],
@@ -70,10 +73,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 3}],
@@ -105,10 +111,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "blocks", "amount": 3}],
@@ -140,10 +149,13 @@
       "stairs_from_level": 2,
       "gate_radius": 0,
       "garrison": 12,
+      "fortify_radius": 0,
       "on_walls": true,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 6}, {"good": "blocks", "amount": 10}],
@@ -175,10 +187,13 @@
       "stairs_from_level": 2,
       "gate_radius": 0,
       "garrison": 4,
+      "fortify_radius": 0,
       "on_walls": true,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 5}, {"good": "blocks", "amount": 14}],
@@ -210,10 +225,13 @@
       "stairs_from_level": 2,
       "gate_radius": 8,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": true,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 12}, {"good": "wood", "amount": 5}],
@@ -245,10 +263,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 3}],
@@ -280,10 +301,13 @@
       "stairs_from_level": 1,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 6}, {"good": "wood", "amount": 4}],
@@ -301,7 +325,6 @@
       "h": 6,
       "max_hp": 3000,
       "max_per_player": 1,
-      "fortify_radius": 30,
       "service_radius": 0,
       "no_entrance": false,
       "hub": true,
@@ -311,10 +334,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 30,
       "on_walls": false,
       "first_free": true,
       "hub_goods": ["wood", "boards", "stone", "blocks", "iron_ore", "iron", "leather"],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [
@@ -344,10 +370,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": true,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 26}],
@@ -373,10 +402,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": ["grain", "flour", "bread", "fruit", "meat"],
       "hub_capacity": 300,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}, {"good": "boards", "amount": 10}],
@@ -402,10 +434,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": ["spear", "longbow", "crossbow", "sword", "armor", "light_armor", "saddle"],
       "hub_capacity": 200,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [
@@ -434,10 +469,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -484,10 +522,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [{"cost": [], "recipes": [], "housing": 0, "spawns": [], "trains": []}]
     },
     {
@@ -506,10 +547,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 10}],
@@ -536,10 +580,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -566,10 +613,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 15}],
@@ -595,10 +645,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -623,10 +676,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -651,10 +707,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -679,10 +738,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -707,10 +769,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 20}],
@@ -742,10 +807,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 20}],
@@ -755,7 +823,7 @@
           "trains": []
         },
         {
-          "cost": [{"good": "boards", "amount": 20}, {"good": "leather", "amount": 10}],
+          "cost": [{"good": "boards", "amount": 20}, {"good": "blocks", "amount": 10}],
           "recipes": ["make_saddle"],
           "housing": 0,
           "spawns": [],
@@ -777,10 +845,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [
@@ -809,10 +880,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [
@@ -852,10 +926,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 30}],
@@ -880,10 +957,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [
@@ -913,10 +993,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -941,10 +1024,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -977,10 +1063,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 30}],
@@ -1005,10 +1094,13 @@
       "stairs_from_level": 0,
       "gate_radius": 0,
       "garrison": 0,
+      "fortify_radius": 0,
       "on_walls": false,
       "first_free": false,
       "hub_goods": [],
       "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
       "levels": [
         {
           "cost": [
@@ -1269,7 +1361,7 @@
       "kind": "spearman",
       "cost": [{"good": "spear", "amount": 1}],
       "taler": 10,
-      "seconds": 20,
+      "seconds": 5,
       "speed": 1.4,
       "hp": 60,
       "attack": 8,
@@ -1280,7 +1372,7 @@
       "kind": "archer",
       "cost": [{"good": "longbow", "amount": 1}],
       "taler": 15,
-      "seconds": 25,
+      "seconds": 7,
       "speed": 1.4,
       "hp": 40,
       "attack": 6,
@@ -1291,7 +1383,7 @@
       "kind": "crossbowman",
       "cost": [{"good": "crossbow", "amount": 1}, {"good": "light_armor", "amount": 1}],
       "taler": 25,
-      "seconds": 30,
+      "seconds": 15,
       "speed": 1.2,
       "hp": 55,
       "attack": 12,
@@ -1302,7 +1394,7 @@
       "kind": "swordsman",
       "cost": [{"good": "sword", "amount": 1}, {"good": "armor", "amount": 1}],
       "taler": 30,
-      "seconds": 35,
+      "seconds": 20,
       "speed": 1.1,
       "hp": 110,
       "attack": 12,
