@@ -301,6 +301,7 @@
       "h": 6,
       "max_hp": 3000,
       "max_per_player": 1,
+      "fortify_radius": 30,
       "service_radius": 0,
       "no_entrance": false,
       "hub": true,

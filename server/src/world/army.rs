@@ -70,6 +70,32 @@ impl World {
         Ok(b.clone())
     }
 
+    /// Wie `train`, aber Stück für Stück auf alle eigenen Kasernen verteilt, die
+    /// diese Einheit ausbilden können: jeder geht in die kürzeste Warteschlange.
+    pub fn train_spread(&mut self, player: u32, building_id: u32, kind: UnitKind, count: u32) -> Result<BuildingState, Refusal> {
+        let max = self.economy.def.army.queue_max as usize;
+        let mut ordered = 0;
+        for _ in 0..count.max(1) {
+            let target = self
+                .buildings
+                .iter()
+                .filter(|b| b.owner == player && (b.id == building_id || self.trainable(b).contains(&kind)))
+                .filter(|b| b.id == building_id || b.training.len() < max)
+                .min_by_key(|b| (b.training.len().min(max), b.id != building_id))
+                .map(|b| b.id);
+            let Some(id) = target else { break };
+            match self.train(player, id, kind, 1) {
+                Ok(_) => {
+                    ordered += 1;
+                    self.dirty_buildings.insert(id);
+                }
+                Err(e) if ordered == 0 => return Err(e),
+                Err(_) => break,
+            }
+        }
+        self.buildings.iter().find(|b| b.id == building_id).cloned().ok_or_else(|| Text::new("error.no_building"))
+    }
+
     /// Den zuletzt bestellten Soldaten streichen und die Kosten erstatten.
     pub fn cancel_training(&mut self, player: u32, building_id: u32) -> Result<BuildingState, Refusal> {
         let b = self.buildings.iter_mut().find(|b| b.id == building_id).ok_or_else(|| Text::new("error.no_building"))?;
@@ -240,6 +266,21 @@ mod tests {
 
     fn soldiers(w: &World, kind: UnitKind) -> usize {
         w.units.iter().filter(|u| u.kind == kind).count()
+    }
+
+    #[test]
+    fn auftrag_verteilt_sich_auf_alle_kasernen() {
+        let mut w = world();
+        w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 200 }, GoodAmount { good: Good::Wood, amount: 200 }, GoodAmount { good: Good::Stone, amount: 200 }], 0);
+        let a = w.place_building(1, BuildingKind::Barracks, 4, 10).unwrap().id;
+        let b = w.place_building(1, BuildingKind::Barracks, 16, 10).unwrap().id;
+        w.admin_give(1, &[GoodAmount { good: Good::Spear, amount: 6 }], 1000);
+        w.train_spread(1, a, UnitKind::Spearman, 5).unwrap();
+        let len = |w: &World, id: u32| w.buildings.iter().find(|x| x.id == id).unwrap().training.len();
+        assert_eq!((len(&w, a), len(&w, b)), (3, 2));
+        // Ohne Verteilen bleibt alles in der einen Kaserne.
+        w.train(1, b, UnitKind::Spearman, 1).unwrap();
+        assert_eq!((len(&w, a), len(&w, b)), (3, 3));
     }
 
     #[test]
