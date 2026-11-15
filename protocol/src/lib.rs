@@ -253,6 +253,8 @@ pub enum UnitKind {
     Archer,
     /// Armbrustschütze: langsamer, trifft härter.
     Crossbowman,
+    /// Einfacher Schwertkämpfer: Schwert und nur leichte Rüstung.
+    LightSwordsman,
     /// Schwertkämpfer mit Rüstung.
     Swordsman,
     /// Ritter zu Pferd: schnell und stark, teuer.
@@ -262,7 +264,7 @@ pub enum UnitKind {
 impl UnitKind {
     /// Soldaten: werden in der Kaserne ausgebildet und kosten Sold.
     pub fn is_soldier(self) -> bool {
-        matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::Swordsman | UnitKind::Knight)
+        matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight)
     }
 }
 

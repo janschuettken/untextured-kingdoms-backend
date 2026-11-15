@@ -941,7 +941,7 @@ impl World {
                 UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Cart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
-                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
+                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
             };
             let mut budget = speed * dt;
             while budget > 0.0 {
