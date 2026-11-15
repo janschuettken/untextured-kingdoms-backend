@@ -554,6 +554,12 @@ mod tests {
         let up = w.units.iter().filter(|u| ids.contains(&u.id) && u.on_wall).count();
         let max = w.economy.building(BuildingKind::HighTower).unwrap().garrison as usize;
         assert_eq!(up, max, "nur {max} passen hinauf");
+        // Oben stehen alle auf der runden Plattform um die Turmmitte, nicht ineinander.
+        let top: Vec<(f32, f32)> = w.units.iter().filter(|u| ids.contains(&u.id) && u.on_wall).map(|u| u.pos).collect();
+        for (i, p) in top.iter().enumerate() {
+            assert!((p.0 - 21.0).hypot(p.1 - 11.0) <= 0.61, "neben der Plattform: {p:?}");
+            assert!(top[i + 1..].iter().all(|q| (p.0 - q.0).hypot(p.1 - q.1) >= 0.5), "ineinander: {top:?}");
+        }
         // Wer nicht hinaufpasst, steht unten am Turm.
         for u in w.units.iter().filter(|u| ids.contains(&u.id) && !u.on_wall) {
             assert!(w.map.nav.is_open(u.pos.0.floor() as i32, u.pos.1.floor() as i32), "{:?}", u.pos);
