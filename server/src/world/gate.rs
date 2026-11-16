@@ -543,6 +543,45 @@ mod tests {
     }
 
     #[test]
+    fn gebaeude_und_tore_auf_wegen() {
+        let row = "0".repeat(24);
+        let text = format!("spawn 2 2\n{}", format!("{row}\n").repeat(24));
+        let eco = crate::economy::Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people().without_build_radius();
+        let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
+        w.spawn_player(1);
+        let lots: Vec<GoodAmount> =
+            [Good::Wood, Good::Stone, Good::Boards, Good::Blocks].iter().map(|&good| GoodAmount { good, amount: 5000 }).collect();
+        w.admin_give(1, &lots, 0);
+        for y in 0..24 {
+            w.place_building(1, BuildingKind::StonePath, 11, y).unwrap();
+        }
+        let paths = |w: &World| w.buildings.iter().filter(|b| b.kind == BuildingKind::StonePath).count();
+        // Ein Haus auf dem Weg reißt die Wegstücke darunter ab.
+        w.place_building(1, BuildingKind::House, 10, 2).unwrap();
+        assert_eq!(paths(&w), 24 - 3);
+        // Ein Tor mittig auf dem Weg: der Durchgang bleibt so schnell wie der Weg.
+        let g = w.place_building_rotated(1, BuildingKind::Gate, 10, 15, 0, 1).unwrap();
+        assert_eq!(paths(&w), 24 - 4);
+        assert!(g.road_under > 0);
+        assert!(w.map.nav.speed_at((11.5, 15.5)) > 1.0, "Durchgang ist Weg");
+        assert!((w.map.nav.speed_at((10.5, 15.5)) - 1.0).abs() < 1e-6);
+        // Eingang auf dem Weg: kein Hindernis, der Weg bleibt.
+        let before = paths(&w);
+        let h = w.place_building_rotated(1, BuildingKind::House, 12, 18, 1, 1).unwrap();
+        assert_eq!(h.entrance, Some((11, 19)));
+        assert_eq!(paths(&w), before);
+        // Umgekehrt: Weg nachträglich durch ein bestehendes Tor ziehen.
+        let g2 = w.place_building_rotated(1, BuildingKind::Gate, 2, 5, 0, 1).unwrap();
+        assert_eq!(g2.road_under, 0);
+        assert!((w.map.nav.speed_at((3.5, 5.5)) - 1.0).abs() < 1e-6);
+        let r = w.place_building(1, BuildingKind::StonePath, 3, 5).unwrap();
+        assert_eq!(r.id, g2.id, "kein eigenes Wegstück, das Tor bekommt den Weg");
+        assert!(w.map.nav.speed_at((3.5, 5.5)) > 1.0);
+        assert_eq!(paths(&w), before);
+        assert!(w.place_building(1, BuildingKind::StonePath, 2, 5).is_err(), "neben dem Durchgang ist Mauer");
+    }
+
+    #[test]
     fn tor_und_turm_direkt_auf_die_mauer() {
         let mut w = walled(1, 1);
         w.take_events();

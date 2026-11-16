@@ -49,6 +49,8 @@ pub enum ClientMsg {
     ReleaseTrees { building_id: u32 },
     /// Diese Einheit beobachten: der Server schickt ihren Weg (`UnitPath`). `None` = keine.
     WatchUnit { unit_id: Option<u32> },
+    /// Laufkosten aller Felder anfordern (Heatmap). Antwort: `NavCosts`.
+    RequestNavCosts,
     /// In einer eigenen Kaserne `count` Soldaten dieser Art in Auftrag geben.
     /// Waren und Taler werden sofort bezahlt (alle, die bezahlbar sind).
     TrainUnits {
@@ -142,6 +144,13 @@ pub enum ServerMsg {
     MoveUnreachable {
         x: f32,
         y: f32,
+    },
+    /// Laufkosten je Feld (Antwort auf `RequestNavCosts`), zeilenweise, ein Zeichen je Feld:
+    /// `' '` = nicht begehbar, sonst Tempo in Prozent = (Zeichencode - 48) * 5.
+    NavCosts {
+        width: u32,
+        height: u32,
+        cells: String,
     },
     /// Antwort auf `admin_login`: angenommen oder nicht.
     AdminStatus {
@@ -875,6 +884,13 @@ pub struct MovementDef {
     /// Arbeiter der Abbaubetriebe.
     #[serde(default = "default_worker_speed")]
     pub worker_speed: f32,
+    /// Tempo auf Schrägen in Prozent (100 = wie flach). Langsamer macht Umwege um Berge lohnend.
+    #[serde(default = "default_slope_speed")]
+    pub slope_speed_percent: u16,
+}
+
+fn default_slope_speed() -> u16 {
+    60
 }
 
 fn default_worker_speed() -> f32 {
@@ -944,7 +960,7 @@ pub struct PeopleState {
 
 impl Default for MovementDef {
     fn default() -> Self {
-        MovementDef { king_speed: 1.5, worker_speed: 1.2 }
+        MovementDef { king_speed: 1.5, worker_speed: 1.2, slope_speed_percent: default_slope_speed() }
     }
 }
 
@@ -1064,6 +1080,9 @@ pub struct BuildingState {
     pub progress: f32,
     #[serde(default)]
     pub progress_rate: f32,
+    /// Tor auf einem Weg gebaut: so viel % schneller ist der Durchgang (0 = kein Weg).
+    #[serde(default)]
+    pub road_under: u32,
 }
 
 fn default_true() -> bool {

@@ -7,4 +7,8 @@ export type MovementDef = { king_speed: number,
 /**
  * Arbeiter der Abbaubetriebe.
  */
-worker_speed: number, };
+worker_speed: number, 
+/**
+ * Tempo auf Schrägen in Prozent (100 = wie flach). Langsamer macht Umwege um Berge lohnend.
+ */
+slope_speed_percent: number, };
