@@ -239,6 +239,9 @@ pub enum AiLevel {
     Easy,
     /// Baut schneller, mehr Soldaten, Steinmauer.
     Normal,
+    /// Baut am schnellsten, große Armee, Steinmauer mit Torhaus und Ecktürmen,
+    /// gepflasterte Wege, handelt am Markt.
+    Hard,
 }
 
 /// Nachrichten der Lobby an den Client.

@@ -78,6 +78,11 @@ impl Unit {
         }
     }
 
+    /// Steht die Einheit oben (Mauer, Turm, Bergfried)?
+    pub fn is_on_wall(&self) -> bool {
+        self.on_wall
+    }
+
     /// Läuft die Einheit gerade (hat noch Wegpunkte)?
     pub fn is_moving(&self) -> bool {
         !self.path.is_empty()

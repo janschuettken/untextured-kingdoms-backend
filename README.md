@@ -269,8 +269,8 @@ als“ einen anderen Startplatz übernehmen (`/ws?game=..&token=..&as=<nr>`) ode
 
 ## Computergegner
 
-- In der Lobby setzt der Gastgeber auf einen freien Startplatz einen Computer (`add_computer`, Stärke `easy` oder
-  `normal`) und nimmt ihn mit `remove_computer` wieder weg. Der Computer gilt immer als da; verlassen alle Menschen
+- In der Lobby setzt der Gastgeber auf einen freien Startplatz einen Computer (`add_computer`, Stärke `easy`, `normal`
+  oder `hard`) und nimmt ihn mit `remove_computer` wieder weg. Der Computer gilt immer als da; verlassen alle Menschen
   das Spiel, endet es trotzdem. Mit dem Token eines Computers kann sich niemand verbinden.
 - Code: `server/src/ai/`. Der Computer gibt dieselben Befehle wie der Browser (`ClientMsg`), sie gehen durch
   `game::apply_command`, also mit denselben Regeln und Kosten. Bauplätze prüft er vorher mit `World::check_placement`
@@ -283,6 +283,12 @@ als“ einen anderen Startplatz übernehmen (`/ws?game=..&token=..&as=<nr>`) ode
   `server/src/ai/profile.rs`; eine neue Stufe ist ein neues Profil. Wo er baut, regelt `layout.rs`: innen Wohnhäuser,
   Lager und Werkstätten, außen Abbaubetriebe am Vorkommen, frei bleiben Ring und Straßen zu den Toren, ein Feld Weg
   zwischen allen Gebäuden.
+- Stufen: leicht (Palisade, ein Holzweg zum Haupttor, Speerträger), normal (Mauer, Holzwege zu allen Toren und zu
+  den Abbaubetrieben, Speerträger und Bogenschützen, Bogenschützen gehen auf den Bergfried), schwer (hohe Mauer,
+  großes Torhaus auf der Eingangsseite, Ecktürme, Pflasterwege zuerst, zwei Kasernen mit längerer Warteschlange,
+  Schwertkämpfer, Markt: verkauft Überschuss, kauft Eisen, leichte Rüstung und was dem nächsten Bau fehlt).
+- Wege legt er erst, wenn die Kaserne steht, und hält Holz und Stein für Gebäude zurück. Tore setzt er auch auf
+  eigene Wege; Mauern ersetzen Wege darunter.
 - Er rechnet jedes Mal aus dem Spielstand, gespeichert wird nur seine Stärke (im Startplatz der Spieldatei).
 - Kampf gibt es noch nicht; Angreifen und Verteidigen kommen dazu, sobald es ihn gibt.
 

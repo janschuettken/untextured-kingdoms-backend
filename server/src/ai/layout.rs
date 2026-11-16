@@ -54,16 +54,21 @@ pub struct Layout {
     /// Linie des Mauerrings.
     pub ring: Rect,
     pub mid: (i64, i64),
+    keep: Rect,
+    /// Seite, zu der der Eingang des Bergfrieds schaut: 0 Süd, 1 Nord, 2 West, 3 Ost.
+    main_side: usize,
+    /// Tor auf dieser Seite (Tor oder Torhaus).
+    main_gate: BuildingKind,
 }
 
-/// Ein Tor im Ring: oben links, Drehung.
-pub type GateSpot = (u32, u32, u8);
+/// Ein Tor im Ring: Art, oben links, Drehung.
+pub type GateSpot = (BuildingKind, u32, u32, u8);
 
 impl Layout {
     /// Grundriss um den Bergfried. Jede Seite des Rings liegt höchstens `gap` Felder
     /// vom Bergfried weg, näher dran, wenn dort sonst Wasser oder Klippen wären
     /// (etwa ein Burggraben: dann steht die Mauer an seinem Rand).
-    pub fn new(world: &World, keep: &BuildingState, gap: u32) -> Layout {
+    pub fn new(world: &World, keep: &BuildingState, gap: u32, main_gate: BuildingKind) -> Layout {
         let k = Rect::of(keep);
         let gap = (gap as i64).max(MIN_GAP);
         let start = keep.entrance.map_or((k.x0, k.y1 + 1), |(x, y)| (x as i64, y as i64));
@@ -131,7 +136,14 @@ impl Layout {
                 }
             }
         }
-        Layout { ring, mid }
+        let main_side = match keep.entrance {
+            Some((_, y)) if y as i64 > k.y1 => 0,
+            Some((_, y)) if (y as i64) < k.y0 => 1,
+            Some((x, _)) if (x as i64) < k.x0 => 2,
+            Some(_) => 3,
+            None => 0,
+        };
+        Layout { ring, mid, keep: k, main_side, main_gate }
     }
 
     /// Straßen vom Bergfried zu den vier Toren (3 Felder breit, bis 3 Felder vor den Ring).
@@ -160,7 +172,9 @@ impl Layout {
             }
         }
         for b in &world.buildings {
-            let r = Rect::of(b).grow(1);
+            // Wege: nur das Feld selbst ist belegt, daneben darf direkt gebaut werden.
+            let road = world.economy.building(b.kind).is_some_and(|d| d.road_speed_percent > 0);
+            let r = Rect::of(b).grow(if road { 0 } else { 1 });
             for y in r.y0.max(0)..=r.y1.min(h - 1) {
                 for x in r.x0.max(0)..=r.x1.min(w - 1) {
                     free[(y * w + x) as usize] = false;
@@ -185,20 +199,80 @@ impl Layout {
         tiles
     }
 
-    /// Wo die Tore hinkommen: Mitte jeder Seite (Süd, Nord, West, Ost).
+    /// Wo die Tore hinkommen: Mitte jeder Seite (Süd, Nord, West, Ost). Auf der Seite des
+    /// Bergfried-Eingangs das Haupttor (beim Torhaus 5 breit, 2 tief, ragt nach außen).
     pub fn gates(&self) -> [GateSpot; 4] {
         let r = self.ring;
         let (mx, my) = self.mid;
         let p = |v: i64| v.max(0) as u32;
-        [(p(mx - 1), p(r.y1), 0), (p(mx - 1), p(r.y0), 2), (p(r.x0), p(my - 1), 1), (p(r.x1), p(my - 1), 3)]
+        let spot = |side: usize| -> GateSpot {
+            let big = side == self.main_side && self.main_gate == BuildingKind::Gatehouse;
+            let kind = if side == self.main_side { self.main_gate } else { BuildingKind::Gate };
+            let (half, out) = if big { (2, 1) } else { (1, 0) };
+            match side {
+                0 => (kind, p(mx - half), p(r.y1), 0),
+                1 => (kind, p(mx - half), p(r.y0 - out), 2),
+                2 => (kind, p(r.x0 - out), p(my - half), 1),
+                _ => (kind, p(r.x1), p(my - half), 3),
+            }
+        };
+        [spot(0), spot(1), spot(2), spot(3)]
+    }
+
+    /// Fläche eines Tores (gedreht).
+    fn gate_rect(world: &World, &(kind, x, y, rot): &GateSpot) -> Rect {
+        let (w, h) = world.economy.building(kind).map_or((3, 1), |d| (d.w as i64, d.h as i64));
+        let (w, h) = if rot % 2 == 1 { (h, w) } else { (w, h) };
+        Rect { x0: x as i64, y0: y as i64, x1: x as i64 + w - 1, y1: y as i64 + h - 1 }
     }
 
     /// Gehört dieses Feld zu einem Tor (dort keine Mauer setzen)?
-    pub fn is_gate_tile(&self, x: i64, y: i64) -> bool {
-        self.gates().iter().any(|&(gx, gy, rot)| {
-            let (w, h) = if rot % 2 == 1 { (1, 3) } else { (3, 1) };
-            Rect { x0: gx as i64, y0: gy as i64, x1: gx as i64 + w - 1, y1: gy as i64 + h - 1 }.contains(x, y)
-        })
+    pub fn is_gate_tile(&self, world: &World, x: i64, y: i64) -> bool {
+        self.gates().iter().any(|g| Self::gate_rect(world, g).contains(x, y))
+    }
+
+    /// Ecktürme (3x3, mittig auf den Ecken des Rings): oben links.
+    pub fn corner_towers(&self) -> [(i64, i64); 4] {
+        let r = self.ring;
+        [(r.x0 - 1, r.y0 - 1), (r.x1 - 1, r.y0 - 1), (r.x0 - 1, r.y1 - 1), (r.x1 - 1, r.y1 - 1)]
+    }
+
+    /// Liegt das Feld auf der Ringlinie?
+    pub fn on_ring(&self, x: i64, y: i64) -> bool {
+        let r = self.ring;
+        r.contains(x, y) && (x == r.x0 || x == r.x1 || y == r.y0 || y == r.y1)
+    }
+
+    /// Wegfelder in der Mitte der Straßen: vom Bergfried durch das Tor bis 3 Felder davor.
+    /// `all`: zu allen vier Toren, sonst nur zum Haupttor. Das Haupttor zuerst.
+    pub fn street_tiles(&self, all: bool) -> Vec<(i64, i64)> {
+        let (k, r, (mx, my)) = (self.keep, self.ring, self.mid);
+        let mut sides = vec![self.main_side];
+        if all {
+            sides.extend((0..4).filter(|&s| s != self.main_side));
+        }
+        let mut tiles = Vec::new();
+        for side in sides {
+            match side {
+                0 => tiles.extend((k.y1 + 1..=r.y1 + 3).map(|y| (mx, y))),
+                1 => tiles.extend((r.y0 - 3..k.y0).rev().map(|y| (mx, y))),
+                2 => tiles.extend((r.x0 - 3..k.x0).rev().map(|x| (x, my))),
+                _ => tiles.extend((k.x1 + 1..=r.x1 + 3).map(|x| (x, my))),
+            }
+        }
+        tiles
+    }
+
+    /// Feld vor einem Tor auf der Außenseite (dort beginnen Wege nach draußen).
+    pub fn outside_of(&self, world: &World, gate: &GateSpot) -> (i64, i64) {
+        let g = Self::gate_rect(world, gate);
+        let (mx, my) = ((g.x0 + g.x1) / 2, (g.y0 + g.y1) / 2);
+        match gate.3 {
+            0 => (mx, g.y1 + 1),
+            2 => (mx, g.y0 - 1),
+            1 => (g.x0 - 1, my),
+            _ => (g.x1 + 1, my),
+        }
     }
 }
 

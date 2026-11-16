@@ -3,4 +3,4 @@
 /**
  * Stärke eines Computergegners. Was jede Stufe tut, steht im Server (`server/src/ai/`).
  */
-export type AiLevel = "easy" | "normal";
+export type AiLevel = "easy" | "normal" | "hard";

@@ -14,7 +14,11 @@ fn play(level: AiLevel, minutes: u32) -> World {
 
 /// Mehrere Computergegner (Spieler 1, 2, ...) auf den ersten Startplätzen.
 fn play_many(levels: &[AiLevel], minutes: u32) -> World {
-    let map = GameMap::parse(MAP).unwrap();
+    play_on(MAP, levels, minutes)
+}
+
+fn play_on(map_text: &str, levels: &[AiLevel], minutes: u32) -> World {
+    let map = GameMap::parse(map_text).unwrap();
     let economy = Economy::parse(crate::economy::ECONOMY_JSON).unwrap();
     let spawns = map.spawns.clone();
     let mut world = World::new(map, economy);
@@ -27,13 +31,7 @@ fn play_many(levels: &[AiLevel], minutes: u32) -> World {
     // Gröbere Schritte als im Spiel (20 je Sekunde), damit der Test schnell bleibt.
     let dt = 0.25;
     let mut rejected = 0;
-    for i in 0..(minutes as f32 * 60.0 / dt) as u32 {
-        if i % (300.0 / dt) as u32 == 0 {
-            let st = world.stock_state(1);
-            let n = world.buildings.iter().filter(|b| b.owner == 1).count();
-            let g: Vec<String> = st.goods.iter().map(|g| format!("{:?}={}", g.good, g.amount)).collect();
-            println!("min {:>3}: {n} Gebäude, {} | Leute {}/{} satt {} | Soldaten {}", i as f32 * dt / 60.0, g.join(" "), st.people.working, st.people.housing, st.people.fed, st.army.soldiers);
-        }
+    for _ in 0..(minutes as f32 * 60.0 / dt) as u32 {
         for ai in &mut ais {
             for cmd in ai.think(&world, dt) {
                 if let Err(e) = apply_command(&mut world, &ticks, ai.player, cmd) {
@@ -71,10 +69,6 @@ fn leichter_computer_baut_wirtschaft_armee_und_mauer() {
     .map(|&k| (k, count(&world, k)))
     .collect();
     let stock = world.stock_state(1);
-    for b in world.buildings.iter().filter(|b| !matches!(b.kind, BuildingKind::Palisade | BuildingKind::Wall)) {
-        println!("{:?} {},{} {}x{} {:?} {:?}", b.kind, b.x, b.y, b.w, b.h, b.status, b.inventory);
-    }
-    println!("{summary:?} Lager {:?} Leute {:?} Armee {:?}", stock.goods, stock.people, stock.army);
     assert!(count(&world, BuildingKind::Woodcutter) >= 2, "{summary:?}");
     assert!(count(&world, BuildingKind::House) >= 2, "{summary:?}");
     assert!(count(&world, BuildingKind::Barracks) >= 1, "{summary:?}");
@@ -94,10 +88,50 @@ fn normaler_computer_baut_mehr() {
 }
 
 #[test]
+fn schwerer_computer_baut_torhaus_wege_und_grosse_armee() {
+    let world = play(AiLevel::Hard, 60);
+    let stock = world.stock_state(1);
+    let roads = count(&world, BuildingKind::StonePath);
+    let mut kinds = std::collections::BTreeMap::new();
+    for b in world.buildings.iter().filter(|b| b.owner == 1) {
+        *kinds.entry(format!("{:?}", b.kind)).or_insert(0) += 1;
+    }
+    assert!(roads >= 5, "nur {roads} Wegfelder: {kinds:?}");
+    assert!(count(&world, BuildingKind::HighWall) >= 10);
+    assert!(count(&world, BuildingKind::Market) >= 1);
+    assert!(count(&world, BuildingKind::Barracks) >= 2);
+    assert!(stock.army.soldiers >= 15, "{:?}", stock.army);
+    let on_keep = world.units.iter().filter(|u| u.owner == 1 && u.is_on_wall()).count();
+    assert!(on_keep >= 1, "keine Bogenschützen oben");
+}
+
+#[test]
 fn zwei_computer_kommen_sich_nicht_in_die_quere() {
     let world = play_many(&[AiLevel::Easy, AiLevel::Normal], 30);
     for p in [1, 2] {
         let n = world.buildings.iter().filter(|b| b.owner == p).count();
         assert!(n >= 15, "Spieler {p}: nur {n} Gebäude");
+    }
+}
+
+/// Zufallskarte mit Flüssen und Furten, vier Computer aller Stärken.
+#[test]
+fn vier_computer_auf_zufallskarte_mit_fluessen() {
+    const RANDOM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/maps/4-player-zufall-256-682070261.txt"));
+    let world = play_on(RANDOM, &[AiLevel::Easy, AiLevel::Normal, AiLevel::Hard, AiLevel::Hard], 45);
+    for p in 1..=4 {
+        let n = world.buildings.iter().filter(|b| b.owner == p && world.economy.building(b.kind).is_some_and(|d| d.road_speed_percent == 0)).count();
+        let kinds = |k: BuildingKind| world.buildings.iter().filter(|b| b.owner == p && b.kind == k).count();
+        println!(
+            "Spieler {p}: {n} Gebäude, {} Soldaten, Wege {}, Tore {}+{}, Mauer {}, Türme {}, oben {}",
+            world.stock_state(p).army.soldiers,
+            kinds(BuildingKind::WoodPath) + kinds(BuildingKind::StonePath),
+            kinds(BuildingKind::Gate),
+            kinds(BuildingKind::Gatehouse),
+            kinds(BuildingKind::Palisade) + kinds(BuildingKind::Wall) + kinds(BuildingKind::HighWall),
+            kinds(BuildingKind::Tower),
+            world.units.iter().filter(|u| u.owner == p && u.is_on_wall()).count()
+        );
+        assert!(n >= 12, "Spieler {p}: nur {n} Gebäude");
     }
 }
