@@ -503,6 +503,14 @@ async fn handle_msg(
                 drop(out_tx.try_send(ServerMsg::MoveUnreachable { x, y }));
             }
         }
+        ClientMsg::RequestNavCosts => {
+            let msg = {
+                let world = state.world.lock().unwrap();
+                let nav = &world.map.nav;
+                ServerMsg::NavCosts { width: nav.width, height: nav.height, cells: nav.cost_map() }
+            };
+            let _ = out_tx.send(msg).await;
+        }
         ClientMsg::WatchUnit { unit_id } => {
             if let Some(c) = state.clients.lock().unwrap().get_mut(&player_id) {
                 c.watch = unit_id;
