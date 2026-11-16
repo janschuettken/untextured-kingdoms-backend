@@ -33,4 +33,9 @@ range: number,
 /**
  * Sold in Talern je Zahltag (siehe `army.upkeep_seconds`).
  */
-upkeep: number, };
+upkeep: number, 
+/**
+ * Fernkämpfer (Reichweite über `army.melee_range`) können diese Einheit nicht verletzen
+ * (der König: nur Nahkämpfer können ihn töten).
+ */
+ranged_immune: boolean, };
