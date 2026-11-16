@@ -290,7 +290,18 @@ als“ einen anderen Startplatz übernehmen (`/ws?game=..&token=..&as=<nr>`) ode
 - Wege legt er erst, wenn die Kaserne steht, und hält Holz und Stein für Gebäude zurück. Tore setzt er auch auf
   eigene Wege; Mauern ersetzen Wege darunter.
 - Er rechnet jedes Mal aus dem Spielstand, gespeichert wird nur seine Stärke (im Startplatz der Spieldatei).
-- Kampf gibt es noch nicht; Angreifen und Verteidigen kommen dazu, sobald es ihn gibt.
+- Kampf ist nur ein Grundgerüst (siehe Spielziel und Kampf); gezieltes Angreifen kommt noch.
+
+## Spielziel und Kampf
+
+- Jeder Spieler hat einen König. Fällt er, scheidet der Spieler aus: alle seine Einheiten und Gebäude
+  verschwinden (`player_defeated`). Bleibt nur ein Spieler oder ein Bündnis übrig, kommt `game_over`.
+- Der König steht in `economy.json` unter `units` (Lebenspunkte, Angriff, Reichweite) und hat
+  `ranged_immune`: Fernkämpfer (Reichweite über `army.melee_range`) können ihn nicht verletzen.
+- Kampf ist ein Grundgerüst (`server/src/world/combat.rs`): stehende Einheiten mit `attack` schlagen alle
+  `army.attack_seconds` die nächste feindliche Kampfeinheit in Reichweite. Nahkampf nur auf derselben Ebene.
+- Bündnisse: `World::set_teams` (Spieler → Bündnis). Verbündete greifen sich nicht an und gewinnen zusammen.
+- Noch offen: Trefferchance, Höhenvorteil, Deckung, Angriffsbefehl/Verfolgen, Angriff auf Gebäude und Zivilisten.
 
 ## Accounts (PostgreSQL)
 

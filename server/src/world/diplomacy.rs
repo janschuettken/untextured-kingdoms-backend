@@ -35,15 +35,16 @@ pub struct Delivery {
 
 impl World {
     /// Bündnis eines Spielers (0 = keins).
-    pub fn team(&self, player: u32) -> u8 {
-        self.teams.get(&player).copied().unwrap_or(0)
+    pub fn team_of(&self, player: u32) -> u8 {
+        self.teams.get(&player).map_or(0, |&t| t.min(u8::MAX as u32) as u8)
     }
 
+    /// Bündnis eines Spielers setzen (0 = keins). Gilt auch für den Kampf (`combat.rs`).
     pub fn set_team(&mut self, player: u32, team: u8) {
         if team == 0 {
             self.teams.remove(&player);
         } else {
-            self.teams.insert(player, team);
+            self.teams.insert(player, team as u32);
         }
     }
 
@@ -57,11 +58,11 @@ impl World {
 
     /// Derselbe Spieler oder im selben Bündnis.
     pub fn allied(&self, a: u32, b: u32) -> bool {
-        a == b || (self.team(a) != 0 && self.team(a) == self.team(b))
+        a == b || self.teams.get(&a).is_some_and(|t| self.teams.get(&b) == Some(t))
     }
 
     /// Darf `attacker` Einheiten oder Gebäude von `target` angreifen? Nie sich selbst
-    /// oder Verbündete. Der Kampf (noch nicht gebaut) muss das hier fragen.
+    /// oder Verbündete.
     #[allow(dead_code)]
     pub fn can_attack(&self, attacker: u32, target: u32) -> bool {
         !self.allied(attacker, target)

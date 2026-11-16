@@ -44,4 +44,8 @@ gone: Array<number>, } | { "type": "pong", client_time: number, } | { "type": "b
 /**
  * Wie viele Handelskarren fahren (0 = sofort angekommen).
  */
-carts: number, };
+carts: number, } | { "type": "player_defeated", player: number, 
+/**
+ * Wessen Einheit den letzten Schlag geführt hat.
+ */
+by: number | null, } | { "type": "game_over", winners: Array<number>, };

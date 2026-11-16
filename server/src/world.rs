@@ -12,6 +12,7 @@ use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod army;
 mod diplomacy;
+mod combat;
 mod errand;
 mod gate;
 mod market;
@@ -60,6 +61,12 @@ pub struct Unit {
     /// Handelskarren: was er wohin bringt.
     #[serde(default)]
     trade: Option<diplomacy::Delivery>,
+    /// Erlittener Schaden (Lebenspunkte = `hp` der Einheitenart minus das).
+    #[serde(default)]
+    damage: u32,
+    /// Sekunden bis zum nächsten Schlag oder Schuss.
+    #[serde(default)]
+    attack_cooldown: f32,
 }
 
 impl Unit {
@@ -80,6 +87,8 @@ impl Unit {
             layers: Vec::new(),
             target_wall: false,
             trade: None,
+            damage: 0,
+            attack_cooldown: 0.0,
         }
     }
 
@@ -148,10 +157,14 @@ pub struct World {
     pub(crate) worker_carries_default: bool,
     /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
     hub_goods: HashMap<u32, storage::HubGoods>,
-    /// Bündnis je Spieler (fehlt = keins), siehe `diplomacy.rs`.
-    teams: BTreeMap<u32, u8>,
     /// Wie Waren zwischen Verbündeten ankommen.
     trade_mode: protocol::TradeMode,
+    /// Spieler, deren König gefallen ist (siehe `combat.rs`).
+    eliminated: BTreeSet<u32>,
+    /// Bündnis je Spieler; wer fehlt, kämpft allein (eigene Nummer). Siehe `diplomacy.rs`.
+    teams: HashMap<u32, u32>,
+    /// Gewinner, sobald das Spiel entschieden ist.
+    winners: Option<Vec<u32>>,
 }
 
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
@@ -228,8 +241,10 @@ impl World {
             pay_timer: HashMap::new(),
             unpaid: HashSet::new(),
             hub_goods: HashMap::new(),
-            teams: BTreeMap::new(),
             trade_mode: protocol::TradeMode::default(),
+            eliminated: BTreeSet::new(),
+            teams: HashMap::new(),
+            winners: None,
             worker_carries_default: true,
         }
     }
@@ -1145,6 +1160,7 @@ impl World {
         self.step_gates();
         self.step_army(dt);
         self.step_trade(dt);
+        self.step_combat(dt);
         self.balance_hubs();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
@@ -1221,6 +1237,7 @@ impl World {
                 carrying: u.carrying.map(|g| g.good),
                 on_wall: u.on_wall,
                 inside: self.inside(u),
+                hp: self.unit_hp(u),
             })
             .collect()
     }

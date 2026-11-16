@@ -17,4 +17,8 @@ on_wall: boolean,
 /**
  * Arbeiter ist in seinem Gebäude (steht dort und arbeitet): außen nicht zu sehen.
  */
-inside: boolean, };
+inside: boolean, 
+/**
+ * Lebenspunkte (Höchstwert: `hp` der Einheit in `economy.units`). 0 = hat keine (Träger, Arbeiter).
+ */
+hp: number, };
