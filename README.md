@@ -289,8 +289,41 @@ als“ einen anderen Startplatz übernehmen (`/ws?game=..&token=..&as=<nr>`) ode
   Schwertkämpfer, Markt: verkauft Überschuss, kauft Eisen, leichte Rüstung und was dem nächsten Bau fehlt).
 - Wege legt er erst, wenn die Kaserne steht, und hält Holz und Stein für Gebäude zurück. Tore setzt er auch auf
   eigene Wege; Mauern ersetzen Wege darunter.
-- Er rechnet jedes Mal aus dem Spielstand, gespeichert wird nur seine Stärke (im Startplatz der Spieldatei).
-- Kampf gibt es noch nicht; Angreifen und Verteidigen kommen dazu, sobald es ihn gibt.
+- **Charakter** (getrennt von der Stärke, in der Lobby wählbar): `server/data/ai_personalities.json`, Editor
+  `/ai.html` (Link für Admins in Lobby und Admin-Menü; speichern nur Admins, gilt sofort, auch in laufenden
+  Spielen). Je Charakter: Angriffslust und Armeegröße in Prozent, Burg-Grundriss, Gewichte für Gebäude und Soldaten
+  (100 = wie die Stufe, 0 = nie). Soldaten, die die Stufe nicht ausbildet, nimmt er dazu und baut selbst, was sie
+  brauchen (rückwärts durch die Rezepte: Betriebe, Stufen, Rezeptwechsel, Kasernenstufe). Datei auf dem Server:
+  `AI_PERSONALITIES_FILE` (Docker `/data/ai_personalities.json`, fehlt sie, gelten die aus dem Repo).
+  Schnittstelle: `GET/PUT /api/ai-personalities`, `GET /api/ai-personalities/file`.
+- **Burg-Grundrisse** (`layout.rs`): eckiger Ring, achteckiger Ring (Türme auf den Schrägen) oder „Engstelle“:
+  Schritte vom Bergfried über Gelände, Wasser, Wald und Fels; die Entfernung, bei der die wenigsten Felder nach
+  draußen führen, bekommt Mauer und Tore, sonst nichts. Lohnt sich das nicht (mehr als 60 % des eckigen Rings),
+  wird es eckig. Tore rücken von Schrägen weg. Stufen-Standard: leicht eckig, normal achteckig, schwer Engstelle.
+  Wird die Burg trotz fertiger Linie offen (Wald an der Engstelle gefällt), mauert er die Lücke zu.
+- **Angriff** (`attack.rs`): Er schätzt jeden Gegner (Soldaten nach Leben × Schaden, auf Mauern mehr, dazu Türme und
+  ob die Burg geschlossen ist), nimmt den schwächsten (ohne Höchstentfernung) und schickt eine Welle, wenn sie stark
+  genug ist. Wache bleibt daheim. Schwer wartet auf größere Wellen. Ohne Kampf bleibt die Welle eine Weile vor der
+  gegnerischen Burg und geht dann heim; sobald es Kampf gibt, kämpft sie dort (bei Verlusten kehrt sie um).
+- **Burg geschlossen?** `World::castle_status` (`world/enclosure.rs`): Kommt man vom eigenen Bergfried zu Fuß zu
+  einem fremden Startplatz (eigene Tore gelten als zu, außer „offen“)? Der Server schickt jedem Spieler
+  `castle { status }` (alle 2 s, wenn es sich ändert); der Client zeigt oben ein Schild und an der Lücke eine rote
+  Markierung. Dieselbe Prüfung nutzen die Computer.
+- Er rechnet jedes Mal aus dem Spielstand, gespeichert werden nur Stärke und Charakter (im Startplatz der
+  Spieldatei). Eine Welle unterwegs geht nach dem Laden heim.
+- Kampf ist ein Grundgerüst (siehe Spielziel und Kampf): Wellen laufen hin, und was dort in Reichweite steht,
+  kämpft. Verbündete greift er nicht an.
+
+## Spielziel und Kampf
+
+- Jeder Spieler hat einen König. Fällt er, scheidet der Spieler aus: alle seine Einheiten und Gebäude
+  verschwinden (`player_defeated`). Bleibt nur ein Spieler oder ein Bündnis übrig, kommt `game_over`.
+- Der König steht in `economy.json` unter `units` (Lebenspunkte, Angriff, Reichweite) und hat
+  `ranged_immune`: Fernkämpfer (Reichweite über `army.melee_range`) können ihn nicht verletzen.
+- Kampf ist ein Grundgerüst (`server/src/world/combat.rs`): stehende Einheiten mit `attack` schlagen alle
+  `army.attack_seconds` die nächste feindliche Kampfeinheit in Reichweite. Nahkampf nur auf derselben Ebene.
+- Bündnisse: `World::set_teams` (Spieler → Bündnis). Verbündete greifen sich nicht an und gewinnen zusammen.
+- Noch offen: Trefferchance, Höhenvorteil, Deckung, Angriffsbefehl/Verfolgen, Angriff auf Gebäude und Zivilisten.
 
 ## Accounts (PostgreSQL)
 

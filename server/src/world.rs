@@ -11,7 +11,11 @@ use protocol::{
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod army;
+mod diplomacy;
+mod combat;
 mod errand;
+mod enclosure;
+pub use enclosure::castle_closed;
 mod gate;
 mod market;
 mod gather;
@@ -56,6 +60,15 @@ pub struct Unit {
     /// Liegt das Ziel oben auf dem Wehrgang?
     #[serde(default)]
     target_wall: bool,
+    /// Handelskarren: was er wohin bringt.
+    #[serde(default)]
+    trade: Option<diplomacy::Delivery>,
+    /// Erlittener Schaden (Lebenspunkte = `hp` der Einheitenart minus das).
+    #[serde(default)]
+    damage: u32,
+    /// Sekunden bis zum nächsten Schlag oder Schuss.
+    #[serde(default)]
+    attack_cooldown: f32,
 }
 
 impl Unit {
@@ -75,6 +88,9 @@ impl Unit {
             on_wall: false,
             layers: Vec::new(),
             target_wall: false,
+            trade: None,
+            damage: 0,
+            attack_cooldown: 0.0,
         }
     }
 
@@ -93,9 +109,9 @@ impl Unit {
         matches!(self.kind, UnitKind::Carrier | UnitKind::Cart)
     }
 
-    /// Träger, Karren und Arbeiter: gehorchen keinen Befehlen und weichen Gebäuden aus.
+    /// Träger, Karren, Handelskarren und Arbeiter: gehorchen keinen Befehlen und weichen Gebäuden aus.
     fn is_civilian(&self) -> bool {
-        self.is_transport() || self.kind == UnitKind::Worker
+        self.is_transport() || matches!(self.kind, UnitKind::Worker | UnitKind::TradeCart)
     }
 }
 
@@ -143,6 +159,14 @@ pub struct World {
     pub(crate) worker_carries_default: bool,
     /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
     hub_goods: HashMap<u32, storage::HubGoods>,
+    /// Wie Waren zwischen Verbündeten ankommen.
+    trade_mode: protocol::TradeMode,
+    /// Spieler, deren König gefallen ist (siehe `combat.rs`).
+    eliminated: BTreeSet<u32>,
+    /// Bündnis je Spieler; wer fehlt, kämpft allein (eigene Nummer). Siehe `diplomacy.rs`.
+    teams: HashMap<u32, u32>,
+    /// Gewinner, sobald das Spiel entschieden ist.
+    winners: Option<Vec<u32>>,
 }
 
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
@@ -219,6 +243,10 @@ impl World {
             pay_timer: HashMap::new(),
             unpaid: HashSet::new(),
             hub_goods: HashMap::new(),
+            trade_mode: protocol::TradeMode::default(),
+            eliminated: BTreeSet::new(),
+            teams: HashMap::new(),
+            winners: None,
             worker_carries_default: true,
         }
     }
@@ -657,6 +685,21 @@ impl World {
         ids
     }
 
+    /// Liegt eines der Rohstoff-Felder höchstens `r` Felder vom Rand der Fläche entfernt
+    /// (gleiche Abstandsregel wie beim Abbau)?
+    fn resource_near(&self, res: &[ResourceKind], (x, y): (u32, u32), (w, h): (u32, u32), r: u32) -> bool {
+        let r = r.min(64) as i64;
+        let (x0, y0, x1, y1) = (x as i64, y as i64, (x + w) as i64 - 1, (y + h) as i64 - 1);
+        let (mw, mh) = (self.map.width as i64, self.map.height as i64);
+        ((y0 - r).max(0)..=(y1 + r).min(mh - 1)).any(|ty| {
+            ((x0 - r).max(0)..=(x1 + r).min(mw - 1)).any(|tx| {
+                let dx = (x0 - tx).max(tx - x1).max(0);
+                let dy = (y0 - ty).max(ty - y1).max(0);
+                dx * dx + dy * dy <= r * r && res.contains(&self.map.resources[(ty * mw + tx) as usize])
+            })
+        })
+    }
+
     fn check_site(
         &self,
         def: &protocol::BuildingDef,
@@ -701,7 +744,9 @@ impl World {
                 .flat_map(|ty| (x..x + w).map(move |tx| (tx, ty)))
                 .filter(|&(tx, ty)| p.resources.contains(&self.map.resources[(ty * self.map.width + tx) as usize]))
                 .count() as u32;
-            if on * 100 < p.min_share_percent * w * h {
+            // Abbaubetriebe mit Reichweite (Steinbruch, Mine): Rohstoff im Umkreis genügt.
+            let near = !def.gathers.is_empty() && def.gather_radius > 0 && self.resource_near(&p.resources, (x, y), (w, h), def.gather_radius);
+            if !near && on * 100 < p.min_share_percent * w * h {
                 let names: Vec<String> = p.resources.iter().map(|r| resource_key(*r)).collect();
                 return Err(Text::new("error.needs_resource").arg("resources", names.join(",")));
             }
@@ -1099,7 +1144,7 @@ impl World {
         let taken = self
             .units
             .iter()
-            .filter(|u| u.owner == player && !u.is_civilian() && !ordered.contains(&u.id))
+            .filter(|u| self.allied(u.owner, player) && !u.is_civilian() && !ordered.contains(&u.id))
             .filter(|u| match u.target {
                 Some(t) if u.target_wall => inside(t),
                 _ => u.on_wall && inside(u.pos),
@@ -1133,6 +1178,8 @@ impl World {
         self.step_progress(dt);
         self.step_gates();
         self.step_army(dt);
+        self.step_trade(dt);
+        self.step_combat(dt);
         self.balance_hubs();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
@@ -1145,7 +1192,7 @@ impl World {
             let speed = match unit.kind {
                 UnitKind::King => king,
                 UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
-                UnitKind::Cart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
+                UnitKind::Cart | UnitKind::TradeCart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
             };
@@ -1209,6 +1256,7 @@ impl World {
                 carrying: u.carrying.map(|g| g.good),
                 on_wall: u.on_wall,
                 inside: self.inside(u),
+                hp: self.unit_hp(u),
             })
             .collect()
     }

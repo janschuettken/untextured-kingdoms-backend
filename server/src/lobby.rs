@@ -30,13 +30,14 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use protocol::{
-    AiLevel, GamePhase, GameSummary, LobbyClientMsg, LobbyGame, LobbyMember, LobbyServerMsg,
-    LobbySlot, Text,
+    AiLevel, AiPersonalities, GamePhase, GameSummary, LobbyClientMsg, LobbyGame, LobbyMember, LobbyServerMsg,
+    LobbySlot, Text, TradeMode,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::{
+    ai,
     admin::Admin,
     economy::Economy,
     game::{self, Match},
@@ -56,6 +57,12 @@ pub struct Member {
     /// (siehe `computer_token`), also kann sich niemand damit anmelden.
     #[serde(default)]
     pub computer: Option<AiLevel>,
+    /// Computergegner: Id seines Charakters (leer = der erste).
+    #[serde(default)]
+    pub personality: String,
+    /// Bündnis (gleiche Zahl ab 1 = verbündet), 0 = keins.
+    #[serde(default)]
+    pub team: u8,
 }
 
 impl Member {
@@ -64,6 +71,8 @@ impl Member {
             token: token.into(),
             name: name.into(),
             computer: None,
+            personality: String::new(),
+            team: 0,
         }
     }
 
@@ -88,6 +97,8 @@ pub struct Meta {
     pub host: String,
     /// Je Startplatz; die Spieler-Nummer im Spiel ist Index + 1.
     pub slots: Vec<Option<Member>>,
+    /// Handel unter Verbündeten: sofort oder mit Karren.
+    pub trade_mode: TradeMode,
 }
 
 impl Meta {
@@ -107,11 +118,14 @@ impl Meta {
     }
 
     /// Computergegner mit ihrer Spieler-Nummer (Startplatz + 1).
-    pub fn computers(&self) -> Vec<(u32, AiLevel)> {
+    pub fn computers(&self) -> Vec<ai::Seat> {
         self.slots
             .iter()
             .enumerate()
-            .filter_map(|(i, s)| Some((i as u32 + 1, s.as_ref()?.computer?)))
+            .filter_map(|(i, s)| {
+                let m = s.as_ref()?;
+                Some(ai::Seat { player: i as u32 + 1, level: m.computer?, personality: m.personality.clone() })
+            })
             .collect()
     }
 }
@@ -152,6 +166,8 @@ pub struct Hub {
     pub admin: Admin,
     /// Wirtschaftsdaten für neue Spiele (laufende haben ihre eigene Kopie).
     pub economy: Mutex<Economy>,
+    /// Charaktere der Computergegner (Editor `/ai.html`).
+    pub personalities: Mutex<AiPersonalities>,
     pub saves_dir: PathBuf,
 }
 
@@ -200,6 +216,7 @@ impl Hub {
             store,
             admin,
             economy: Mutex::new(economy),
+            personalities: Mutex::new(ai::personality::parse(ai::personality::PERSONALITIES_JSON).expect("eingebaute Charaktere sind gültig")),
             saves_dir,
         }
     }
@@ -334,6 +351,7 @@ impl Hub {
                         phase: GamePhase::Running,
                         host: file.host,
                         slots: file.slots,
+                        trade_mode: world.trade_mode(),
                     };
                     let computers = meta.computers();
                     let game = Arc::new(Game {
@@ -342,7 +360,7 @@ impl Hub {
                         running: OnceLock::new(),
                     });
                     let mut m = Match::new(world, file.map, file.map_text, file.speed);
-                    m.set_computers(&computers);
+                    m.set_computers(&computers, &self.personalities.lock().unwrap());
                     let m = Arc::new(m);
                     let _ = game.running.set(m.clone());
                     self.games.lock().unwrap().insert(file.id, game.clone());
@@ -421,6 +439,8 @@ impl Hub {
                             || lobby_online.contains(&m.token)
                             || in_game.contains(&(i as u32 + 1)),
                         computer: m.computer,
+                        personality: m.computer.map(|_| m.personality.clone()),
+                        team: m.team,
                     }),
                 })
                 .collect();
@@ -432,6 +452,7 @@ impl Hub {
                 phase: meta.phase,
                 host: public_id(&meta.host),
                 slots,
+                trade_mode: meta.trade_mode,
             };
             details.push((detail, meta.members().map(|m| m.token.clone()).collect()));
         }
@@ -493,6 +514,7 @@ impl Hub {
             phase: GamePhase::Waiting,
             host: token.into(),
             slots,
+            trade_mode: TradeMode::default(),
         };
         let game = Arc::new(Game {
             id,
@@ -614,7 +636,7 @@ impl Hub {
     }
 
     /// Gastgeber setzt einen Computergegner auf einen freien Startplatz.
-    fn add_computer(&self, token: &str, slot: u32, level: AiLevel) -> Reply {
+    fn add_computer(&self, token: &str, slot: u32, level: AiLevel, personality: Option<String>) -> Reply {
         let Some(game) = self.game_of(token) else {
             return err("lobby.not_in_game");
         };
@@ -633,6 +655,11 @@ impl Hub {
             token: computer_token(game.id, self.next_conn.fetch_add(1, Ordering::Relaxed)),
             name: format!("Computer {}", slot + 1),
             computer: Some(level),
+            personality: {
+                let all = self.personalities.lock().unwrap();
+                ai::personality::find(&all, personality.as_deref().unwrap_or("")).id.clone()
+            },
+            team: 0,
         });
         Ok(())
     }
@@ -661,6 +688,45 @@ impl Hub {
         Ok(())
     }
 
+    /// Bündnis eines Startplatzes setzen: den eigenen jeder, Computergegner nur der Gastgeber.
+    fn set_team(&self, token: &str, slot: u32, team: u8) -> Reply {
+        let Some(game) = self.game_of(token) else {
+            return err("lobby.not_in_game");
+        };
+        let mut meta = game.meta.lock().unwrap();
+        if meta.phase != GamePhase::Waiting {
+            return err("lobby.game_running");
+        }
+        if team as usize > meta.slots.len() {
+            return err("lobby.bad_team");
+        }
+        let is_host = meta.host == token;
+        let Some(m) = meta.slots.get_mut(slot as usize).and_then(|s| s.as_mut()) else {
+            return err("lobby.slot_empty");
+        };
+        if m.token != token && !(is_host && !m.is_human()) {
+            return err("lobby.not_your_slot");
+        }
+        m.team = team;
+        Ok(())
+    }
+
+    /// Gastgeber: wie Waren zwischen Verbündeten ankommen.
+    fn set_trade_mode(&self, token: &str, mode: TradeMode) -> Reply {
+        let Some(game) = self.game_of(token) else {
+            return err("lobby.not_in_game");
+        };
+        let mut meta = game.meta.lock().unwrap();
+        if meta.host != token {
+            return err("lobby.not_host");
+        }
+        if meta.phase != GamePhase::Waiting {
+            return err("lobby.game_running");
+        }
+        meta.trade_mode = mode;
+        Ok(())
+    }
+
     fn start(self: &Arc<Hub>, token: &str) -> Reply {
         let Some(game) = self.game_of(token) else {
             return err("lobby.not_in_game");
@@ -677,13 +743,15 @@ impl Hub {
                 .map_err(|_| Text::new("lobby.map_invalid").arg("map", &meta.map_name))?;
             let mut world = World::new(map, self.economy.lock().unwrap().clone());
             for (i, s) in meta.slots.iter().enumerate() {
-                if s.is_some() {
+                if let Some(m) = s {
                     world.spawn_player_at(i as u32 + 1, meta.spawns[i]);
+                    world.set_team(i as u32 + 1, m.team);
                 }
             }
+            world.set_trade_mode(meta.trade_mode);
             meta.phase = GamePhase::Running;
             let mut m = Match::new(world, meta.map_name.clone(), meta.map_text.clone(), 100);
-            m.set_computers(&meta.computers());
+            m.set_computers(&meta.computers(), &self.personalities.lock().unwrap());
             Arc::new(m)
         };
         let _ = game.running.set(m.clone());
@@ -709,8 +777,10 @@ impl Hub {
             LobbyClientMsg::TakeSlot { slot } => self.take_slot(token, slot),
             LobbyClientMsg::SetMap { map } => self.set_map(token, &map),
             LobbyClientMsg::StartGame => self.start(token),
-            LobbyClientMsg::AddComputer { slot, level } => self.add_computer(token, slot, level),
+            LobbyClientMsg::AddComputer { slot, level, personality } => self.add_computer(token, slot, level, personality),
             LobbyClientMsg::RemoveComputer { slot } => self.remove_computer(token, slot),
+            LobbyClientMsg::SetTeam { slot, team } => self.set_team(token, slot, team),
+            LobbyClientMsg::SetTradeMode { mode } => self.set_trade_mode(token, mode),
         }
     }
 }
@@ -839,18 +909,18 @@ mod tests {
         let id = hub.game_of(A).unwrap().id;
         hub.join(B, "Bert", id).unwrap();
         assert!(
-            hub.add_computer(B, 2, AiLevel::Easy).is_err(),
+            hub.add_computer(B, 2, AiLevel::Easy, None).is_err(),
             "nur der Gastgeber"
         );
         assert!(
-            hub.add_computer(A, 1, AiLevel::Easy).is_err(),
+            hub.add_computer(A, 1, AiLevel::Easy, None).is_err(),
             "Platz ist besetzt"
         );
-        hub.add_computer(A, 2, AiLevel::Normal).unwrap();
+        hub.add_computer(A, 2, AiLevel::Normal, None).unwrap();
         let token = {
             let game = hub.game(id).unwrap();
             let meta = game.meta.lock().unwrap();
-            assert_eq!(meta.computers(), vec![(3, AiLevel::Normal)]);
+            assert_eq!(meta.computers(), vec![ai::Seat { player: 3, level: AiLevel::Normal, personality: "balanced".into() }]);
             meta.slots[2].as_ref().unwrap().token.clone()
         };
         assert!(
@@ -875,6 +945,30 @@ mod tests {
         assert!(hub.game(id).is_some());
         hub.leave(B).unwrap();
         assert!(hub.game(id).is_none());
+    }
+
+    #[test]
+    fn buendnisse_und_handelsart_vor_dem_start() {
+        let hub = hub();
+        hub.create(A, "Anna", "zwei-burgen").unwrap();
+        let id = hub.game_of(A).unwrap().id;
+        hub.join(B, "Bert", id).unwrap();
+        hub.set_team(B, 1, 2).unwrap();
+        assert!(hub.set_team(B, 0, 2).is_err(), "fremder Platz");
+        assert!(hub.set_team(A, 1, 2).is_err(), "auch der Gastgeber nicht bei Menschen");
+        assert!(hub.set_team(A, 0, 99).is_err(), "zu große Zahl");
+        hub.set_team(A, 0, 2).unwrap();
+        assert!(hub.set_trade_mode(B, TradeMode::Carts).is_err(), "nur der Gastgeber");
+        hub.set_trade_mode(A, TradeMode::Carts).unwrap();
+        hub.start(A).unwrap();
+        assert!(hub.set_team(A, 0, 1).is_err(), "läuft schon");
+        let (_, m, _) = hub.membership(id, A).unwrap();
+        let w = m.world.lock().unwrap();
+        assert!(w.allied(1, 2));
+        assert_eq!(w.trade_mode(), TradeMode::Carts);
+        drop(w);
+        hub.leave(A).unwrap();
+        hub.leave(B).unwrap();
     }
 
     #[test]

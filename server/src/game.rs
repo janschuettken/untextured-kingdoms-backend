@@ -22,7 +22,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt, StreamExt};
-use protocol::{ClientMsg, MapRef, ServerMsg, UnitInfo, UnitState};
+use protocol::{ClientMsg, MapRef, PlayerInfo, ServerMsg, UnitInfo, UnitState};
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 
@@ -38,6 +38,8 @@ pub const TICK_RATE: u32 = 20;
 const VIEW_MARGIN: f32 = 24.0;
 /// Alle so viele Sekunden wird jedes laufende Spiel automatisch gespeichert.
 const AUTOSAVE_SECONDS: u64 = 60;
+/// So oft prüft er, ob die Burgen der verbundenen Spieler geschlossen sind.
+const CASTLE_CHECK_SECONDS: u64 = 2;
 
 /// Ein verbundener Client.
 pub struct Client {
@@ -54,6 +56,8 @@ pub struct Client {
     watch_sent: Option<Vec<(f32, f32)>>,
     /// Zuletzt geschickte `UnitInfo` der beobachteten Einheit.
     watch_info: Option<UnitInfo>,
+    /// Zuletzt geschickter Stand der eigenen Burg (geschlossen oder Lücke).
+    castle: Option<protocol::CastleStatus>,
 }
 
 /// Zustand eines laufenden Spiels.
@@ -93,9 +97,10 @@ impl Match {
         }
     }
 
-    /// Diese Startplätze spielt der Computer (Spieler-Nummer, Stärke).
-    pub fn set_computers(&mut self, list: &[(u32, protocol::AiLevel)]) {
-        *self.computers.get_mut().unwrap() = ai::computers(list);
+    /// Diese Startplätze spielt der Computer (Spieler-Nummer, Stärke, Charakter).
+    pub fn set_computers(&mut self, list: &[ai::Seat], personalities: &protocol::AiPersonalities) {
+        let economy = self.world.get_mut().unwrap().economy.clone();
+        *self.computers.get_mut().unwrap() = ai::computers(list, personalities, &economy);
     }
 
     pub fn is_online(&self, player: u32) -> bool {
@@ -133,6 +138,7 @@ pub fn spawn_thread(hub: Arc<Hub>, game: Arc<Game>, m: Arc<Match>) {
 fn changed(old: &UnitState, new: &UnitState) -> bool {
     old.moving != new.moving
         || old.carrying != new.carrying
+        || old.hp != new.hp
         || (old.x - new.x).abs() > 0.001
         || (old.y - new.y).abs() > 0.001
 }
@@ -196,12 +202,15 @@ fn game_loop(hub: Arc<Hub>, game: Arc<Game>, state: Arc<Match>) {
 }
 
 fn step(state: &Match, tick: u64) {
-    let (units, stocks, paths, infos) = {
+    let (units, stocks, paths, infos, castles) = {
         let mut world = state.world.lock().unwrap();
         let speed = state.game_speed.load(Ordering::Relaxed) as f32 / 100.0;
         let dt = speed / TICK_RATE as f32;
         // Computergegner geben ihre Befehle wie Menschen, über denselben Weg.
         for computer in state.computers.lock().unwrap().iter_mut() {
+            if world.is_eliminated(computer.player) {
+                continue;
+            }
             for cmd in computer.think(&world, dt) {
                 if let Err(text) = apply_command(&mut world, &state.ticks, computer.player, cmd) {
                     computer.rejected(&text);
@@ -228,7 +237,14 @@ fn step(state: &Match, tick: u64) {
             .into_iter()
             .filter_map(|id| Some((id, (world.unit_owner(id)?, world.unit_info(id)?))))
             .collect();
-        (world.snapshot(), world.take_dirty_stocks(), paths, infos)
+        // Burg geschlossen? Alle zwei Sekunden für jeden verbundenen Spieler.
+        let castles: HashMap<u32, protocol::CastleStatus> = if tick.is_multiple_of(CASTLE_CHECK_SECONDS * TICK_RATE as u64) {
+            let players: Vec<u32> = state.clients.lock().unwrap().keys().copied().collect();
+            players.into_iter().map(|p| (p, world.castle_status(p))).collect()
+        } else {
+            HashMap::new()
+        };
+        (world.snapshot(), world.take_dirty_stocks(), paths, infos, castles)
     };
     let mut clients = state.clients.lock().unwrap();
     let players_online = clients.len() as u32;
@@ -238,6 +254,11 @@ fn step(state: &Match, tick: u64) {
         }
     }
     for (&player, client) in clients.iter_mut() {
+        if let Some(status) = castles.get(&player) {
+            if client.castle.as_ref() != Some(status) && client.tx.try_send(ServerMsg::Castle { status: status.clone() }).is_ok() {
+                client.castle = Some(status.clone());
+            }
+        }
         if let Some(id) = client.watch {
             let path = paths.get(&id).cloned().unwrap_or_default();
             if client.watch_sent.as_ref() != Some(&path)
@@ -356,7 +377,17 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
     // Gebäudestand und Abo im selben Lock holen: so geht keine Änderung
     // verloren und keine kommt doppelt an.
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<ServerMsg>(64);
-    let (map, buildings, economy, stock, mut ticks) = {
+    // Namen der Mitspieler (Lobby), vor der Welt sperren (Reihenfolge siehe `Hub`).
+    let names: Vec<(u32, String, bool)> = game
+        .meta
+        .lock()
+        .unwrap()
+        .slots
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| s.as_ref().map(|m| (i as u32 + 1, m.name.clone(), !m.is_human())))
+        .collect();
+    let (map, buildings, economy, stock, diplomacy, outcome, mut ticks) = {
         let mut world = state.world.lock().unwrap();
         // Erstes Mal im Spiel (oder nach "Neues Spiel"): König aufs eigene Startfeld.
         if !world.has_player(player_id) {
@@ -370,6 +401,7 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
             watch: None,
             watch_sent: None,
             watch_info: None,
+            castle: None,
         };
         // Ist derselbe Spieler schon in einem anderen Fenster drin, übernimmt dieses.
         if let Some(old) = state.clients.lock().unwrap().insert(player_id, client) {
@@ -385,6 +417,16 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
             world.buildings.clone(),
             world.economy.def.clone(),
             world.stock_state(player_id),
+            ServerMsg::Diplomacy {
+                players: names
+                    .into_iter()
+                    .filter(|(id, _, _)| world.has_player(*id))
+                    .map(|(id, name, computer)| PlayerInfo { id, name, team: world.team_of(id), computer })
+                    .collect(),
+                trade_mode: world.trade_mode(),
+            },
+            // Ausgang bisher: wer raus ist, wer gewonnen hat (für später Verbundene).
+            (world.eliminated(), world.winners().map(|w| w.to_vec())),
             state.ticks.subscribe(),
         )
     };
@@ -402,6 +444,13 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
         buildings,
     };
     let _ = out_tx.send(welcome).await;
+    let _ = out_tx.send(diplomacy).await;
+    for player in outcome.0 {
+        let _ = out_tx.send(ServerMsg::PlayerDefeated { player, by: None }).await;
+    }
+    if let Some(winners) = outcome.1 {
+        let _ = out_tx.send(ServerMsg::GameOver { winners }).await;
+    }
     let _ = out_tx
         .send(ServerMsg::GameSpeed {
             percent: state.game_speed.load(Ordering::Relaxed),
@@ -419,6 +468,8 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
                     None => break,
                 },
                 r = ticks.recv() => match r {
+                    // Lieferungen unter Verbündeten sehen nur Absender und Empfänger.
+                    Ok(ServerMsg::Shipment { from, to, .. }) if from != player_id && to != player_id => continue,
                     Ok(m) => m,
                     // Zu langsam gelesen: Ereignisse (gebaut, abgerissen …) sind verloren
                     // und der Client wäre dauerhaft falsch. Verbindung schließen, der
@@ -527,7 +578,8 @@ async fn handle_msg(
         | ClientMsg::TrainUnits { .. }
         | ClientMsg::CancelTraining { .. }
         | ClientMsg::PrioritizeTraining { .. }
-        | ClientMsg::Trade { .. }) => {
+        | ClientMsg::Trade { .. }
+        | ClientMsg::SendGoods { .. }) => {
             let mut world = state.world.lock().unwrap();
             if let Err(text) = apply_command(&mut world, &state.ticks, player_id, msg) {
                 let _ = out_tx.try_send(ServerMsg::Rejected { text });
@@ -581,6 +633,9 @@ pub fn apply_command(
 ) -> Result<(), protocol::Text> {
     // Alles noch unter dem Lock verschicken, damit die Reihenfolge stimmt.
     let send = |msg: ServerMsg| drop(ticks.send(msg));
+    if world.is_eliminated(player_id) {
+        return Err(protocol::Text::new("defeat.eliminated"));
+    }
     match msg {
         ClientMsg::MoveUnits { unit_ids, x, y } => {
             world.order_move(player_id, &unit_ids, (x, y));
@@ -657,6 +712,12 @@ pub fn apply_command(
             send(ServerMsg::BuildingChanged { building });
         }
         ClientMsg::Trade { good, amount, sell } => world.trade(player_id, good, amount, sell)?,
+        ClientMsg::SendGoods { to, goods, taler } => {
+            world.send_goods(player_id, to, &goods, taler)?;
+            for event in world.take_events() {
+                send(event);
+            }
+        }
         _ => {}
     }
     Ok(())
