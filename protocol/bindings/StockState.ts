@@ -2,6 +2,7 @@
 import type { ArmyState } from "./ArmyState";
 import type { GoodAmount } from "./GoodAmount";
 import type { PeopleState } from "./PeopleState";
+import type { StoragePool } from "./StoragePool";
 
 /**
  * Lagerbestand eines Spielers.
@@ -12,13 +13,14 @@ export type StockState = {
  */
 goods: Array<GoodAmount>, 
 /**
- * Höchstmenge je Ware (wächst mit Vorratslagern).
+ * Gesamtplatz aller Lager zusammen.
  */
 capacity: number, 
 /**
- * Zusätzlicher Platz für einzelne Waren (Waffenkammer, Kornspeicher).
+ * Lagerplatz je Lagerart: jedes Lager hat einen Gesamtplatz, den sich alle
+ * Waren teilen, die es nimmt (Kornspeicher nur Essen, Waffenkammer nur Waffen …).
  */
-extra_capacity: Array<GoodAmount>, people: PeopleState, 
+pools: Array<StoragePool>, people: PeopleState, 
 /**
  * Geld des Spielers.
  */

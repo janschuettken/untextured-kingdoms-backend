@@ -229,7 +229,7 @@ impl World {
     }
 
     pub fn stock_state(&self, player: u32) -> StockState {
-        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, extra_capacity: Vec::new(), people: Default::default(), taler: 0, army: Default::default() });
+        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, pools: Vec::new(), people: Default::default(), taler: 0, army: Default::default() });
         state.people = self.people.get(&player).cloned().unwrap_or_default();
         let meal = self.economy.def.population.meal_seconds;
         let timer = self.meal_timer.get(&player).copied().unwrap_or(0.0);
@@ -254,20 +254,20 @@ impl World {
             .filter(|b| b.owner == player && self.economy.building(b.kind).is_some_and(|d| d.hub))
             .map(|b| b.id)
             .collect();
-        // Allgemeine Lager zählen für alle Waren, besondere nur für ihre.
-        let mut cap = 0;
-        let mut extra: std::collections::BTreeMap<protocol::Good, u32> = Default::default();
+        // Jedes Lager hat einen Gesamtplatz für die Waren, die es nimmt.
+        let mut pools: Vec<crate::stock::Pool> = Vec::new();
         for &h in &hubs {
-            let n = self.hub_capacity(h);
-            let kind = self.buildings.iter().find(|b| b.id == h).expect("eben gefunden").kind;
-            match self.special_hub(kind) {
-                Some(goods) => goods.iter().for_each(|&g| *extra.entry(g).or_default() += n),
-                None => cap += n,
+            let capacity = self.hub_capacity(h);
+            let b = self.buildings.iter().find(|b| b.id == h).expect("eben gefunden");
+            let goods = self.hub_allowed(b);
+            match pools.iter_mut().find(|p| p.kind == b.kind && p.goods == goods) {
+                Some(p) => p.capacity += capacity,
+                None => pools.push(crate::stock::Pool { kind: b.kind, goods, capacity }),
             }
         }
         if let Some(s) = self.stocks.get_mut(&player) {
-            s.capacity = cap;
-            s.extra = extra;
+            s.pooled = true;
+            s.pools = pools;
             self.dirty_stocks.insert(player);
         }
     }
@@ -354,7 +354,7 @@ impl World {
         self.next_unit_id += 1;
         // Noch kein Lager, also kein Platz: die Startgüter liegen „virtuell“ im Vorrat und
         // kommen ins erste Lager, sobald es steht.
-        let mut stock = Stock::new(0);
+        let mut stock = Stock::pooled();
         for g in &self.economy.def.start_stock {
             stock.add_unlimited(g.good, g.amount);
         }
@@ -1424,9 +1424,9 @@ mod tests {
     fn ohne_material_kein_bau_und_lager_erhoeht_platz() {
         use protocol::Good;
         let mut w = flat_world();
-        let cap = w.stocks[&1].capacity_of(Good::Stone);
+        let cap = w.stocks[&1].state().capacity;
         w.place_building(1, BuildingKind::Storehouse, 6, 6).unwrap();
-        assert_eq!(w.stocks[&1].capacity_of(Good::Stone), cap + w.economy.def.storehouse_capacity);
+        assert_eq!(w.stocks[&1].state().capacity, cap + w.economy.def.storehouse_capacity);
         let all = w.stocks[&1].amount(Good::Stone);
         w.stocks.get_mut(&1).unwrap().take_all(&[GoodAmount { good: Good::Stone, amount: all }]);
         assert_eq!(w.place_building(1, BuildingKind::Wall, 0, 9).unwrap_err().key, "error.not_enough");
