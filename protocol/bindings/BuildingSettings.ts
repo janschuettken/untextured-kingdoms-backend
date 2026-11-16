@@ -38,4 +38,8 @@ worker_carries: boolean,
 /**
  * Höchstbestand im Vorrat: liegt von einem Ergebnis so viel im Vorrat, macht der Betrieb Pause.
  */
-stop_at: Array<GoodAmount>, };
+stop_at: Array<GoodAmount>, 
+/**
+ * Karren füllen das Eingangslager auf (auch wenn der Arbeiter selbst trägt). Standard: an.
+ */
+cart_deliveries: boolean, };

@@ -565,6 +565,7 @@ impl World {
             keep_in_stock: Vec::new(),
             gate: GateMode::Auto,
             worker_carries: self.worker_carries_default,
+            cart_deliveries: true,
             stop_at: Vec::new(),
         };
         let status = if settings.recipe.is_some() { BuildingStatus::Working } else { BuildingStatus::Idle };

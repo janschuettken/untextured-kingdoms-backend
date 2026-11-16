@@ -1011,6 +1011,9 @@ pub struct BuildingSettings {
     /// Höchstbestand im Vorrat: liegt von einem Ergebnis so viel im Vorrat, macht der Betrieb Pause.
     #[serde(default)]
     pub stop_at: Vec<GoodAmount>,
+    /// Karren füllen das Eingangslager auf (auch wenn der Arbeiter selbst trägt). Standard: an.
+    #[serde(default = "default_true")]
+    pub cart_deliveries: bool,
 }
 
 /// Wie sich ein Tor verhält.
