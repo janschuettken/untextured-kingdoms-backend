@@ -77,8 +77,19 @@ pub fn choose_target(world: &World, me: u32, from: (f32, f32)) -> Option<(u32, f
         .collect();
     targets.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.2.total_cmp(&b.2)));
     let start = (from.0 as i32, from.1 as i32);
+    // Feindliche Tore gelten beim Bewegen als zu: die Welle läuft bis vor das erste Tor.
+    let gates: std::collections::HashSet<(i32, i32)> = world
+        .buildings
+        .iter()
+        .filter(|b| crate::world::is_gate(b.kind) && !world.allied(me, b.owner))
+        .flat_map(crate::world::passage_tiles)
+        .map(|(x, y)| (x as i32, y as i32))
+        .collect();
     for (owner, power, _, c) in targets {
-        let path = world.map.nav.find_path(start, (c.0 as i32, c.1 as i32));
+        let mut path = world.map.nav.find_path(start, (c.0 as i32, c.1 as i32));
+        if let Some(at) = path.iter().position(|p| gates.contains(p)) {
+            path.truncate(at.saturating_sub(2));
+        }
         let Some(&end) = path.last() else { continue };
         // Nicht wenigstens halbwegs hingekommen (etwa Wasser dazwischen)? Nächster.
         let left = ((end.0 - c.0 as i32) as f32).hypot((end.1 - c.1 as i32) as f32);
