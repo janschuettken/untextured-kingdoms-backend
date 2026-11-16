@@ -75,9 +75,12 @@ impl World {
             }
             Some(Gather::ToTile(_) | Gather::Working { .. }) | None => {
                 self.units[k].gather = None;
+                // Ereignisgesteuert: Hat sich am Betrieb gerade etwas geändert (Ergebnis fertig),
+                // sofort losgehen, sonst nur ab und zu nachsehen.
+                let changed = self.dirty_buildings.contains(&self.buildings[bi].id);
                 let u = &mut self.units[k];
                 u.cooldown -= dt;
-                if u.cooldown > 0.0 {
+                if u.cooldown > 0.0 && !changed {
                     return true;
                 }
                 u.cooldown = WAIT;
