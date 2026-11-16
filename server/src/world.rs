@@ -1014,7 +1014,13 @@ impl World {
                 .iter()
                 .find(|b| b.id == on)
                 .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.garrison > 0))
-                .map(|b| ((b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0), b.w.min(b.h) as f32 * 0.3))
+                .map(|b| {
+                    // Plattform groß genug für die Besatzung, aber innerhalb der Zinnen.
+                    let side = b.w.min(b.h) as f32;
+                    let crew = self.economy.building(b.kind).map_or(0, |d| d.garrison) as f32;
+                    let need = FORMATION_GAP * (crew / std::f32::consts::PI).sqrt() * 1.2;
+                    ((b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0), need.clamp(side * 0.3, side * 0.45))
+                })
         } else {
             None
         };
@@ -1557,6 +1563,24 @@ mod tests {
         assert!(w.buildings.iter().any(|b| b.owner == 2 && b.kind == BuildingKind::Keep));
         // Kein zweiter Bergfried.
         assert!(w.place_building(1, BuildingKind::Keep, 30, 2).is_err());
+    }
+
+    #[test]
+    fn bergfried_hat_platz_fuer_die_besatzung() {
+        let row = "0".repeat(40);
+        let text = format!("spawn 20 10\n{}", format!("{row}\n").repeat(20));
+        let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people();
+        let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
+        w.spawn_player(1);
+        let keep = w.buildings.iter().find(|b| b.owner == 1 && b.kind == BuildingKind::Keep).unwrap();
+        let center = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
+        let max = w.economy.building(BuildingKind::Keep).unwrap().garrison as usize;
+        assert!(max >= 40, "deutlich mehr Platz als früher (16)");
+        let spots = w.formation(1, &[], center, max, true);
+        for (i, p) in spots.iter().enumerate() {
+            assert!(w.is_walkway(1, *p), "nicht auf dem Wehrgang: {p:?}");
+            assert!(spots[i + 1..].iter().all(|q| (p.0 - q.0).hypot(p.1 - q.1) >= 0.5), "ineinander: {p:?}");
+        }
     }
 
     #[test]
