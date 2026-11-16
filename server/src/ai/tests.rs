@@ -84,7 +84,7 @@ fn normaler_computer_baut_mehr() {
     assert!(count(&world, BuildingKind::Woodcutter) >= 4);
     assert!(count(&world, BuildingKind::Barracks) >= 1);
     assert!(stock.army.soldiers >= 6, "{:?}", stock.army);
-    assert!(count(&world, BuildingKind::Gate) >= 1);
+    assert!(count(&world, BuildingKind::Gate) >= 1, "{:?} {:?}", stock.pools, stock.goods);
 }
 
 #[test]

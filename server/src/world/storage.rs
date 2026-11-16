@@ -60,15 +60,7 @@ impl World {
             .buildings
             .iter()
             .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.hub))
-            .map(|b| {
-                let only = &self.economy.building(b.kind).expect("eben geprüft").hub_goods;
-                let allowed = match (&b.settings.stores, only.is_empty()) {
-                    (s, true) => s.clone(),
-                    (None, false) => Some(only.clone()),
-                    (Some(s), false) => Some(s.iter().filter(|g| only.contains(g)).copied().collect()),
-                };
-                (b.id, b.owner, allowed)
-            })
+            .map(|b| (b.id, b.owner, self.hub_allowed(b)))
             .collect();
         let alive: BTreeSet<u32> = hubs.iter().map(|h| h.0).collect();
         self.hub_goods.retain(|id, _| alive.contains(id));
@@ -113,9 +105,9 @@ impl World {
                         }
                     }
                 }
-                // Volle Lager geben ab, was nicht mehr hineinpasst.
+                // Volle Lager geben ab, was nicht mehr hineinpasst (Gesamtplatz je Lager).
                 for h in &mine {
-                    let over = self.hub_amount(h.0, good).saturating_sub(self.hub_capacity(h.0));
+                    let over = self.hub_total(h.0).saturating_sub(self.hub_capacity(h.0)).min(self.hub_amount(h.0, good));
                     if over == 0 {
                         continue;
                     }
@@ -134,7 +126,7 @@ impl World {
         }
     }
 
-    /// So viel passt je Ware in dieses Lager: Vorratslager `storehouse_capacity`, Bergfried `base_capacity`.
+    /// So viel passt insgesamt in dieses Lager: Vorratslager `storehouse_capacity`, Bergfried `base_capacity`.
     /// `hub_capacity` aus den Gebäudedaten, sonst wie früher.
     pub(super) fn hub_capacity(&self, hub: u32) -> u32 {
         let e = &self.economy.def;
@@ -151,18 +143,28 @@ impl World {
         if !self.hub_accepts(b, good) {
             return 0;
         }
-        self.hub_capacity(hub).saturating_sub(self.hub_amount(hub, good))
+        self.hub_capacity(hub).saturating_sub(self.hub_total(hub))
+    }
+
+    /// Alles, was in diesem Lager liegt, zusammen.
+    pub(super) fn hub_total(&self, hub: u32) -> u32 {
+        self.hub_goods.get(&hub).map_or(0, |g| g.values().sum())
+    }
+
+    /// Welche Waren dieses Lager nimmt (Art des Lagers und Auswahl des Spielers); `None` = alle.
+    pub(super) fn hub_allowed(&self, b: &protocol::BuildingState) -> Option<Vec<Good>> {
+        let only = self.economy.building(b.kind).map(|d| d.hub_goods.clone()).unwrap_or_default();
+        match (&b.settings.stores, only.is_empty()) {
+            (s, true) => s.clone(),
+            (None, false) => Some(only),
+            (Some(s), false) => Some(s.iter().filter(|g| only.contains(g)).copied().collect()),
+        }
     }
 
     /// Nimmt dieses Lager die Ware? Art des Lagers (`hub_goods`) und Auswahl des Spielers.
     pub(super) fn hub_accepts(&self, b: &protocol::BuildingState, good: Good) -> bool {
         let only = self.economy.building(b.kind).map(|d| &d.hub_goods);
         only.is_none_or(|o| o.is_empty() || o.contains(&good)) && b.settings.stores.as_ref().is_none_or(|s| s.contains(&good))
-    }
-
-    /// Lager nur für bestimmte Waren (Waffenkammer, Kornspeicher)?
-    pub(super) fn special_hub(&self, kind: BuildingKind) -> Option<&Vec<Good>> {
-        self.economy.building(kind).map(|d| &d.hub_goods).filter(|g| !g.is_empty())
     }
 
     /// Inhalt eines Lagers für die Anzeige.
@@ -247,10 +249,9 @@ mod tests {
         let wood = w.stocks[&1].amount(Good::Wood);
         assert!(wood > 0, "Startgüter liegen trotzdem bereit");
         let store = w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap().id;
-        assert_eq!(w.stocks[&1].capacity_of(Good::Wood), w.economy.def.storehouse_capacity);
+        assert_eq!(w.stocks[&1].state().capacity, w.economy.def.storehouse_capacity, "Gesamtplatz");
         let food_in_store = takes(&w, BuildingKind::Storehouse, Good::Bread);
-        let bread = if food_in_store { w.economy.def.storehouse_capacity } else { 0 };
-        assert_eq!(w.stocks[&1].capacity_of(Good::Bread), bread, "Essen nur, wenn das Lager es nimmt");
+        assert_eq!(w.stocks[&1].room(Good::Bread) > 0, food_in_store, "Essen nur, wenn das Lager es nimmt");
         w.step(0.05);
         assert_eq!(w.hub_amount(store, Good::Wood), w.stocks[&1].amount(Good::Wood), "Startgüter im ersten Lager");
     }
@@ -267,9 +268,12 @@ mod tests {
         let def = w.economy.building(BuildingKind::Granary).unwrap();
         let (cap, extra) = (w.economy.def.storehouse_capacity, def.hub_capacity);
         let food_in_store = takes(&w, BuildingKind::Storehouse, Good::Bread);
-        let bread = extra + if food_in_store { cap } else { 0 };
-        assert_eq!(w.stocks[&1].capacity_of(Good::Bread), bread, "Brot im Kornspeicher");
-        assert_eq!(w.stocks[&1].capacity_of(Good::Wood), cap, "Holz nur im Vorratslager");
+        let st = w.stocks[&1].state();
+        assert_eq!(st.capacity, cap + extra, "Gesamtplatz beider Lager");
+        let gp = st.pools.iter().find(|p| p.kind == BuildingKind::Granary).unwrap();
+        assert_eq!(gp.capacity, extra);
+        assert!(!gp.goods.contains(&Good::Wood) && gp.goods.contains(&Good::Bread), "Kornspeicher nur für Essen");
+        let _ = food_in_store;
         w.admin_give(1, &[GoodAmount { good: Good::Bread, amount: 20 }, GoodAmount { good: Good::Wood, amount: 10 }], 0);
         w.step(0.05);
         assert_eq!(w.hub_amount(granary, Good::Wood), 0, "kein Holz im Kornspeicher");
@@ -292,7 +296,9 @@ mod tests {
         let base = w.economy.def.base_capacity;
         w.admin_give(1, &[GoodAmount { good: Good::Iron, amount: base + 50 }], 0);
         w.step(0.05);
-        assert_eq!(w.hub_amount(keep, Good::Iron), base, "Bergfried voll");
-        assert_eq!(w.hub_amount(store, Good::Iron), 50, "Rest im Vorratslager");
+        assert_eq!(w.hub_total(keep), base, "Bergfried voll (Gesamtplatz)");
+        let all: u32 = w.stocks[&1].state().goods.iter().map(|g| g.amount).sum();
+        assert_eq!(w.hub_total(keep) + w.hub_total(store), all, "Rest im Vorratslager");
+        assert!(w.hub_amount(store, Good::Iron) > 0);
     }
 }

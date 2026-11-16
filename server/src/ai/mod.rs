@@ -198,7 +198,10 @@ impl Computer {
             return Some(goal);
         }
         // Lager fast voll: noch ein Vorratslager.
-        let full = stock.goods.iter().any(|g| stock.capacity > 0 && g.amount * 10 >= stock.capacity * 9);
+        // (Nur Bergfried und Vorratslager zählen: ein voller Kornspeicher wird so nicht leerer.)
+        let general = |p: &&protocol::StoragePool| matches!(p.kind, BuildingKind::Keep | BuildingKind::Storehouse);
+        let (used, cap) = stock.pools.iter().filter(general).fold((0, 0), |(u, c), p| (u + p.used, c + p.capacity));
+        let full = cap > 0 && used * 10 >= cap * 9;
         if full && self.count(world, BuildingKind::Storehouse) < 4 && ready(BuildingKind::Storehouse) {
             return Some((BuildingKind::Storehouse, None));
         }

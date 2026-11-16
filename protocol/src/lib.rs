@@ -553,11 +553,12 @@ pub struct GoodAmount {
 pub struct StockState {
     /// Nur Waren, von denen etwas da ist.
     pub goods: Vec<GoodAmount>,
-    /// Höchstmenge je Ware (wächst mit Vorratslagern).
+    /// Gesamtplatz aller Lager zusammen.
     pub capacity: u32,
-    /// Zusätzlicher Platz für einzelne Waren (Waffenkammer, Kornspeicher).
+    /// Lagerplatz je Lagerart: jedes Lager hat einen Gesamtplatz, den sich alle
+    /// Waren teilen, die es nimmt (Kornspeicher nur Essen, Waffenkammer nur Waffen …).
     #[serde(default)]
-    pub extra_capacity: Vec<GoodAmount>,
+    pub pools: Vec<StoragePool>,
     #[serde(default)]
     pub people: PeopleState,
     /// Geld des Spielers.
@@ -565,6 +566,17 @@ pub struct StockState {
     pub taler: u32,
     #[serde(default)]
     pub army: ArmyState,
+}
+
+/// Lagerplatz einer Lagerart beim Spieler (alle Lager dieser Art zusammen).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct StoragePool {
+    pub kind: BuildingKind,
+    pub capacity: u32,
+    pub used: u32,
+    /// Waren, die diese Lager nehmen; leer = alle.
+    pub goods: Vec<Good>,
 }
 
 /// Art eines Gebäudes.
