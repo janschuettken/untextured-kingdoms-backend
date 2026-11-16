@@ -11,6 +11,7 @@ use protocol::{
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod army;
+mod diplomacy;
 mod errand;
 mod gate;
 mod market;
@@ -56,6 +57,9 @@ pub struct Unit {
     /// Liegt das Ziel oben auf dem Wehrgang?
     #[serde(default)]
     target_wall: bool,
+    /// Handelskarren: was er wohin bringt.
+    #[serde(default)]
+    trade: Option<diplomacy::Delivery>,
 }
 
 impl Unit {
@@ -75,6 +79,7 @@ impl Unit {
             on_wall: false,
             layers: Vec::new(),
             target_wall: false,
+            trade: None,
         }
     }
 
@@ -93,9 +98,9 @@ impl Unit {
         matches!(self.kind, UnitKind::Carrier | UnitKind::Cart)
     }
 
-    /// Träger, Karren und Arbeiter: gehorchen keinen Befehlen und weichen Gebäuden aus.
+    /// Träger, Karren, Handelskarren und Arbeiter: gehorchen keinen Befehlen und weichen Gebäuden aus.
     fn is_civilian(&self) -> bool {
-        self.is_transport() || self.kind == UnitKind::Worker
+        self.is_transport() || matches!(self.kind, UnitKind::Worker | UnitKind::TradeCart)
     }
 }
 
@@ -143,6 +148,10 @@ pub struct World {
     pub(crate) worker_carries_default: bool,
     /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
     hub_goods: HashMap<u32, storage::HubGoods>,
+    /// Bündnis je Spieler (fehlt = keins), siehe `diplomacy.rs`.
+    teams: BTreeMap<u32, u8>,
+    /// Wie Waren zwischen Verbündeten ankommen.
+    trade_mode: protocol::TradeMode,
 }
 
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
@@ -219,6 +228,8 @@ impl World {
             pay_timer: HashMap::new(),
             unpaid: HashSet::new(),
             hub_goods: HashMap::new(),
+            teams: BTreeMap::new(),
+            trade_mode: protocol::TradeMode::default(),
             worker_carries_default: true,
         }
     }
@@ -1099,7 +1110,7 @@ impl World {
         let taken = self
             .units
             .iter()
-            .filter(|u| u.owner == player && !u.is_civilian() && !ordered.contains(&u.id))
+            .filter(|u| self.allied(u.owner, player) && !u.is_civilian() && !ordered.contains(&u.id))
             .filter(|u| match u.target {
                 Some(t) if u.target_wall => inside(t),
                 _ => u.on_wall && inside(u.pos),
@@ -1133,6 +1144,7 @@ impl World {
         self.step_progress(dt);
         self.step_gates();
         self.step_army(dt);
+        self.step_trade(dt);
         self.balance_hubs();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
@@ -1145,7 +1157,7 @@ impl World {
             let speed = match unit.kind {
                 UnitKind::King => king,
                 UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
-                UnitKind::Cart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
+                UnitKind::Cart | UnitKind::TradeCart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
             };

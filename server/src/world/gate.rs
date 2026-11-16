@@ -2,9 +2,9 @@
 //!
 //! Ein Tor ist 3 Felder breit: zwei Pfeiler und in der Mitte der Durchgang. Ist
 //! das Tor offen, ist der Durchgang am Boden begehbar, sonst blockiert er wie eine
-//! Mauer. Im Modus „automatisch“ schließt es, sobald fremde Einheiten nahe kommen.
+//! Mauer. Im Modus „automatisch“ schließt es, sobald fremde (nicht verbündete) Einheiten nahe kommen.
 //!
-//! Oben auf Mauern mit Wehrgang, Türmen und Toren können eigene Einheiten laufen.
+//! Oben auf Mauern mit Wehrgang, Türmen und Toren können eigene und verbündete Einheiten laufen.
 //! Hinauf und hinunter geht es nur über die Treppe eines ausgebauten Tores: vom
 //! Feld vor oder hinter dem Durchgang auf die Tormitte oben.
 
@@ -78,7 +78,7 @@ impl World {
                     let (px, py) = passage(b);
                     let (cx, cy) = (px as f32 + 0.5, py as f32 + 0.5);
                     !self.units.iter().any(|u| {
-                        u.owner != b.owner && (u.pos.0 - cx).powi(2) + (u.pos.1 - cy).powi(2) <= r * r
+                        !self.allied(u.owner, b.owner) && (u.pos.0 - cx).powi(2) + (u.pos.1 - cy).powi(2) <= r * r
                     })
                 }
             };
@@ -155,10 +155,10 @@ impl World {
         u.path = if u.target.is_some() { vec![u.pos] } else { Vec::new() };
     }
 
-    /// Felder, auf denen Einheiten dieses Spielers oben laufen können.
+    /// Felder, auf denen Einheiten dieses Spielers oben laufen können (auch bei Verbündeten).
     fn walk_tiles(&self, owner: u32) -> HashSet<usize> {
         let mut set = HashSet::new();
-        for b in self.buildings.iter().filter(|b| b.owner == owner) {
+        for b in self.buildings.iter().filter(|b| self.allied(b.owner, owner)) {
             let Some(def) = self.economy.building(b.kind) else { continue };
             if def.walkway_from_level == 0 || b.level < def.walkway_from_level {
                 continue;
@@ -172,25 +172,25 @@ impl World {
         set
     }
 
-    /// Ist hier oben ein Wehrgang dieses Spielers?
+    /// Ist hier oben ein Wehrgang dieses Spielers oder eines Verbündeten?
     pub(super) fn is_walkway(&self, owner: u32, p: (f32, f32)) -> bool {
         let Some(t) = self.tile_of(p) else { return false };
         let id = self.occupied[t];
         id != 0
             && self.buildings.iter().find(|b| b.id == id).is_some_and(|b| {
-                b.owner == owner
+                self.allied(b.owner, owner)
                     && self.economy.building(b.kind).is_some_and(|d| d.walkway_from_level > 0 && b.level >= d.walkway_from_level)
             })
     }
 
-    /// Treppen dieses Spielers: (Feld oben, Felder am Boden davor).
+    /// Treppen dieses Spielers und seiner Verbündeten: (Feld oben, Felder am Boden davor).
     /// Tor: Tormitte, vom Feld vor oder hinter dem Durchgang. Andere (Treppenhaus,
     /// Turm): Gebäudemitte, von jedem freien Feld direkt neben dem Gebäude.
     fn stairs(&self, owner: u32) -> Vec<(usize, Vec<(i64, i64)>)> {
         let open = |&(x, y): &(i64, i64)| self.map.nav.is_open(x as i32, y as i32);
         self.buildings
             .iter()
-            .filter(|b| b.owner == owner)
+            .filter(|b| self.allied(b.owner, owner))
             .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.stairs_from_level > 0 && b.level >= d.stairs_from_level))
             .map(|b| {
                 let (cx, cy) = passage(b);
@@ -438,6 +438,35 @@ mod tests {
         run(&mut w, 0.1);
         assert!(w.buildings[g].gate_open, "Gegner weg: wieder offen");
         assert!(w.map.nav.is_open(11, 10));
+    }
+
+    #[test]
+    fn verbuendete_gehen_durchs_tor_und_auf_die_mauer() {
+        let mut w = walled(2, 2);
+        let g = gate(&w);
+        w.spawn_player(2);
+        w.set_team(1, 1);
+        w.set_team(2, 1);
+        // Verbündeter nahe am automatischen Tor: es bleibt offen.
+        let ally = w.units.iter().position(|u| u.owner == 2 && u.kind == UnitKind::King).unwrap();
+        w.units[ally].pos = (11.5, 16.5);
+        run(&mut w, 0.1);
+        assert!(w.buildings[g].gate_open, "Verbündeter: Tor bleibt offen");
+        let id = w.units[ally].id;
+        assert!(w.order_move(2, &[id], (11.5, 3.5)));
+        run(&mut w, 30.0);
+        assert!(w.units[ally].pos.1 < 10.0, "durchs Tor: {:?}", w.units[ally].pos);
+        // Hinauf auf die Mauer des Verbündeten.
+        assert!(w.order_move(2, &[id], (4.5, 10.5)));
+        run(&mut w, 40.0);
+        assert!(w.units[ally].on_wall, "steht oben auf der fremden Mauer");
+        // Bündnis aus: Gegner, das Tor geht zu.
+        w.set_team(2, 0);
+        w.units[ally].on_wall = false;
+        w.units[ally].pos = (11.5, 15.5);
+        run(&mut w, 0.1);
+        assert!(!w.buildings[g].gate_open, "Gegner: zu");
+        assert!(!w.is_walkway(2, (4.5, 10.5)), "Gegner darf nicht auf die Mauer");
     }
 
     #[test]

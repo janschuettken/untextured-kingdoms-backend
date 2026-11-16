@@ -93,6 +93,14 @@ pub enum ClientMsg {
     View { x0: f32, y0: f32, x1: f32, y1: f32 },
     /// Eigenes Gebäude an eine andere Stelle versetzen (kostet `move_cost_percent` der Baukosten).
     MoveBuilding { building_id: u32, x: u32, y: u32, #[serde(default)] rotation: u8 },
+    /// Waren (und Taler) an einen Verbündeten schicken, ohne Markt. Wie sie ankommen,
+    /// legt `TradeMode` des Spiels fest (sofort oder mit Handelskarren).
+    SendGoods {
+        to: u32,
+        goods: Vec<GoodAmount>,
+        #[serde(default)]
+        taler: u32,
+    },
 }
 
 /// Nachrichten vom Server an den Client.
@@ -195,6 +203,45 @@ pub enum ServerMsg {
     UnitInfo {
         info: UnitInfo,
     },
+    /// Mitspieler, Bündnisse und Handelsart. Kommt nach `welcome`.
+    Diplomacy {
+        players: Vec<PlayerInfo>,
+        trade_mode: TradeMode,
+    },
+    /// Waren zwischen Verbündeten: losgeschickt (`arrived` = false, nur bei Karren)
+    /// oder angekommen. Geht nur an Absender und Empfänger.
+    Shipment {
+        from: u32,
+        to: u32,
+        goods: Vec<GoodAmount>,
+        taler: u32,
+        arrived: bool,
+        /// Wie viele Handelskarren fahren (0 = sofort angekommen).
+        carts: u32,
+    },
+}
+
+/// Ein Spieler im laufenden Spiel.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PlayerInfo {
+    pub id: u32,
+    pub name: String,
+    /// Bündnis: Spieler mit derselben Zahl (ab 1) sind verbündet, 0 = allein.
+    pub team: u8,
+    pub computer: bool,
+}
+
+/// Wie Waren zwischen Verbündeten ankommen (Einstellung des Spiels in der Lobby).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TradeMode {
+    /// Sofort im Lager des Verbündeten.
+    #[default]
+    Instant,
+    /// Handelskarren fahren vom eigenen Lager zu seinem und verschwinden dort.
+    Carts,
 }
 
 /// Nachrichten vom Client an die Lobby (WebSocket `/lobby`).
@@ -227,6 +274,11 @@ pub enum LobbyClientMsg {
     },
     /// Nur Gastgeber, nur vor dem Start: den Computergegner von diesem Startplatz nehmen.
     RemoveComputer { slot: u32 },
+    /// Nur vor dem Start: Bündnis eines Startplatzes (0 = keins). Den eigenen darf
+    /// jeder setzen, die der Computergegner nur der Gastgeber.
+    SetTeam { slot: u32, team: u8 },
+    /// Nur Gastgeber, nur vor dem Start: wie Waren zwischen Verbündeten ankommen.
+    SetTradeMode { mode: TradeMode },
 }
 
 /// Stärke eines Computergegners. Was jede Stufe tut, steht im Server (`server/src/ai/`).
@@ -292,6 +344,9 @@ pub struct LobbyGame {
     pub host: String,
     /// Ein Eintrag je Startplatz der Karte, in derselben Reihenfolge.
     pub slots: Vec<LobbySlot>,
+    /// Handel unter Verbündeten: sofort oder mit Karren.
+    #[serde(default)]
+    pub trade_mode: TradeMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -316,6 +371,9 @@ pub struct LobbyMember {
     /// Gesetzt bei einem Computergegner: seine Stärke.
     #[serde(default)]
     pub computer: Option<AiLevel>,
+    /// Bündnis (gleiche Zahl ab 1 = verbündet), 0 = keins.
+    #[serde(default)]
+    pub team: u8,
 }
 
 /// Art eines Feldes.
@@ -412,6 +470,8 @@ pub enum UnitKind {
     Swordsman,
     /// Ritter zu Pferd: schnell und stark, teuer.
     Knight,
+    /// Handelskarren: bringt Waren zu einem Verbündeten und verschwindet dort.
+    TradeCart,
 }
 
 impl UnitKind {

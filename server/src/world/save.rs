@@ -35,6 +35,10 @@ pub struct SaveGame {
     hub_goods: HashMap<u32, super::storage::HubGoods>,
     next_unit_id: u32,
     next_building_id: u32,
+    #[serde(default)]
+    teams: std::collections::BTreeMap<u32, u8>,
+    #[serde(default)]
+    trade_mode: protocol::TradeMode,
 }
 
 impl World {
@@ -56,6 +60,8 @@ impl World {
             hub_goods: self.hub_goods.clone(),
             next_unit_id: self.next_unit_id,
             next_building_id: self.next_building_id,
+            teams: self.teams.clone(),
+            trade_mode: self.trade_mode,
         }
     }
 
@@ -88,6 +94,8 @@ impl World {
         w.hub_goods = save.hub_goods;
         w.next_unit_id = save.next_unit_id;
         w.next_building_id = save.next_building_id;
+        w.teams = save.teams;
+        w.trade_mode = save.trade_mode;
         // Ältere Stände: Herstellungsbetriebe hatten noch keine eigenen Arbeiter.
         for bi in 0..w.buildings.len() {
             let id = w.buildings[bi].id;
