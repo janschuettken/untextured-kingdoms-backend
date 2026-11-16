@@ -17,7 +17,7 @@
 //!
 //! Bauen bezahlt man vorerst weiter direkt aus dem Vorrat.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use protocol::{BuildingState, Good, GoodAmount, UnitKind};
 
@@ -149,16 +149,34 @@ impl World {
                 reserved.add(u.owner, job);
             }
         }
+        // Ereignisgesteuert: Hat sich bei einem Spieler in diesem Takt etwas an Gebäuden
+        // oder Vorrat geändert (Ergebnis fertig, Ware abgeladen, neues Gebäude ...), schauen
+        // seine freien Träger sofort nach Arbeit. Sonst nur ab und zu als Rückfallebene.
+        let woken: HashSet<u32> = self
+            .dirty_buildings
+            .iter()
+            .filter_map(|id| index.get(id).map(|&i| self.buildings[i].owner))
+            .chain(self.dirty_stocks.iter().copied())
+            .collect();
         for k in 0..self.units.len() {
-            if !self.units[k].is_transport() || !self.units[k].path.is_empty() {
+            if !self.units[k].is_transport() {
                 continue;
             }
             match self.units[k].job {
-                Some(job) => self.arrive(k, job, &index),
+                Some(job) => {
+                    if self.units[k].path.is_empty() {
+                        self.arrive(k, job, &index);
+                    }
+                }
                 None => {
+                    // Auch wer gerade nach Hause läuft, nimmt unterwegs neue Arbeit an.
+                    let walking = !self.units[k].path.is_empty();
+                    if walking && self.units[k].carrying.is_some() {
+                        continue;
+                    }
                     let u = &mut self.units[k];
                     u.cooldown -= dt;
-                    if u.cooldown > 0.0 {
+                    if u.cooldown > 0.0 && !woken.contains(&u.owner) {
                         continue;
                     }
                     u.cooldown = IDLE_WAIT;
@@ -167,7 +185,7 @@ impl World {
                     if let Some(job) = job {
                         reserved.add(self.units[k].owner, &job);
                         self.start(k, job, &index);
-                    } else {
+                    } else if !walking {
                         self.go_home(k, &index);
                     }
                 }
@@ -712,6 +730,24 @@ mod tests {
         );
         let b = w.buildings.iter().find(|b| b.id == cutter.id).unwrap();
         assert_ne!(b.status, BuildingStatus::StorageFull, "Bretter werden abgeholt");
+    }
+
+    #[test]
+    fn traeger_kommen_sofort_wenn_etwas_fertig_ist() {
+        let mut w = flat(40, 20);
+        w.worker_carries_default = false; // hier tragen die Träger
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        let mill = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap().id;
+        w.buildings.iter_mut().find(|b| b.id == mill).unwrap().settings.paused = true;
+        shed(&mut w, 10, 12, 1);
+        run(&mut w, 5.0);
+        assert!(w.units.iter().filter(|u| u.is_transport()).all(|u| u.job.is_none()), "nichts zu tun");
+        // Nach einem kurzen Schritt läuft die Wartezeit noch: ohne Ereignis kein neuer Blick.
+        w.step(0.05);
+        w.inventories.get_mut(&mill).unwrap().add(Good::Boards, 2);
+        w.dirty_buildings.insert(mill);
+        w.step(0.05);
+        assert!(w.units.iter().any(|u| u.is_transport() && u.job.is_some()), "Träger geht sofort los");
     }
 
     #[test]
