@@ -11,6 +11,7 @@ use protocol::{
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod army;
+mod combat;
 mod errand;
 mod gate;
 mod market;
@@ -56,6 +57,12 @@ pub struct Unit {
     /// Liegt das Ziel oben auf dem Wehrgang?
     #[serde(default)]
     target_wall: bool,
+    /// Erlittener Schaden (Lebenspunkte = `hp` der Einheitenart minus das).
+    #[serde(default)]
+    damage: u32,
+    /// Sekunden bis zum nächsten Schlag oder Schuss.
+    #[serde(default)]
+    attack_cooldown: f32,
 }
 
 impl Unit {
@@ -75,6 +82,8 @@ impl Unit {
             on_wall: false,
             layers: Vec::new(),
             target_wall: false,
+            damage: 0,
+            attack_cooldown: 0.0,
         }
     }
 
@@ -143,6 +152,12 @@ pub struct World {
     pub(crate) worker_carries_default: bool,
     /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
     hub_goods: HashMap<u32, storage::HubGoods>,
+    /// Spieler, deren König gefallen ist (siehe `combat.rs`).
+    eliminated: BTreeSet<u32>,
+    /// Bündnis je Spieler; wer fehlt, kämpft allein (eigene Nummer).
+    teams: HashMap<u32, u32>,
+    /// Gewinner, sobald das Spiel entschieden ist.
+    winners: Option<Vec<u32>>,
 }
 
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
@@ -219,6 +234,9 @@ impl World {
             pay_timer: HashMap::new(),
             unpaid: HashSet::new(),
             hub_goods: HashMap::new(),
+            eliminated: BTreeSet::new(),
+            teams: HashMap::new(),
+            winners: None,
             worker_carries_default: true,
         }
     }
@@ -1150,6 +1168,7 @@ impl World {
         self.step_progress(dt);
         self.step_gates();
         self.step_army(dt);
+        self.step_combat(dt);
         self.balance_hubs();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
@@ -1226,6 +1245,7 @@ impl World {
                 carrying: u.carrying.map(|g| g.good),
                 on_wall: u.on_wall,
                 inside: self.inside(u),
+                hp: self.unit_hp(u),
             })
             .collect()
     }

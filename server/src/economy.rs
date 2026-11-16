@@ -9,6 +9,22 @@ use std::collections::HashMap;
 
 use protocol::{BuildingDef, BuildingKind, EconomyDef, GoodAmount, RecipeDef, ResourceKind, UnitDef, UnitKind};
 
+/// Kampfwerte des Königs, wenn die Balancing-Datei keine hat. Sein Tempo kommt aus `movement.king_speed`.
+fn default_king(speed: f32) -> UnitDef {
+    UnitDef {
+        kind: UnitKind::King,
+        cost: Vec::new(),
+        taler: 0,
+        seconds: 0.0,
+        speed,
+        hp: 300,
+        attack: 14,
+        range: 1.2,
+        upkeep: 0,
+        ranged_immune: true,
+    }
+}
+
 pub const ECONOMY_JSON: &str = include_str!("../data/economy.json");
 
 #[derive(Clone)]
@@ -46,7 +62,11 @@ impl Economy {
 
     /// Liest und prüft die Wirtschaftsdaten.
     pub fn parse(json: &str) -> Result<Economy, String> {
-        let def: EconomyDef = serde_json::from_str(json).map_err(|e| format!("economy.json: {e}"))?;
+        let mut def: EconomyDef = serde_json::from_str(json).map_err(|e| format!("economy.json: {e}"))?;
+        // Ältere Balancing-Dateien kennen den König noch nicht: Grundwerte einsetzen.
+        if !def.units.iter().any(|u| u.kind == UnitKind::King) {
+            def.units.insert(0, default_king(def.movement.king_speed));
+        }
         let mut buildings = HashMap::new();
         for (i, b) in def.buildings.iter().enumerate() {
             if buildings.insert(b.kind, i).is_some() {
@@ -120,11 +140,17 @@ impl Economy {
             }
         }
         for (i, u) in def.units.iter().enumerate() {
-            if !u.kind.is_soldier() {
-                return Err(format!("Einheit {:?}: nur Soldaten werden in der Kaserne ausgebildet", u.kind));
+            if !u.kind.is_soldier() && u.kind != UnitKind::King {
+                return Err(format!("Einheit {:?}: nur Soldaten und der König haben Kampfwerte", u.kind));
             }
             if def.units[..i].iter().any(|v| v.kind == u.kind) {
                 return Err(format!("Einheit {:?} doppelt", u.kind));
+            }
+            if u.kind == UnitKind::King {
+                if u.hp == 0 {
+                    return Err("König: braucht Lebenspunkte".into());
+                }
+                continue;
             }
             if !(u.seconds > 0.0 && u.seconds.is_finite() && u.speed > 0.0 && u.speed.is_finite()) {
                 return Err(format!("Einheit {:?}: Ausbildungszeit und Tempo müssen größer als 0 sein", u.kind));
@@ -135,6 +161,9 @@ impl Economy {
         }
         for b in &def.buildings {
             for (n, level) in b.levels.iter().enumerate() {
+                if level.trains.contains(&UnitKind::King) {
+                    return Err(format!("{:?} Stufe {}: der König wird nicht ausgebildet", b.kind, n + 1));
+                }
                 if let Some(k) = level.trains.iter().find(|k| !def.units.iter().any(|u| u.kind == **k)) {
                     return Err(format!("{:?} Stufe {}: Einheit {k:?} fehlt unter units", b.kind, n + 1));
                 }
@@ -149,6 +178,12 @@ impl Economy {
         }
         if army.queue_max == 0 {
             return Err("Heer: queue_max muss mindestens 1 sein".into());
+        }
+        if !(army.attack_seconds > 0.0 && army.attack_seconds.is_finite()) {
+            return Err("Heer: attack_seconds muss größer als 0 sein".into());
+        }
+        if !(army.melee_range >= 0.0 && army.melee_range.is_finite()) {
+            return Err("Heer: melee_range darf nicht negativ sein".into());
         }
         let goods = |list: &[GoodAmount]| list.iter().all(|g| def.goods.contains(&g.good));
         if !def.buildings.iter().all(|b| b.levels.iter().all(|l| goods(&l.cost)))
@@ -191,6 +226,11 @@ impl Economy {
 
     pub fn unit(&self, kind: UnitKind) -> Option<&UnitDef> {
         self.def.units.iter().find(|u| u.kind == kind)
+    }
+
+    /// Zählt ein Angriff mit dieser Reichweite als Fernkampf?
+    pub fn is_ranged(&self, range: f32) -> bool {
+        range > self.def.army.melee_range
     }
 
     pub fn recipe(&self, id: &str) -> Option<&RecipeDef> {

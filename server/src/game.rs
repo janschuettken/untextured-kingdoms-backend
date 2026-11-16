@@ -133,6 +133,7 @@ pub fn spawn_thread(hub: Arc<Hub>, game: Arc<Game>, m: Arc<Match>) {
 fn changed(old: &UnitState, new: &UnitState) -> bool {
     old.moving != new.moving
         || old.carrying != new.carrying
+        || old.hp != new.hp
         || (old.x - new.x).abs() > 0.001
         || (old.y - new.y).abs() > 0.001
 }
@@ -202,6 +203,9 @@ fn step(state: &Match, tick: u64) {
         let dt = speed / TICK_RATE as f32;
         // Computergegner geben ihre Befehle wie Menschen, über denselben Weg.
         for computer in state.computers.lock().unwrap().iter_mut() {
+            if world.is_eliminated(computer.player) {
+                continue;
+            }
             for cmd in computer.think(&world, dt) {
                 if let Err(text) = apply_command(&mut world, &state.ticks, computer.player, cmd) {
                     computer.rejected(&text);
@@ -356,7 +360,7 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
     // Gebäudestand und Abo im selben Lock holen: so geht keine Änderung
     // verloren und keine kommt doppelt an.
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<ServerMsg>(64);
-    let (map, buildings, economy, stock, mut ticks) = {
+    let (map, buildings, economy, stock, outcome, mut ticks) = {
         let mut world = state.world.lock().unwrap();
         // Erstes Mal im Spiel (oder nach "Neues Spiel"): König aufs eigene Startfeld.
         if !world.has_player(player_id) {
@@ -385,6 +389,8 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
             world.buildings.clone(),
             world.economy.def.clone(),
             world.stock_state(player_id),
+            // Ausgang bisher: wer raus ist, wer gewonnen hat (für später Verbundene).
+            (world.eliminated(), world.winners().map(|w| w.to_vec())),
             state.ticks.subscribe(),
         )
     };
@@ -402,6 +408,12 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
         buildings,
     };
     let _ = out_tx.send(welcome).await;
+    for player in outcome.0 {
+        let _ = out_tx.send(ServerMsg::PlayerDefeated { player, by: None }).await;
+    }
+    if let Some(winners) = outcome.1 {
+        let _ = out_tx.send(ServerMsg::GameOver { winners }).await;
+    }
     let _ = out_tx
         .send(ServerMsg::GameSpeed {
             percent: state.game_speed.load(Ordering::Relaxed),
@@ -581,6 +593,9 @@ pub fn apply_command(
 ) -> Result<(), protocol::Text> {
     // Alles noch unter dem Lock verschicken, damit die Reihenfolge stimmt.
     let send = |msg: ServerMsg| drop(ticks.send(msg));
+    if world.is_eliminated(player_id) {
+        return Err(protocol::Text::new("defeat.eliminated"));
+    }
     match msg {
         ClientMsg::MoveUnits { unit_ids, x, y } => {
             world.order_move(player_id, &unit_ids, (x, y));

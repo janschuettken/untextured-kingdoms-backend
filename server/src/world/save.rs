@@ -35,6 +35,12 @@ pub struct SaveGame {
     hub_goods: HashMap<u32, super::storage::HubGoods>,
     next_unit_id: u32,
     next_building_id: u32,
+    #[serde(default)]
+    eliminated: std::collections::BTreeSet<u32>,
+    #[serde(default)]
+    teams: HashMap<u32, u32>,
+    #[serde(default)]
+    winners: Option<Vec<u32>>,
 }
 
 impl World {
@@ -56,6 +62,9 @@ impl World {
             hub_goods: self.hub_goods.clone(),
             next_unit_id: self.next_unit_id,
             next_building_id: self.next_building_id,
+            eliminated: self.eliminated.clone(),
+            teams: self.teams.clone(),
+            winners: self.winners.clone(),
         }
     }
 
@@ -88,6 +97,9 @@ impl World {
         w.hub_goods = save.hub_goods;
         w.next_unit_id = save.next_unit_id;
         w.next_building_id = save.next_building_id;
+        w.eliminated = save.eliminated;
+        w.teams = save.teams;
+        w.winners = save.winners;
         // Ältere Stände: Herstellungsbetriebe hatten noch keine eigenen Arbeiter.
         for bi in 0..w.buildings.len() {
             let id = w.buildings[bi].id;
@@ -112,8 +124,9 @@ impl World {
         p
     }
 
+    /// Spielt mit oder ist schon ausgeschieden (dann kommt er nicht neu ins Spiel).
     pub fn has_player(&self, player: u32) -> bool {
-        self.stocks.contains_key(&player)
+        self.stocks.contains_key(&player) || self.eliminated.contains(&player)
     }
 }
 

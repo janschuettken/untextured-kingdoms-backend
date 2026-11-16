@@ -195,6 +195,17 @@ pub enum ServerMsg {
     UnitInfo {
         info: UnitInfo,
     },
+    /// Der König dieses Spielers ist tot: er scheidet aus, alles von ihm ist verschwunden.
+    /// Geht an alle; ein ausgeschiedener Spieler bekommt es beim Verbinden noch einmal.
+    PlayerDefeated {
+        player: u32,
+        /// Wessen Einheit den letzten Schlag geführt hat.
+        by: Option<u32>,
+    },
+    /// Nur noch ein Spieler (oder ein Bündnis) hat seinen König: das Spiel ist entschieden.
+    GameOver {
+        winners: Vec<u32>,
+    },
 }
 
 /// Nachrichten vom Client an die Lobby (WebSocket `/lobby`).
@@ -489,6 +500,9 @@ pub struct UnitState {
     /// Arbeiter ist in seinem Gebäude (steht dort und arbeitet): außen nicht zu sehen.
     #[serde(default)]
     pub inside: bool,
+    /// Lebenspunkte (Höchstwert: `hp` der Einheit in `economy.units`). 0 = hat keine (Träger, Arbeiter).
+    #[serde(default)]
+    pub hp: u32,
 }
 
 /// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.
@@ -871,6 +885,10 @@ pub struct UnitDef {
     /// Sold in Talern je Zahltag (siehe `army.upkeep_seconds`).
     #[serde(default)]
     pub upkeep: u32,
+    /// Fernkämpfer (Reichweite über `army.melee_range`) können diese Einheit nicht verletzen
+    /// (der König: nur Nahkämpfer können ihn töten).
+    #[serde(default)]
+    pub ranged_immune: bool,
 }
 
 /// Regeln für das Heer.
@@ -884,11 +902,15 @@ pub struct ArmyDef {
     pub unpaid_speed_percent: u32,
     /// So viele Soldaten kann eine Kaserne höchstens in der Warteschlange haben.
     pub queue_max: u32,
+    /// Sekunden zwischen zwei Schlägen oder Schüssen einer Einheit.
+    pub attack_seconds: f32,
+    /// Bis zu dieser Reichweite (Felder) zählt ein Angriff als Nahkampf, darüber als Fernkampf.
+    pub melee_range: f32,
 }
 
 impl Default for ArmyDef {
     fn default() -> Self {
-        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10 }
+        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, attack_seconds: 1.5, melee_range: 2.0 }
     }
 }
 

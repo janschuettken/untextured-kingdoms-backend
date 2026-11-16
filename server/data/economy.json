@@ -1528,6 +1528,18 @@
   },
   "units": [
     {
+      "kind": "king",
+      "cost": [],
+      "taler": 0,
+      "seconds": 0,
+      "speed": 1.5,
+      "hp": 300,
+      "attack": 14,
+      "range": 1.2,
+      "upkeep": 0,
+      "ranged_immune": true
+    },
+    {
       "kind": "spearman",
       "cost": [{"good": "spear", "amount": 1}],
       "taler": 10,
@@ -1601,6 +1613,8 @@
   "army": {
     "upkeep_seconds": 60,
     "unpaid_speed_percent": 60,
-    "queue_max": 10
+    "queue_max": 10,
+    "attack_seconds": 1.5,
+    "melee_range": 2
   }
 }
