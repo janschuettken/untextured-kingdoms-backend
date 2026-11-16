@@ -1490,7 +1490,8 @@
   },
   "movement": {
     "king_speed": 1.5,
-    "worker_speed": 1.2
+    "worker_speed": 1.2,
+    "slope_speed_percent": 60
   },
   "population": {
     "food": ["bread", "meat", "fruit"],

@@ -185,7 +185,8 @@ fn resource_key(r: ResourceKind) -> String {
 }
 
 impl World {
-    pub fn new(map: GameMap, economy: Economy) -> World {
+    pub fn new(mut map: GameMap, economy: Economy) -> World {
+        map.nav.set_slope_percent(economy.def.movement.slope_speed_percent);
         let n = (map.width * map.height) as usize;
         let resource_left = map.resources.iter().map(|&r| economy.resource_amount(r)).collect();
         World {
@@ -301,6 +302,7 @@ impl World {
     /// gibt, laufen nicht weiter.
     pub fn set_economy(&mut self, economy: Economy) {
         self.economy = economy;
+        self.map.nav.set_slope_percent(self.economy.def.movement.slope_speed_percent);
         self.update_inventory_capacities();
         let players: Vec<u32> = self.stocks.keys().copied().collect();
         for p in players {
@@ -431,7 +433,38 @@ impl World {
         rotation: u8,
         level: u8,
     ) -> Result<BuildingState, Refusal> {
+        if let Some(gate) = self.road_through_gate(player, kind, (x, y))? {
+            return Ok(gate);
+        }
         self.place_building_at(player, kind, (x, y), rotation, level, false)
+    }
+
+    /// Weg durch den Durchgang eines eigenen Tors ziehen: es entsteht kein eigenes
+    /// Wegstück, der Durchgang wird so schnell wie der Weg. Liefert das Tor, oder
+    /// None, wenn hier kein Tordurchgang liegt.
+    fn road_through_gate(&mut self, player: u32, kind: BuildingKind, (x, y): (u32, u32)) -> Result<Option<BuildingState>, Refusal> {
+        let Some(def) = self.economy.building(kind).cloned() else { return Ok(None) };
+        if def.road_speed_percent == 0 || x >= self.map.width || y >= self.map.height {
+            return Ok(None);
+        }
+        let id = self.occupied[(y * self.map.width + x) as usize];
+        let Some(bi) = self.buildings.iter().position(|b| b.id == id) else { return Ok(None) };
+        let b = &self.buildings[bi];
+        if b.owner != player || !gate::is_gate(b.kind) || !gate::passage_tiles(b).contains(&(x, y)) {
+            return Ok(None);
+        }
+        if b.road_under >= def.road_speed_percent {
+            return Err(Text::new("error.occupied"));
+        }
+        self.pay(player, &def.levels[0].cost)?;
+        let old = self.buildings[bi].clone();
+        self.set_footprint(&old, false);
+        self.buildings[bi].road_under = def.road_speed_percent;
+        let b = self.buildings[bi].clone();
+        self.set_footprint(&b, true);
+        self.dirty_buildings.insert(b.id);
+        self.replan_all();
+        Ok(Some(b))
     }
 
     /// Prüft, ob der Bau so ginge (Platz, Regeln, Kosten), ohne etwas zu ändern.
@@ -478,8 +511,9 @@ impl World {
             }
         }
         self.check_build_radius(player, &def, (x, y), (w, h))?;
-        // Tore und Türme dürfen auf eigene Mauern; die kommen beim Bauen weg.
-        let walls = if def.on_walls { self.walls_under(player, (x, y), (w, h)) } else { Vec::new() };
+        // Tore und Türme dürfen auf eigene Mauern, alle Gebäude auf eigene Wege;
+        // die kommen beim Bauen weg.
+        let walls = self.removable_under(player, &def, (x, y), (w, h));
         let entrance = self.check_site(&def, (x, y), (w, h), rotation, &walls)?;
         let covers = |p: (f32, f32)| {
             let (ux, uy) = (p.0.floor() as i64, p.1.floor() as i64);
@@ -506,6 +540,17 @@ impl World {
             self.placement_plan(player, kind, (x, y), rotation, level, free)?;
         let max_hp = def.max_hp;
         self.pay(player, &cost)?;
+        // Tor auf einem Weg: der Durchgang bleibt so schnell wie der Weg.
+        let road_under = if gate::is_gate(kind) {
+            walls
+                .iter()
+                .filter_map(|id| self.buildings.iter().find(|b| b.id == *id))
+                .filter_map(|b| self.economy.building(b.kind).map(|d| d.road_speed_percent))
+                .max()
+                .unwrap_or(0)
+        } else {
+            0
+        };
         for id in walls {
             if self.demolish(player, id).is_ok() {
                 self.events.push(ServerMsg::BuildingRemoved { building_id: id });
@@ -543,6 +588,7 @@ impl World {
             training_left: 0.0,
             progress: 0.0,
             progress_rate: 0.0,
+            road_under,
         };
         self.next_building_id += 1;
         if let Some((ex, ey)) = entrance {
@@ -580,8 +626,10 @@ impl World {
         self.buildings.iter().any(|b| b.owner == player && b.kind == kind)
     }
 
-    /// Eigene Mauerstücke (Mauer, hohe Mauer, Palisade) in dieser Fläche.
-    fn walls_under(&self, player: u32, (x, y): (u32, u32), (w, h): (u32, u32)) -> Vec<u32> {
+    /// Eigene Gebäude in dieser Fläche, die ein neues Gebäude dieser Art ersetzt:
+    /// Mauerstücke (Mauer, hohe Mauer, Palisade), wenn es auf Mauern darf, und Wege.
+    fn removable_under(&self, player: u32, def: &protocol::BuildingDef, (x, y): (u32, u32), (w, h): (u32, u32)) -> Vec<u32> {
+        let replaces_roads = def.road_speed_percent == 0;
         let mut ids: Vec<u32> = Vec::new();
         for ty in y..(y + h).min(self.map.height) {
             for tx in x..(x + w).min(self.map.width) {
@@ -590,7 +638,9 @@ impl World {
                     continue;
                 }
                 let wall = self.buildings.iter().find(|b| b.id == id).is_some_and(|b| {
-                    b.owner == player && matches!(b.kind, BuildingKind::Wall | BuildingKind::HighWall | BuildingKind::Palisade)
+                    let wall = matches!(b.kind, BuildingKind::Wall | BuildingKind::HighWall | BuildingKind::Palisade);
+                    let road = self.economy.building(b.kind).is_some_and(|d| d.road_speed_percent > 0);
+                    b.owner == player && ((def.on_walls && wall) || (replaces_roads && road))
                 });
                 if wall {
                     ids.push(id);
@@ -734,6 +784,12 @@ impl World {
                 } else if gate::blocks(b, tx, ty) {
                     self.map.nav.set_blocked(tx as i32, ty as i32, on);
                 }
+            }
+        }
+        if gate::is_gate(b.kind) && b.road_under > 0 {
+            let pct = if on { (100 + b.road_under).min(u16::MAX as u32) as u16 } else { 100 };
+            for (tx, ty) in gate::passage_tiles(b) {
+                self.map.nav.set_speed(tx as i32, ty as i32, pct);
             }
         }
     }

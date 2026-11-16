@@ -34,6 +34,10 @@ const CLUSTER: i32 = 16;
 const NO_REGION: u32 = u32::MAX;
 /// Wie weit das Glätten höchstens vorausschaut (in Wegfeldern).
 const SMOOTH_LOOKAHEAD: usize = 48;
+/// Bis zu diesem Abstand (Felder) wird mit Gewichten ohne groben Korridor gesucht.
+const NEAR_SPAN: u32 = 128;
+/// So viele Felder Rand um Start und Ziel darf diese Suche nutzen (für Umwege).
+const NEAR_MARGIN: i32 = 32;
 
 #[derive(Clone, Default)]
 struct Region {
@@ -73,8 +77,16 @@ pub struct NavGrid {
     clusters: Vec<Vec<Region>>,
     cw: i32,
     ch: i32,
-    /// Lauftempo je Feld in Prozent (Wege > 100).
+    /// Lauftempo je Feld in Prozent (Wege > 100, Schrägen < 100).
     speed: Vec<u16>,
+    /// Tempo durch Wege je Feld in Prozent (100 = kein Weg).
+    road: Vec<u16>,
+    /// Liegt das Feld an einer Schräge (Nachbar eine Höhenstufe höher oder tiefer)?
+    slope: Vec<bool>,
+    /// Tempo auf Schrägen in Prozent.
+    slope_percent: u16,
+    /// Gibt es Felder mit anderem Tempo als 100 %? Dann darf das Glätten nicht abkürzen.
+    weighted: bool,
     /// Schnellstes Feld, für die Schätzung der Restkosten.
     max_speed: u16,
     scratch: RefCell<Scratch>,
@@ -97,6 +109,16 @@ impl NavGrid {
         };
 
         let n = (width * height) as usize;
+        let mut slope = vec![false; n];
+        for y in 0..h {
+            for x in 0..w {
+                let i = idx(x, y);
+                slope[i] = !water[i]
+                    && [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|&(dx, dy)| {
+                        inside(x + dx, y + dy) && !water[idx(x + dx, y + dy)] && levels[i].abs_diff(levels[idx(x + dx, y + dy)]) == 1
+                    });
+            }
+        }
         let mut terrain = vec![0u8; n];
         for y in 0..h {
             for x in 0..w {
@@ -132,6 +154,10 @@ impl NavGrid {
             cw,
             ch,
             speed: vec![100; n],
+            road: vec![100; n],
+            slope,
+            slope_percent: 100,
+            weighted: false,
             max_speed: 100,
             scratch: RefCell::new(Scratch::default()),
         };
@@ -157,8 +183,35 @@ impl NavGrid {
             return;
         }
         let i = self.idx(x, y);
-        self.speed[i] = percent.max(1);
-        self.max_speed = self.max_speed.max(percent);
+        self.road[i] = percent.max(1);
+        self.update_speed(i);
+    }
+
+    /// Tempo auf Schrägen in Prozent (aus den Wirtschaftsdaten).
+    pub fn set_slope_percent(&mut self, percent: u16) {
+        let percent = percent.clamp(1, 1000);
+        if percent == self.slope_percent {
+            return;
+        }
+        self.slope_percent = percent;
+        for i in 0..self.speed.len() {
+            self.update_speed(i);
+        }
+    }
+
+    fn update_speed(&mut self, i: usize) {
+        let slope = if self.slope[i] { self.slope_percent as u32 } else { 100 };
+        let v = (self.road[i] as u32 * slope / 100).clamp(1, u16::MAX as u32) as u16;
+        self.speed[i] = v;
+        self.max_speed = self.max_speed.max(v);
+        self.weighted |= v != 100;
+    }
+
+    /// Laufkosten aller Felder für die Heatmap, siehe `ServerMsg::NavCosts`.
+    pub fn cost_map(&self) -> String {
+        (0..self.speed.len())
+            .map(|i| if self.dirs[i] == 0 { ' ' } else { char::from(48 + (self.speed[i] / 5).min(78) as u8) })
+            .collect()
     }
 
     /// Tempofaktor an einer Stelle (1.0 = normal).
@@ -422,17 +475,38 @@ impl NavGrid {
         }
         let stamp = s.stamp;
 
-        // Grob über die Gebiete, dann feldgenau nur durch diese Gebiete.
-        let corridor = self.region_path(s, from, goal, goal_region);
-        for &r in &corridor {
-            s.allowed[r as usize] = stamp;
-        }
-        // Mit Wegen: auch die Nachbargebiete zulassen, damit die Suche einen Weg
-        // nebenan finden kann (der grobe Korridor kennt nur die Luftlinie).
-        if self.max_speed > 100 {
+        let span = (start.0 - goal.0).unsigned_abs().max((start.1 - goal.1).unsigned_abs());
+        if self.weighted && span <= NEAR_SPAN {
+            // Unterschiedliche Kosten (Wege, Schrägen) und nicht zu weit: feldgenau im
+            // ganzen Umkreis suchen. Der grobe Korridor kennt nur die Luftlinie und
+            // würde Umwege über Wege oder um Berge herum abschneiden.
+            let m = NEAR_MARGIN;
+            let (cx0, cy0) = ((start.0.min(goal.0) - m).max(0) / CLUSTER, (start.1.min(goal.1) - m).max(0) / CLUSTER);
+            let (cx1, cy1) = (
+                ((start.0.max(goal.0) + m) / CLUSTER).min(self.cw - 1),
+                ((start.1.max(goal.1) + m) / CLUSTER).min(self.ch - 1),
+            );
+            for cy in cy0..=cy1 {
+                for cx in cx0..=cx1 {
+                    let c = (cy * self.cw + cx) as usize;
+                    for k in 0..self.clusters[c].len() {
+                        s.allowed[c * 256 + k] = stamp;
+                    }
+                }
+            }
+        } else {
+            // Grob über die Gebiete, dann feldgenau nur durch diese Gebiete.
+            let corridor = self.region_path(s, from, goal, goal_region);
             for &r in &corridor {
-                for &nb in &self.region_info(r).neighbors {
-                    s.allowed[nb as usize] = stamp;
+                s.allowed[r as usize] = stamp;
+            }
+            // Mit Gewichten: auch die Nachbargebiete zulassen, damit die Suche einen
+            // Weg nebenan finden kann.
+            if self.weighted {
+                for &r in &corridor {
+                    for &nb in &self.region_info(r).neighbors {
+                        s.allowed[nb as usize] = stamp;
+                    }
                 }
             }
         }
@@ -445,7 +519,7 @@ impl NavGrid {
         let fastest = self.max_speed as u32;
         let heuristic = |(x, y): (i32, i32)| {
             let (dx, dy) = ((x - target.0).unsigned_abs(), (y - target.1).unsigned_abs());
-            (10 * dx.max(dy) + 4 * dx.min(dy)) * 100 / fastest
+            (1000 * dx.max(dy) + 400 * dx.min(dy)) * 100 / fastest
         };
         let mut open = BinaryHeap::new();
         let si = self.idx(start.0, start.1);
@@ -476,7 +550,7 @@ impl NavGrid {
                 if s.allowed[self.region[j] as usize] != stamp {
                     continue;
                 }
-                let c = ci + if dx != 0 && dy != 0 { 1400 } else { 1000 } / self.speed[j] as u32;
+                let c = ci + if dx != 0 && dy != 0 { 140_000 } else { 100_000 } / self.speed[j] as u32;
                 if s.seen[j] != stamp || c < s.cost[j] {
                     s.seen[j] = stamp;
                     s.cost[j] = c;
@@ -499,6 +573,11 @@ impl NavGrid {
     /// Kommt man auf gerader Linie von a nach b, ohne Wand, Wasser oder
     /// Blockade zu kreuzen? Geht Feld für Feld entlang der Linie.
     pub fn line_walkable(&self, a: (f32, f32), b: (f32, f32)) -> bool {
+        self.walk_line(a, b, |_| true)
+    }
+
+    /// Wie `line_walkable`, prüft zusätzlich jedes betretene Feld mit `cell` (Index).
+    fn walk_line(&self, a: (f32, f32), b: (f32, f32), cell: impl Fn(usize) -> bool) -> bool {
         let (mut cx, mut cy) = (a.0.floor() as i32, a.1.floor() as i32);
         let (ex, ey) = (b.0.floor() as i32, b.1.floor() as i32);
         let (dx, dy) = (b.0 - a.0, b.1 - a.1);
@@ -533,6 +612,9 @@ impl NavGrid {
             }
             cx += stx;
             cy += sty;
+            if !cell(self.idx(cx, cy)) {
+                return false;
+            }
         }
         (cx, cy) == (ex, ey)
     }
@@ -562,10 +644,18 @@ impl NavGrid {
             let mut j = (i + SMOOTH_LOOKAHEAD).min(points.len() - 1);
             // Mit Wegen: nur über gleich schnelle Felder abkürzen, sonst schneidet
             // die Linie den Weg ab, den die Suche extra genommen hat.
-            let roads = self.max_speed > 100;
+            // Mit Gewichten: nur abkürzen, wenn der geplante Weg und jedes Feld unter der
+            // Linie gleich schnell sind, sonst schneidet die Linie den Weg ab, den die Suche extra genommen hat.
             let here = self.speed_at(cur);
-            let uniform = |j: usize| !roads || points[i..=j].iter().all(|&p| self.speed_at(p) == here);
-            while j > i && !(uniform(j) && self.line_walkable(cur, points[j])) {
+            let ok = |j: usize| {
+                if self.weighted {
+                    points[i..=j].iter().all(|&p| self.speed_at(p) == here)
+                        && self.walk_line(cur, points[j], |c| self.speed[c] as f32 / 100.0 == here)
+                } else {
+                    self.line_walkable(cur, points[j])
+                }
+            };
+            while j > i && !ok(j) {
                 j -= 1;
             }
             result.push(points[j]);
@@ -592,6 +682,49 @@ mod tests {
         let path = nav.find_path((0, 0), (3, 0));
         assert_eq!(path.last(), Some(&(3, 0)));
         assert!(path.contains(&(1, 1)), "Weg führt über die Schräge");
+    }
+
+    #[test]
+    fn schraeger_weg_wird_nicht_abgekuerzt() {
+        // Ein Weg als Treppe schräg über die Karte: die geglätteten Wegpunkte
+        // dürfen nur über Wegfelder führen, nicht über die Ecken daneben.
+        let row = "0".repeat(40);
+        let mut map = GameMap::parse(&format!("{row}\n").repeat(40)).unwrap();
+        let nav = &mut map.nav;
+        for x in 2..38 {
+            nav.set_speed(x, x / 3 + 1, 180);
+        }
+        let pts = nav.waypoints((2.5, 1.5), (37.5, 13.5));
+        let mut cur = (2.5, 1.5);
+        for &p in &pts {
+            assert!(nav.walk_line(cur, p, |c| nav.speed[c] == 180), "von {cur:?} nach {p:?} verlässt den Weg");
+            cur = p;
+        }
+    }
+
+    #[test]
+    fn um_den_berg_herum_statt_darueber() {
+        // Ein Hügel (Stufen 1-4) mitten im Weg, links und rechts flach. Mit langsamen
+        // Schrägen lohnt der Umweg unten herum, ohne Abzug geht es drüber.
+        let (w, h) = (40usize, 30usize);
+        let mut text = String::new();
+        for y in 0..h {
+            for x in 0..w {
+                let d = (x as i32 - 20).abs().max((y as i32 - 10).abs());
+                let level = if y < 22 { (5 - d).clamp(0, 4) } else { 0 };
+                text.push(char::from(b'0' + level as u8));
+            }
+            text.push('\n');
+        }
+        let path = |slope: u16| {
+            let mut map = GameMap::parse(&text).unwrap();
+            map.nav.set_slope_percent(slope);
+            map.nav.find_path((10, 10), (30, 10))
+        };
+        assert!(path(100).iter().any(|&(x, y)| x == 20 && y == 10), "ohne Abzug über den Gipfel");
+        let around = path(30);
+        assert_eq!(around.last(), Some(&(30, 10)));
+        assert!(around.iter().all(|&(x, y)| (x - 20).abs().max((y - 10).abs()) >= 5), "mit Abzug außen herum");
     }
 
     #[test]
