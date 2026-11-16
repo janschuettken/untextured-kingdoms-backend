@@ -256,8 +256,13 @@ impl World {
         let mut groups: Groups = HashMap::new();
         for b in self.buildings.iter().filter(|b| b.owner == owner) {
             let Some(inv) = self.inventories.get(&b.id) else { continue };
-            // Der Arbeiter trägt hier selbst (Einstellung am Gebäude).
-            if !within(area, b) || b.settings.worker_carries {
+            if !within(area, b) {
+                continue;
+            }
+            // Der Arbeiter trägt hier selbst (Einstellung am Gebäude); Karren dürfen
+            // trotzdem das Eingangslager auffüllen (`cart_deliveries`).
+            let self_carry = b.settings.worker_carries;
+            if self_carry && !(cart && b.settings.cart_deliveries) {
                 continue;
             }
             let inputs: &[GoodAmount] =
@@ -265,6 +270,9 @@ impl World {
             let d = dist_to(b, u.pos);
             // Abholen: alles, was kein Eingang ist, wenn ein Lager es nimmt.
             for g in inv.state().goods {
+                if self_carry {
+                    break;
+                }
                 if !moves(g.good) || inputs.iter().any(|i| i.good == g.good) || self.nearest_hub(owner, u.pos, g.good).is_none() {
                     continue;
                 }
@@ -289,12 +297,14 @@ impl World {
                 }
             }
             // Beliefern: Eingänge für zwei Durchläufe, aber nicht unter den Mindestbestand.
-            if !b.settings.accept_deliveries || b.settings.paused {
+            if !b.settings.accept_deliveries || b.settings.paused || (cart && !b.settings.cart_deliveries) {
                 continue;
             }
             for i in inputs.iter().filter(|i| moves(i.good)) {
                 let Some(hub) = self.nearest_hub_having(owner, u.pos, i.good) else { continue };
-                let want = (i.amount * 2).min(inv.capacity_of(i.good));
+                // Karren füllen das Eingangslager ganz auf, Träger bringen zwei Durchläufe.
+                let want = if cart { inv.capacity_of(i.good) } else { (i.amount * 2).min(inv.capacity_of(i.good)) };
+                let min_load = if cart { cart_min.min(want).max(1) } else { min_load };
                 let have = inv.amount(i.good) + Reserved::get(&reserved.incoming, (b.id, i.good));
                 let keep = b.settings.keep_in_stock.iter().find(|g| g.good == i.good).map_or(0, |g| g.amount);
                 let there = stock
@@ -748,6 +758,38 @@ mod tests {
         w.dirty_buildings.insert(mill);
         w.step(0.05);
         assert!(w.units.iter().any(|u| u.is_transport() && u.job.is_some()), "Träger geht sofort los");
+    }
+
+    #[test]
+    fn karren_fuellen_eingangslager_auf() {
+        // Der Arbeiter trägt selbst (Standard), trotzdem bringt der Karren Holz in großen Ladungen.
+        let mut w = flat(40, 20);
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        let mill = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap().id;
+        w.buildings.iter_mut().find(|b| b.id == mill).unwrap().settings.paused = false;
+        shed(&mut w, 10, 12, 2);
+        w.units.retain(|u| u.kind != UnitKind::Carrier);
+        let cap = w.inventories[&mill].capacity_of(Good::Wood);
+        let mut supplied = 0;
+        for _ in 0..20 * 60 {
+            w.step(0.05);
+            if let Some(c) = w.units.iter().find(|u| u.kind == UnitKind::Cart) {
+                if matches!(c.job, Some(super::Job { kind: super::JobKind::Supply { to }, .. }) if to == mill) {
+                    supplied = supplied.max(c.carrying.map_or(0, |g| g.amount));
+                }
+            }
+        }
+        assert!(supplied > 2, "Karren bringt eine große Ladung ({supplied} von {cap})");
+        // Ausgeschaltet: der Karren liefert nicht mehr.
+        let mut s = w.buildings.iter().find(|b| b.id == mill).unwrap().settings.clone();
+        s.cart_deliveries = false;
+        w.configure(1, mill, s).unwrap();
+        run(&mut w, 20.0);
+        for _ in 0..20 * 40 {
+            w.step(0.05);
+            let c = w.units.iter().find(|u| u.kind == UnitKind::Cart).unwrap();
+            assert!(!matches!(c.job, Some(super::Job { kind: super::JobKind::Supply { .. }, stage: super::Stage::Load(_), .. })), "keine neue Lieferung");
+        }
     }
 
     #[test]
