@@ -453,7 +453,7 @@
       "walkway_from_level": 1,
       "stairs_from_level": 1,
       "gate_radius": 0,
-      "garrison": 16,
+      "garrison": 40,
       "build_radius": 0,
       "on_walls": false,
       "on_ramps": false,
@@ -1459,7 +1459,7 @@
       "id": "grow_fruit",
       "building": "orchard",
       "inputs": [],
-      "outputs": [{"good": "fruit", "amount": 5}],
+      "outputs": [{"good": "fruit", "amount": 10}],
       "seconds": 25,
       "unattended_percent": 80
     }
@@ -1472,8 +1472,8 @@
     {"good": "bread", "amount": 30}
   ],
   "start_building": "keep",
-  "base_capacity": 300,
-  "storehouse_capacity": 300,
+  "base_capacity": 600,
+  "storehouse_capacity": 600,
   "demolish_refund_percent": 50,
   "move_cost_percent": 25,
   "resource_amounts": [
