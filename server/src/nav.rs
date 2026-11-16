@@ -427,6 +427,15 @@ impl NavGrid {
         for &r in &corridor {
             s.allowed[r as usize] = stamp;
         }
+        // Mit Wegen: auch die Nachbargebiete zulassen, damit die Suche einen Weg
+        // nebenan finden kann (der grobe Korridor kennt nur die Luftlinie).
+        if self.max_speed > 100 {
+            for &r in &corridor {
+                for &nb in &self.region_info(r).neighbors {
+                    s.allowed[nb as usize] = stamp;
+                }
+            }
+        }
         // Ist das Ziel unerreichbar, endet der Korridor im nächstgelegenen Gebiet
         // und die Suche liefert dort das Feld, das dem Ziel am nächsten ist.
         let target = goal;

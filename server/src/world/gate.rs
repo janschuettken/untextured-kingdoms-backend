@@ -25,14 +25,29 @@ fn center(t: (i64, i64)) -> (f32, f32) {
     (t.0 as f32 + 0.5, t.1 as f32 + 0.5)
 }
 
+/// Tor oder Torhaus: hat einen Durchgang, der auf- und zugeht.
+pub fn is_gate(kind: BuildingKind) -> bool {
+    matches!(kind, BuildingKind::Gate | BuildingKind::Gatehouse)
+}
+
 /// Mittleres Feld eines Gebäudes (beim Tor der Durchgang).
 pub fn passage(b: &BuildingState) -> (u32, u32) {
     (b.x + b.w / 2, b.y + b.h / 2)
 }
 
+/// Alle Felder des Durchgangs: quer durch das Tor, beim Torhaus also mehrere tief.
+pub fn passage_tiles(b: &BuildingState) -> Vec<(u32, u32)> {
+    let (px, py) = passage(b);
+    if b.w >= b.h {
+        (b.y..b.y + b.h).map(|y| (px, y)).collect()
+    } else {
+        (b.x..b.x + b.w).map(|x| (x, py)).collect()
+    }
+}
+
 /// Blockiert dieses Feld des Gebäudes den Boden? Nur der offene Durchgang eines Tores nicht.
 pub fn blocks(b: &BuildingState, tx: u32, ty: u32) -> bool {
-    !(b.kind == BuildingKind::Gate && b.gate_open && passage(b) == (tx, ty))
+    !(is_gate(b.kind) && b.gate_open && passage_tiles(b).contains(&(tx, ty)))
 }
 
 /// Die Felder vor und hinter dem Durchgang (Fuß der Treppe).
@@ -51,7 +66,7 @@ impl World {
     pub(super) fn step_gates(&mut self) {
         let mut changes = Vec::new();
         for (bi, b) in self.buildings.iter().enumerate() {
-            if b.kind != BuildingKind::Gate {
+            if !is_gate(b.kind) {
                 continue;
             }
             let want = match b.settings.gate {
@@ -84,13 +99,15 @@ impl World {
         let b = &mut self.buildings[bi];
         b.gate_open = open;
         let id = b.id;
-        let (px, py) = passage(b);
-        self.map.nav.set_blocked(px as i32, py as i32, !open);
+        let tiles = passage_tiles(b);
+        for &(px, py) in &tiles {
+            self.map.nav.set_blocked(px as i32, py as i32, !open);
+        }
         if !open {
             // Wer im Durchgang steht, wird hinausgeschoben.
-            let t = (py * self.map.width + px) as usize;
+            let ts: Vec<usize> = tiles.iter().map(|&(px, py)| (py * self.map.width + px) as usize).collect();
             let inside: Vec<usize> = (0..self.units.len())
-                .filter(|&k| !self.units[k].on_wall && self.tile_of(self.units[k].pos) == Some(t))
+                .filter(|&k| !self.units[k].on_wall && self.tile_of(self.units[k].pos).is_some_and(|t| ts.contains(&t)))
                 .collect();
             for k in inside {
                 self.push_out(k);
@@ -177,7 +194,7 @@ impl World {
             .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.stairs_from_level > 0 && b.level >= d.stairs_from_level))
             .map(|b| {
                 let (cx, cy) = passage(b);
-                let feet: Vec<(i64, i64)> = if b.kind == BuildingKind::Gate {
+                let feet: Vec<(i64, i64)> = if is_gate(b.kind) {
                     entries(b).into_iter().filter(open).collect()
                 } else {
                     let (x0, y0, x1, y1) = (b.x as i64, b.y as i64, (b.x + b.w) as i64, (b.y + b.h) as i64);
