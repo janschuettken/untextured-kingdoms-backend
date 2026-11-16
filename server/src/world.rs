@@ -683,6 +683,21 @@ impl World {
         ids
     }
 
+    /// Liegt eines der Rohstoff-Felder höchstens `r` Felder vom Rand der Fläche entfernt
+    /// (gleiche Abstandsregel wie beim Abbau)?
+    fn resource_near(&self, res: &[ResourceKind], (x, y): (u32, u32), (w, h): (u32, u32), r: u32) -> bool {
+        let r = r.min(64) as i64;
+        let (x0, y0, x1, y1) = (x as i64, y as i64, (x + w) as i64 - 1, (y + h) as i64 - 1);
+        let (mw, mh) = (self.map.width as i64, self.map.height as i64);
+        ((y0 - r).max(0)..=(y1 + r).min(mh - 1)).any(|ty| {
+            ((x0 - r).max(0)..=(x1 + r).min(mw - 1)).any(|tx| {
+                let dx = (x0 - tx).max(tx - x1).max(0);
+                let dy = (y0 - ty).max(ty - y1).max(0);
+                dx * dx + dy * dy <= r * r && res.contains(&self.map.resources[(ty * mw + tx) as usize])
+            })
+        })
+    }
+
     fn check_site(
         &self,
         def: &protocol::BuildingDef,
@@ -727,7 +742,9 @@ impl World {
                 .flat_map(|ty| (x..x + w).map(move |tx| (tx, ty)))
                 .filter(|&(tx, ty)| p.resources.contains(&self.map.resources[(ty * self.map.width + tx) as usize]))
                 .count() as u32;
-            if on * 100 < p.min_share_percent * w * h {
+            // Abbaubetriebe mit Reichweite (Steinbruch, Mine): Rohstoff im Umkreis genügt.
+            let near = !def.gathers.is_empty() && def.gather_radius > 0 && self.resource_near(&p.resources, (x, y), (w, h), def.gather_radius);
+            if !near && on * 100 < p.min_share_percent * w * h {
                 let names: Vec<String> = p.resources.iter().map(|r| resource_key(*r)).collect();
                 return Err(Text::new("error.needs_resource").arg("resources", names.join(",")));
             }

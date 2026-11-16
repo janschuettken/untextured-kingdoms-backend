@@ -312,6 +312,31 @@ mod tests {
     }
 
     #[test]
+    fn steinbruch_baut_im_umkreis_ab() {
+        // Stein nur rechts außen; der Steinbruch steht zwei Felder daneben.
+        let mut text = String::from("spawn 0 9\n[terrain]\n");
+        for _ in 0..12 {
+            text += &format!("{}\n", "0".repeat(30));
+        }
+        text += "[resources]\n";
+        for y in 0..12 {
+            text += &format!("{}{}\n", ".".repeat(28), if y < 4 { "SS" } else { ".." });
+        }
+        let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people();
+        let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
+        w.spawn_player(1);
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        let r = w.economy.building(BuildingKind::Quarry).unwrap().gather_radius;
+        assert!(r >= 2, "kleiner Umkreis eingestellt");
+        // Zu weit weg geht nicht, daneben schon.
+        assert_eq!(w.place_building(1, BuildingKind::Quarry, 24 - r, 6).unwrap_err().key, "error.needs_resource");
+        w.place_building(1, BuildingKind::Quarry, 24, 1).unwrap();
+        let before = w.stocks[&1].amount(Good::Stone);
+        run(&mut w, 150.0);
+        assert!(w.stocks[&1].amount(Good::Stone) > before, "Stein kommt im Vorrat an");
+    }
+
+    #[test]
     fn ohne_traeger_traegt_der_arbeiter_selbst() {
         let mut w = world();
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
