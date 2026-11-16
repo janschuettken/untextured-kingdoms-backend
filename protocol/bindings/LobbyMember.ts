@@ -13,4 +13,8 @@ online: boolean,
 /**
  * Gesetzt bei einem Computergegner: seine Stärke.
  */
-computer: AiLevel | null, };
+computer: AiLevel | null, 
+/**
+ * Bündnis (gleiche Zahl ab 1 = verbündet), 0 = keins.
+ */
+team: number, };
