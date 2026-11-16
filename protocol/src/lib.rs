@@ -59,8 +59,20 @@ pub enum ClientMsg {
         #[serde(default)]
         spread: bool,
     },
-    /// Den zuletzt in Auftrag gegebenen Soldaten streichen; die Kosten kommen ganz zurück.
-    CancelTraining { building_id: u32 },
+    /// Soldaten aus der Warteschlange streichen; die Kosten kommen ganz zurück.
+    /// Ohne `index` der zuletzt bestellte, sonst `count` (mindestens 1) ab `index`.
+    CancelTraining {
+        building_id: u32,
+        #[serde(default)]
+        #[ts(optional)]
+        index: Option<u32>,
+        #[serde(default)]
+        #[ts(optional)]
+        count: Option<u32>,
+    },
+    /// `count` Einträge ab `index` in der Warteschlange nach vorn ziehen: gleich
+    /// hinter den, der gerade ausgebildet wird (dessen Fortschritt bleibt).
+    PrioritizeTraining { building_id: u32, index: u32, count: u32 },
     /// Am Markt handeln: `sell` = verkaufen, sonst kaufen. Bezahlt wird in Talern.
     Trade { good: Good, amount: u32, sell: bool },
     /// Als Admin anmelden (Token aus der Server-Umgebung `ADMIN_TOKEN`).

@@ -98,18 +98,56 @@ impl World {
 
     /// Den zuletzt bestellten Soldaten streichen und die Kosten erstatten.
     pub fn cancel_training(&mut self, player: u32, building_id: u32) -> Result<BuildingState, Refusal> {
+        let len = self.own_barracks_mut(player, building_id)?.training.len() as u32;
+        if len == 0 {
+            return Err(Text::new("error.nothing_to_cancel"));
+        }
+        self.cancel_training_at(player, building_id, len - 1, 1)
+    }
+
+    /// `count` Soldaten ab Platz `index` streichen und die Kosten erstatten.
+    /// Trifft es den, der gerade ausgebildet wird, fängt der nächste von vorn an.
+    pub fn cancel_training_at(&mut self, player: u32, building_id: u32, index: u32, count: u32) -> Result<BuildingState, Refusal> {
+        let b = self.own_barracks_mut(player, building_id)?;
+        let start = index as usize;
+        if start >= b.training.len() {
+            return Err(Text::new("error.nothing_to_cancel"));
+        }
+        let end = (start + count.max(1) as usize).min(b.training.len());
+        let removed: Vec<UnitKind> = b.training.drain(start..end).collect();
+        let b = b.clone();
+        if start == 0 {
+            let left = b.training.first().and_then(|k| self.economy.unit(*k)).map_or(0.0, |u| u.seconds);
+            if let Some(x) = self.buildings.iter_mut().find(|x| x.id == building_id) {
+                x.training_left = left;
+            }
+        }
+        self.refund_training(player, &removed);
+        Ok(self.buildings.iter().find(|x| x.id == building_id).cloned().unwrap_or(b))
+    }
+
+    /// `count` Einträge ab `index` gleich hinter den laufenden ziehen.
+    pub fn prioritize_training(&mut self, player: u32, building_id: u32, index: u32, count: u32) -> Result<BuildingState, Refusal> {
+        let b = self.own_barracks_mut(player, building_id)?;
+        let start = index as usize;
+        if start >= b.training.len() {
+            return Err(Text::new("error.nothing_to_cancel"));
+        }
+        // Der laufende bleibt vorn, sonst ginge sein Fortschritt verloren.
+        let start = start.max(1);
+        let end = (start + count.max(1) as usize).min(b.training.len());
+        if start < end {
+            let moved: Vec<UnitKind> = b.training.drain(start..end).collect();
+            b.training.splice(1..1, moved);
+        }
+        Ok(b.clone())
+    }
+
+    fn own_barracks_mut(&mut self, player: u32, building_id: u32) -> Result<&mut BuildingState, Refusal> {
         let b = self.buildings.iter_mut().find(|b| b.id == building_id).ok_or_else(|| Text::new("error.no_building"))?;
         if b.owner != player {
             return Err(Text::new("error.not_yours"));
         }
-        let Some(kind) = b.training.pop() else {
-            return Err(Text::new("error.nothing_to_cancel"));
-        };
-        if b.training.is_empty() {
-            b.training_left = 0.0;
-        }
-        let b = b.clone();
-        self.refund_training(player, &[kind]);
         Ok(b)
     }
 
@@ -332,6 +370,34 @@ mod tests {
         let before = w.stock_state(1).taler;
         w.demolish(1, b.id).unwrap();
         assert_eq!(w.stock_state(1).taler, before + 10 * max as u32);
+    }
+
+    #[test]
+    fn warteschlange_einzeln_streichen_und_vorziehen() {
+        let mut w = world();
+        w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 200 }, GoodAmount { good: Good::Wood, amount: 200 }, GoodAmount { good: Good::Stone, amount: 200 }], 0);
+        let b = w.place_building(1, BuildingKind::Barracks, 10, 10).unwrap().id;
+        w.admin_give(1, &[GoodAmount { good: Good::Spear, amount: 3 }, GoodAmount { good: Good::Longbow, amount: 2 }], 1000);
+        w.train(1, b, UnitKind::Spearman, 3).unwrap();
+        w.train(1, b, UnitKind::Archer, 2).unwrap();
+        w.step(1.0);
+        let left = w.barracks(1)[0].training_left;
+        // Bogenschützen hinter den laufenden Speerträger ziehen.
+        let q = w.prioritize_training(1, b, 3, 2).unwrap().training;
+        use UnitKind::{Archer as A, Spearman as S};
+        assert_eq!(q, vec![S, A, A, S, S]);
+        assert_eq!(w.barracks(1)[0].training_left, left, "Fortschritt bleibt");
+        // Die zwei hinteren Speerträger streichen: Speere zurück.
+        let q = w.cancel_training_at(1, b, 3, 2).unwrap().training;
+        assert_eq!(q, vec![S, A, A]);
+        assert_eq!(w.stock_state(1).goods.iter().find(|g| g.good == Good::Spear).unwrap().amount, 2);
+        // Den laufenden streichen: der nächste fängt von vorn an.
+        let q = w.cancel_training_at(1, b, 0, 1).unwrap().training;
+        assert_eq!(q, vec![A, A]);
+        let archer = w.economy.unit(A).unwrap().seconds;
+        assert_eq!(w.barracks(1)[0].training_left, archer);
+        assert_eq!(w.cancel_training_at(1, b, 5, 1).unwrap_err().key, "error.nothing_to_cancel");
+        assert_eq!(w.prioritize_training(2, b, 1, 1).unwrap_err().key, "error.not_yours");
     }
 
     #[test]

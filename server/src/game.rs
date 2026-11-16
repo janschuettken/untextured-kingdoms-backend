@@ -518,6 +518,7 @@ async fn handle_msg(
         | ClientMsg::UpgradeBuilding { .. }
         | ClientMsg::TrainUnits { .. }
         | ClientMsg::CancelTraining { .. }
+        | ClientMsg::PrioritizeTraining { .. }
         | ClientMsg::Trade { .. }) => {
             let mut world = state.world.lock().unwrap();
             if let Err(text) = apply_command(&mut world, &state.ticks, player_id, msg) {
@@ -636,8 +637,15 @@ pub fn apply_command(
             };
             send(ServerMsg::BuildingChanged { building });
         }
-        ClientMsg::CancelTraining { building_id } => {
-            let building = world.cancel_training(player_id, building_id)?;
+        ClientMsg::CancelTraining { building_id, index, count } => {
+            let building = match index {
+                Some(index) => world.cancel_training_at(player_id, building_id, index, count.unwrap_or(1))?,
+                None => world.cancel_training(player_id, building_id)?,
+            };
+            send(ServerMsg::BuildingChanged { building });
+        }
+        ClientMsg::PrioritizeTraining { building_id, index, count } => {
+            let building = world.prioritize_training(player_id, building_id, index, count)?;
             send(ServerMsg::BuildingChanged { building });
         }
         ClientMsg::Trade { good, amount, sell } => world.trade(player_id, good, amount, sell)?,
