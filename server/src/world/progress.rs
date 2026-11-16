@@ -60,6 +60,7 @@ impl World {
             if (p - guess).abs() > TOLERANCE || rate_changed {
                 b.progress = p;
                 b.progress_rate = rate;
+                b.progress_seq = b.progress_seq.wrapping_add(1);
                 *clock = 0.0;
                 self.dirty_buildings.insert(id);
             }

@@ -1098,6 +1098,10 @@ pub struct BuildingState {
     pub progress: f32,
     #[serde(default)]
     pub progress_rate: f32,
+    /// Zählt jede neue Meldung von `progress`/`progress_rate` hoch, damit der Client
+    /// auch dann neu ansetzt, wenn ein neuer Durchlauf mit denselben Werten beginnt.
+    #[serde(default)]
+    pub progress_seq: u32,
     /// Tor auf einem Weg gebaut: so viel % schneller ist der Durchgang (0 = kein Weg).
     #[serde(default)]
     pub road_under: u32,

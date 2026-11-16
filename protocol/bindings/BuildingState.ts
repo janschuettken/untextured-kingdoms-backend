@@ -44,6 +44,11 @@ training_left: number,
  */
 progress: number, progress_rate: number, 
 /**
+ * Zählt jede neue Meldung von `progress`/`progress_rate` hoch, damit der Client
+ * auch dann neu ansetzt, wenn ein neuer Durchlauf mit denselben Werten beginnt.
+ */
+progress_seq: number, 
+/**
  * Tor auf einem Weg gebaut: so viel % schneller ist der Durchgang (0 = kein Weg).
  */
 road_under: number, };

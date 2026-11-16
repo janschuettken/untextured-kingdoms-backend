@@ -594,6 +594,7 @@ impl World {
             training_left: 0.0,
             progress: 0.0,
             progress_rate: 0.0,
+            progress_seq: 0,
             road_under,
         };
         self.next_building_id += 1;
