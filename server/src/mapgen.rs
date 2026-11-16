@@ -4,6 +4,8 @@
 //! Seen in den Senken, ebene Startplätze im Kreis, danach werden abgeschnittene
 //! Gebiete mit Rampen (bzw. Furten) angebunden. Zuletzt Ressourcen: Wald in
 //! Gruppen, Stein- und Eisenvorkommen ab 5 × 5 Feldern, Äcker ab 7 × 7.
+//! Flüsse laufen von Rand zu Rand, mit Furten. Mengen, Hügel und Flüsse
+//! stellt [`Params`] ein.
 //!
 //! Gleicher Seed, gleiche Karte.
 
@@ -16,6 +18,45 @@ pub struct Params {
     pub height: usize,
     pub players: usize,
     pub seed: u64,
+    /// Mengen als Faktor, 1,0 = normal, 0 = keine, 2,0 = doppelt.
+    pub farmland: f32,
+    pub forest: f32,
+    pub stone: f32,
+    pub iron: f32,
+    /// 0 = flach, 1 = normal, 2 = sehr hügelig.
+    pub hills: f32,
+    /// Anzahl Flüsse.
+    pub rivers: usize,
+}
+
+impl Params {
+    pub fn new(width: usize, height: usize, players: usize, seed: u64) -> Self {
+        Params {
+            width,
+            height,
+            players,
+            seed,
+            farmland: 1.0,
+            forest: 1.0,
+            stone: 1.0,
+            iron: 1.0,
+            hills: 1.0,
+            rivers: 1,
+        }
+    }
+}
+
+/// Wie oft etwas bei Faktor `f` passiert, wenn es bei 1,0 `base`-mal passiert:
+/// der Bruchteil entscheidet der Zufall.
+fn times(rng: &mut Rng, base: f32, f: f32) -> usize {
+    let x = base * f;
+    x.floor() as usize + usize::from(rng.float() < x.fract())
+}
+
+/// Vorkommen werden erst über 100 % größer, darunter nur seltener (sie sollen
+/// nicht unter die Mindestgröße fallen).
+fn grow(r: f32, f: f32) -> f32 {
+    r * (1.0 + 0.35 * (f - 1.0).max(0.0))
 }
 
 /// SplitMix64: klein, schnell und für Karten zufällig genug.
@@ -83,6 +124,7 @@ fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
 }
 
 const WATER: i8 = -1;
+pub const MAX_RIVERS: usize = 8;
 
 struct Gen {
     w: usize,
@@ -144,32 +186,41 @@ impl Gen {
                 continue;
             }
             // Kürzester Weg durch den Wald zu erreichbarem Land, dann eine
-            // zwei Felder breite Schneise schlagen.
-            let mut came = vec![usize::MAX; n];
-            let mut queue = std::collections::VecDeque::from([pocket]);
-            came[pocket] = pocket;
-            let mut hit = None;
-            while let Some(i) = queue.pop_front() {
-                if reach[i] {
-                    hit = Some(i);
-                    break;
-                }
-                for j in self.neighbors4(i) {
-                    if came[j] == usize::MAX && self.res[j] != b'S' && self.res[j] != b'E' && self.step_ok(i, j) {
-                        came[j] = i;
-                        queue.push_back(j);
+            // zwei Felder breite Schneise schlagen. Erst nur durch Wald; liegt
+            // ein Vorkommen im Weg (etwa auf einer Furt), notfalls auch hindurch.
+            let mut found = None;
+            for through_deposits in [false, true] {
+                let mut came = vec![usize::MAX; n];
+                let mut queue = std::collections::VecDeque::from([pocket]);
+                came[pocket] = pocket;
+                while let Some(i) = queue.pop_front() {
+                    if reach[i] {
+                        found = Some((i, came));
+                        break;
+                    }
+                    for j in self.neighbors4(i) {
+                        let free = through_deposits || (self.res[j] != b'S' && self.res[j] != b'E');
+                        if came[j] == usize::MAX && free && self.step_ok(i, j) {
+                            came[j] = i;
+                            queue.push_back(j);
+                        }
                     }
                 }
+                if found.is_some() {
+                    break;
+                }
             }
-            let Some(mut i) = hit else {
+            let Some((mut i, came)) = found else {
                 for c in cells {
-                    self.res[c] = b'W';
+                    if !self.reserved[c] {
+                        self.res[c] = b'W';
+                    }
                 }
                 continue;
             };
             while i != pocket {
                 for j in std::iter::once(i).chain(self.neighbors4(i).into_iter().take(2)) {
-                    if self.res[j] == b'W' {
+                    if blocks(self.res[j]) {
                         self.res[j] = b'.';
                     }
                 }
@@ -219,10 +270,7 @@ impl Gen {
                         continue;
                     }
                     let j = self.idx(nx, ny);
-                    if region[j] == u32::MAX
-                        && self.level[j] != WATER
-                        && (self.level[j] - self.level[i]).abs() <= 1
-                    {
+                    if region[j] == u32::MAX && self.level[j] != WATER && (self.level[j] - self.level[i]).abs() <= 1 {
                         region[j] = id;
                         stack.push(j);
                     }
@@ -262,9 +310,13 @@ impl Gen {
     fn connect(&mut self, rng: &mut Rng) {
         for _round in 0..200 {
             let (region, sizes) = self.regions();
-            let Some(main) = (0..sizes.len()).max_by_key(|&r| sizes[r]) else { return };
+            let Some(main) = (0..sizes.len()).max_by_key(|&r| sizes[r]) else {
+                return;
+            };
             // Das größte abgeschnittene Gebiet zuerst.
-            let Some(other) = (0..sizes.len()).filter(|&r| r != main).max_by_key(|&r| sizes[r]) else { return };
+            let Some(other) = (0..sizes.len()).filter(|&r| r != main).max_by_key(|&r| sizes[r]) else {
+                return;
+            };
             let other = other as u32;
             if sizes[other as usize] < 40 {
                 // Nur noch Krümel: auf die Stufe eines Nachbarn setzen bzw. zu Wasser machen.
@@ -320,6 +372,81 @@ impl Gen {
             );
             self.carve_ramp(a, (px, py));
         }
+    }
+
+    /// Einen Fluss quer über die Karte graben: von einem Rand zum gegenüber
+    /// liegenden, mit Schlängeln, an Startplätzen vorbei. Unterwegs ab und zu
+    /// eine Furt. Liefert die Furten (Ufer links, Ufer rechts).
+    fn river(&mut self, rng: &mut Rng, spawns: &[(i32, i32)], keep_off: f32) -> Vec<((i32, i32), (i32, i32))> {
+        let (w, h) = (self.w as f32, self.h as f32);
+        let wiggle = Noise { seed: rng.next() };
+        let breadth = Noise { seed: rng.next() };
+        // Start auf einem zufälligen Rand, Ziel grob gegenüber.
+        let side = rng.next() % 4;
+        let along = rng.range(0.1, 0.9);
+        let across = rng.range(0.1, 0.9);
+        let (start, goal) = match side {
+            0 => ((along * w, 0.0), (across * w, h - 1.0)),
+            1 => ((along * w, h - 1.0), (across * w, 0.0)),
+            2 => ((0.0, along * h), (w - 1.0, across * h)),
+            _ => ((w - 1.0, along * h), (0.0, across * h)),
+        };
+        let base_width = (self.w.min(self.h) as f32 / 110.0).clamp(1.6, 3.2);
+        let (mut x, mut y) = start;
+        let mut path: Vec<(f32, f32)> = Vec::new();
+        let max_steps = (w + h) as usize * 3;
+        for s in 0..max_steps {
+            path.push((x, y));
+            let (gx, gy) = (goal.0 - x, goal.1 - y);
+            let gd = (gx * gx + gy * gy).sqrt();
+            if gd < 2.0 {
+                break;
+            }
+            let mut ang = gy.atan2(gx) + (wiggle.fbm(s as f32, 0.0, 45.0, 3) - 0.5) * 2.6;
+            let (mut dx, mut dy) = (ang.cos(), ang.sin());
+            // Um Startplätze herum ausweichen.
+            for &(sx, sy) in spawns {
+                let (ox, oy) = (x - sx as f32, y - sy as f32);
+                let d = (ox * ox + oy * oy).sqrt().max(0.1);
+                if d < keep_off * 1.6 {
+                    let push = ((keep_off * 1.6 - d) / keep_off).min(2.0) * 1.5;
+                    dx += ox / d * push;
+                    dy += oy / d * push;
+                }
+            }
+            ang = dy.atan2(dx);
+            x = (x + ang.cos()).clamp(0.0, w - 1.0);
+            y = (y + ang.sin()).clamp(0.0, h - 1.0);
+        }
+        let mut fords = Vec::new();
+        let mut next_ford = rng.range(40.0, 70.0) as usize;
+        for (k, &(px, py)) in path.iter().enumerate() {
+            let near_spawn =
+                spawns.iter().any(|&(sx, sy)| ((px - sx as f32).powi(2) + (py - sy as f32).powi(2)).sqrt() < keep_off);
+            if near_spawn {
+                continue;
+            }
+            let r = base_width * (0.7 + 0.6 * breadth.fbm(k as f32, 3.0, 60.0, 2));
+            for (cx, cy) in self.disc(px.round() as i32, py.round() as i32, r) {
+                let i = self.idx(cx, cy);
+                self.level[i] = WATER;
+            }
+            if k == next_ford && k + 2 < path.len() && k >= 2 {
+                next_ford += rng.range(70.0, 130.0) as usize;
+                let (ax, ay) = path[k - 2];
+                let (bx, by) = path[k + 2];
+                let (tx, ty) = (bx - ax, by - ay);
+                let tl = (tx * tx + ty * ty).sqrt().max(0.1);
+                let (nx, ny) = (-ty / tl, tx / tl);
+                let reach = r + 4.0;
+                let a = ((px + nx * reach).round() as i32, (py + ny * reach).round() as i32);
+                let b = ((px - nx * reach).round() as i32, (py - ny * reach).round() as i32);
+                if self.inside(a.0, a.1) && self.inside(b.0, b.1) {
+                    fords.push((a, b));
+                }
+            }
+        }
+        fords
     }
 
     fn disc(&self, cx: i32, cy: i32, r: f32) -> Vec<(i32, i32)> {
@@ -382,6 +509,16 @@ pub fn generate(p: &Params) -> String {
     let height_noise = Noise { seed: rng.next() };
     let sharp_noise = Noise { seed: rng.next() };
     let forest_noise = Noise { seed: rng.next() };
+    let hill_noise = Noise { seed: rng.next() };
+    let clamp = |v: f32| {
+        if v.is_finite() {
+            v.clamp(0.0, 2.0)
+        } else {
+            1.0
+        }
+    };
+    let (farmland, forest, stone, iron, hills) =
+        (clamp(p.farmland), clamp(p.forest), clamp(p.stone), clamp(p.iron), clamp(p.hills));
 
     // Höhen: Terrassen zu je zwei Stufen. Wo die Kante scharf ist, entsteht
     // eine Wand, sonst eine Schräge.
@@ -397,7 +534,13 @@ pub fn generate(p: &Params) -> String {
                 g.level[i] = WATER;
                 continue;
             }
-            let t = (e - 0.18) / 0.82 * (MAX_LEVEL as f32 / 2.0);
+            // Hügeligkeit: Höhenunterschiede strecken bzw. stauchen, dazu
+            // feinere Hügel obendrauf, wenn es hügeliger werden soll.
+            // Um eine mittlere Höhe herum, damit es oben nicht nur Hochebene wird.
+            let amp = if hills <= 1.0 { hills } else { 1.0 + 0.6 * (hills - 1.0) };
+            let detail = (hill_noise.fbm(fx, fy, 38.0, 3) - 0.5) * (hills - 1.0).max(0.0) * 0.6;
+            let u = 0.3 + ((e - 0.18) / 0.82 - 0.3) * amp + detail;
+            let t = u.clamp(0.0, 1.0) * (MAX_LEVEL as f32 / 2.0);
             let (fl, fr) = (t.floor(), t - t.floor());
             let width = 0.02 + 0.8 * sharp_noise.fbm(fx, fy, 70.0, 2).powi(3);
             let step = smoothstep(0.5 - width / 2.0, 0.5 + width / 2.0, fr);
@@ -417,6 +560,10 @@ pub fn generate(p: &Params) -> String {
     }
     let flat = 14.0;
     let blend = 10.0;
+    let mut fords = Vec::new();
+    for _ in 0..p.rivers.min(MAX_RIVERS) {
+        fords.extend(g.river(&mut rng, &spawns, flat + blend + 6.0));
+    }
     for &(sx, sy) in &spawns {
         let lv = g.level[g.idx(sx, sy)].clamp(1, 5);
         for (x, y) in g.disc(sx, sy, flat + blend) {
@@ -430,13 +577,24 @@ pub fn generate(p: &Params) -> String {
             }
         }
     }
+    for (a, b) in fords {
+        // Nur wo beide Ufer Land sind; die Höhe gleicht die Rampe aus.
+        if g.level[g.idx(a.0, a.1)] != WATER && g.level[g.idx(b.0, b.1)] != WATER {
+            g.carve_ramp(a, b);
+        }
+    }
     g.connect(&mut rng);
 
-    // Wald: Gruppen aus Rauschen, nicht auf Startplätzen.
+    // Wald: Gruppen aus Rauschen, nicht auf Startplätzen. 0,62 ist normal.
+    let forest_threshold = 0.74 - 0.12 * forest;
     for y in 0..h {
         for x in 0..w {
             let i = y * w + x;
-            if g.level[i] != WATER && !g.reserved[i] && forest_noise.fbm(x as f32, y as f32, 40.0, 3) > 0.62 {
+            if forest > 0.0
+                && g.level[i] != WATER
+                && !g.reserved[i]
+                && forest_noise.fbm(x as f32, y as f32, 40.0, 3) > forest_threshold
+            {
                 g.res[i] = b'W';
             }
         }
@@ -444,26 +602,46 @@ pub fn generate(p: &Params) -> String {
     // Jeder Spieler bekommt in der Nähe Stein, Eisen, Acker und etwas Wald.
     for &(sx, sy) in &spawns {
         let c = (sx as f32, sy as f32);
-        g.blob_near(&mut rng, c, (22.0, 32.0), 3.0, b'S', None);
-        g.blob_near(&mut rng, c, (24.0, 36.0), 3.0, b'S', None);
-        g.blob_near(&mut rng, c, (30.0, 44.0), 2.6, b'E', None);
-        g.blob_near(&mut rng, c, (20.0, 30.0), 5.0, b'A', Some((2.5, b'F')));
-        g.blob_near(&mut rng, c, (24.0, 36.0), 4.5, b'A', None);
-        for _ in 0..3 {
-            g.blob_near(&mut rng, c, (20.0, 34.0), 4.0, b'W', None);
+        for _ in 0..times(&mut rng, 2.0, stone) {
+            g.blob_near(&mut rng, c, (22.0, 36.0), grow(3.0, stone), b'S', None);
+        }
+        for _ in 0..times(&mut rng, 1.0, iron) {
+            g.blob_near(&mut rng, c, (30.0, 44.0), grow(2.6, iron), b'E', None);
+        }
+        let fields = times(&mut rng, 2.0, farmland);
+        for k in 0..fields {
+            if k == 0 {
+                let r = grow(5.0, farmland);
+                g.blob_near(&mut rng, c, (20.0, 30.0), r, b'A', Some((r / 2.0, b'F')));
+            } else {
+                g.blob_near(&mut rng, c, (24.0, 36.0), grow(4.5, farmland), b'A', None);
+            }
+        }
+        for _ in 0..times(&mut rng, 3.0, forest) {
+            g.blob_near(&mut rng, c, (20.0, 34.0), grow(4.0, forest), b'W', None);
         }
     }
     // Und verstreut über die Karte, je nach Fläche.
-    let extra = (w * h / 12_000).max(2);
-    for _ in 0..extra {
-        let (x, y) = (rng.range(0.0, w as f32) as i32, rng.range(0.0, h as f32) as i32);
-        match rng.next() % 4 {
-            0 => drop(g.blob(x, y, 3.0, b'S', None)),
-            1 => drop(g.blob(x, y, 2.6, b'E', None)),
-            2 => drop(g.blob(x, y, 5.5, b'A', Some((3.0, b'F')))),
-            _ => drop(g.blob(x, y, 4.5, b'A', None)),
+    // Je Sorte ein Viertel davon, wie bisher; der Regler skaliert die Anzahl.
+    let extra = (w * h / 12_000).max(2) as f32 / 4.0;
+    let place = |rng: &mut Rng, g: &mut Gen, f: f32, kind: u8| {
+        for _ in 0..times(rng, extra, f) {
+            let (x, y) = (rng.range(0.0, w as f32) as i32, rng.range(0.0, h as f32) as i32);
+            match kind {
+                b'S' => _ = g.blob(x, y, grow(3.0, f), b'S', None),
+                b'E' => _ = g.blob(x, y, grow(2.6, f), b'E', None),
+                b'F' => {
+                    let r = grow(5.5, f);
+                    let _ = g.blob(x, y, r, b'A', Some((r * 0.55, b'F')));
+                }
+                _ => _ = g.blob(x, y, grow(4.5, f), b'A', None),
+            }
         }
-    }
+    };
+    place(&mut rng, &mut g, stone, b'S');
+    place(&mut rng, &mut g, iron, b'E');
+    place(&mut rng, &mut g, farmland, b'F');
+    place(&mut rng, &mut g, farmland, b'A');
 
     if let Some(&s0) = spawns.first() {
         g.open_forest_pockets(s0);
@@ -471,6 +649,16 @@ pub fn generate(p: &Params) -> String {
 
     let mut out = String::with_capacity((w + 1) * h * 2 + 512);
     let _ = writeln!(out, "# Zufallskarte {w} x {h} für {} Spieler, Seed {}.", p.players, p.seed);
+    let _ = writeln!(
+        out,
+        "# Acker {:.0} %, Wald {:.0} %, Stein {:.0} %, Eisen {:.0} %, Hügel {:.0} %, Flüsse {}.",
+        farmland * 100.0,
+        forest * 100.0,
+        stone * 100.0,
+        iron * 100.0,
+        hills * 100.0,
+        p.rivers.min(MAX_RIVERS)
+    );
     let _ = writeln!(out, "# Erzeugt vom Kartengenerator; Format siehe server/maps/zwei-burgen.txt.");
     for (x, y) in &spawns {
         let _ = writeln!(out, "spawn {x} {y}");
@@ -498,7 +686,7 @@ mod tests {
 
     fn check(size: usize, players: usize, seed: u64) -> GameMap {
         let t = std::time::Instant::now();
-        let text = generate(&Params { width: size, height: size, players, seed });
+        let text = generate(&Params::new(size, size, players, seed));
         let gen_ms = t.elapsed().as_millis();
         let t = std::time::Instant::now();
         let result = GameMap::load(&text);
@@ -533,8 +721,38 @@ mod tests {
 
     #[test]
     fn gleicher_seed_gleiche_karte() {
-        let p = Params { width: 64, height: 64, players: 2, seed: 42 };
+        let p = Params::new(64, 64, 2, 42);
         assert_eq!(generate(&p), generate(&p));
+    }
+
+    #[test]
+    fn regler_extreme() {
+        for (f, hills, rivers) in [(0.0, 0.0, 0), (2.0, 2.0, 4), (0.5, 1.5, 8)] {
+            let p = Params { farmland: f, forest: f, stone: f, iron: f, hills, rivers, ..Params::new(256, 256, 4, 11) };
+            let text = generate(&p);
+            let result = GameMap::load(&text);
+            assert!(result.errors.is_empty(), "{f}/{hills}/{rivers}: {:?}", result.errors.first());
+            let map = result.map.unwrap();
+            let s0 = map.spawns[0];
+            for &s in &map.spawns[1..] {
+                let path = map.nav.find_path((s0.0 as i32, s0.1 as i32), (s.0 as i32, s.1 as i32));
+                assert_eq!(path.last(), Some(&(s.0 as i32, s.1 as i32)), "{f}/{hills}/{rivers}: {s:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn mehr_regler_mehr_ressourcen() {
+        let count = |text: &str, c: char| text.split("[resources]").nth(1).unwrap().matches(c).count();
+        let low = generate(&Params { stone: 0.3, iron: 0.3, forest: 0.3, ..Params::new(256, 256, 2, 5) });
+        let high = generate(&Params { stone: 2.0, iron: 2.0, forest: 2.0, ..Params::new(256, 256, 2, 5) });
+        for c in ['S', 'E', 'W'] {
+            assert!(count(&high, c) > count(&low, c), "{c}");
+        }
+        let dry = generate(&Params { rivers: 0, ..Params::new(256, 256, 2, 5) });
+        let wet = generate(&Params { rivers: 4, ..Params::new(256, 256, 2, 5) });
+        let water = |t: &str| t.split("[resources]").next().unwrap().matches('~').count();
+        assert!(water(&wet) > water(&dry));
     }
 
     /// Dauert im Debug-Build einige Sekunden: `cargo test --release -- --ignored`.
