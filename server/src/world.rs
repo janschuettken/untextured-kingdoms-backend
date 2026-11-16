@@ -16,6 +16,7 @@ mod combat;
 mod errand;
 mod enclosure;
 pub use enclosure::castle_closed;
+pub use gate::{is_gate, passage_tiles};
 mod gate;
 mod market;
 mod gather;
@@ -969,6 +970,27 @@ impl World {
         if !target.0.is_finite() || !target.1.is_finite() {
             return false;
         }
+        // Feindliche Tore gelten für die Planung immer als zu, auch wenn sie gerade offen
+        // stehen. So läuft niemand los zu einem Ziel in einer fremden Burg, in die er gar
+        // nicht hineinkommt (wie bei unerreichbaren Zielen).
+        let shut: Vec<(i32, i32)> = self
+            .buildings
+            .iter()
+            .filter(|b| gate::is_gate(b.kind) && b.gate_open && !self.allied(player, b.owner))
+            .flat_map(gate::passage_tiles)
+            .map(|(x, y)| (x as i32, y as i32))
+            .collect();
+        for &(x, y) in &shut {
+            self.map.nav.set_blocked(x, y, true);
+        }
+        let ok = self.order_move_planned(player, unit_ids, target);
+        for &(x, y) in &shut {
+            self.map.nav.set_blocked(x, y, false);
+        }
+        ok
+    }
+
+    fn order_move_planned(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32)) -> bool {
         let target = (
             target.0.clamp(0.0, self.map.width as f32 - 0.01),
             target.1.clamp(0.0, self.map.height as f32 - 0.01),

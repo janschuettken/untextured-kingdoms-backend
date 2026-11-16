@@ -432,6 +432,32 @@ mod tests {
     }
 
     #[test]
+    fn kein_weg_durch_feindliche_tore() {
+        // Mauer und Tor gehören Spieler 1; ein Fremder steht unten und will nach oben.
+        let mut w = walled(1, 1);
+        let g = gate(&w);
+        w.units.push(Unit::new(900, 2, UnitKind::Spearman, (11.5, 20.5)));
+        assert!(w.buildings[g].gate_open, "Tor steht offen, solange keiner nah ist");
+        assert!(!w.order_move(2, &[900], (11.5, 3.5)), "durchs fremde Tor geht es nicht");
+        let u = w.units.iter().find(|u| u.id == 900).unwrap();
+        assert!(u.path.is_empty(), "läuft gar nicht erst los");
+        assert!(w.map.nav.is_open(11, 10), "Tor bleibt danach offen");
+        // Draußen bleibt alles erreichbar.
+        assert!(w.order_move(2, &[900], (5.5, 20.5)));
+        // Auch fest geöffnet gilt ein feindliches Tor als zu.
+        let mut s = w.buildings[g].settings.clone();
+        s.gate = GateMode::Open;
+        w.configure(1, w.buildings[g].id, s).unwrap();
+        assert!(!w.order_move(2, &[900], (11.5, 3.5)), "fest offen, aber feindlich");
+        // Eigene und verbündete Tore sind kein Hindernis.
+        w.set_team(1, 1);
+        w.set_team(2, 1);
+        assert!(w.order_move(2, &[900], (11.5, 3.5)), "Verbündeter darf durch");
+        let k = w.units[king(&w)].id;
+        assert!(w.order_move(1, &[k], (11.5, 20.5)), "eigenes Tor");
+    }
+
+    #[test]
     fn tor_schliesst_bei_gegnern_und_oeffnet_wieder() {
         let mut w = walled(1, 1);
         let g = gate(&w);
