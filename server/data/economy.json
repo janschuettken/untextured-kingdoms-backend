@@ -1470,8 +1470,8 @@
     {"good": "bread", "amount": 30}
   ],
   "start_building": "keep",
-  "base_capacity": 300,
-  "storehouse_capacity": 300,
+  "base_capacity": 600,
+  "storehouse_capacity": 600,
   "demolish_refund_percent": 50,
   "move_cost_percent": 25,
   "resource_amounts": [
