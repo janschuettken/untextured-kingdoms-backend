@@ -6,6 +6,7 @@ import type { GoodAmount } from "./GoodAmount";
 import type { MapRef } from "./MapRef";
 import type { PlayerInfo } from "./PlayerInfo";
 import type { ResourceKind } from "./ResourceKind";
+import type { Shot } from "./Shot";
 import type { StockState } from "./StockState";
 import type { Text } from "./Text";
 import type { TradeMode } from "./TradeMode";
@@ -49,4 +50,4 @@ carts: number, } | { "type": "player_defeated", player: number,
 /**
  * Wessen Einheit den letzten Schlag geführt hat.
  */
-by: number | null, } | { "type": "game_over", winners: Array<number>, };
+by: number | null, } | { "type": "units_died", unit_ids: Array<number>, } | { "type": "shots", shots: Array<Shot>, } | { "type": "game_over", winners: Array<number>, };

@@ -28,4 +28,9 @@ melee_range: number,
  * So viele Sekunden nach dem Tod eines Arbeiters, Trägers oder Karrens kommt Ersatz
  * (aus einem Wohnhaus bzw. am eigenen Gebäude). 0 = nie.
  */
-civilian_respawn_seconds: number, };
+civilian_respawn_seconds: number, 
+/**
+ * Bauen, Ausbauen und Reparieren nur, wenn in diesem Umkreis (Felder) kein feindlicher
+ * Soldat oder König steht. 0 = immer erlaubt.
+ */
+enemy_block_radius: number, };

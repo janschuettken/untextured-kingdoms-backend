@@ -191,6 +191,9 @@ impl Economy {
         if !(army.melee_range >= 0.0 && army.melee_range.is_finite()) {
             return Err("Heer: melee_range darf nicht negativ sein".into());
         }
+        if !(army.enemy_block_radius >= 0.0 && army.enemy_block_radius.is_finite()) {
+            return Err("Heer: enemy_block_radius darf nicht negativ sein (0 = aus)".into());
+        }
         if !(army.civilian_respawn_seconds >= 0.0 && army.civilian_respawn_seconds.is_finite()) {
             return Err("Heer: civilian_respawn_seconds darf nicht negativ sein (0 = kein Ersatz)".into());
         }

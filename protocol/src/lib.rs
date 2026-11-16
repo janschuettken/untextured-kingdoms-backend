@@ -24,6 +24,10 @@ pub enum ClientMsg {
     /// Bewegungsbefehl: Einheiten sollen zum Punkt (x, y) laufen.
     /// Der Server prüft Besitz und sucht selbst den Weg.
     MoveUnits { unit_ids: Vec<u32>, x: f32, y: f32 },
+    /// Angriffsbefehl (Rechtsklick auf einen Feind): die Einheiten laufen hin, verfolgen das
+    /// Ziel und greifen an, bis es fällt. Wer dem Ziel nichts anhaben kann (Fernkämpfer gegen
+    /// König oder Gebäude) oder ein Verbündeter ist, läuft nur hin.
+    Attack { unit_ids: Vec<u32>, target: AttackTarget },
     /// Gebäude bauen. (x, y) ist das Feld oben links der Grundfläche.
     /// Der Server prüft Untergrund, Platz und Besitz.
     /// `x`, `y` ist die linke obere Ecke der (gedrehten) Grundfläche.
@@ -43,6 +47,8 @@ pub enum ClientMsg {
     DemolishBuilding { building_id: u32 },
     /// Eigenes Gebäude auf die nächste Stufe ausbauen.
     UpgradeBuilding { building_id: u32 },
+    /// Beschädigtes Gebäude reparieren: kostet den fehlenden Anteil der Bau- und Ausbaukosten.
+    RepairBuilding { building_id: u32 },
     /// Einstellungen eines eigenen Gebäudes ändern (was es herstellt usw.).
     ConfigureBuilding { building_id: u32, settings: BuildingSettings },
     /// Obstplantage aufgeben: ihre Bäume werden zu Wald, den man abholzen kann.
@@ -229,6 +235,14 @@ pub enum ServerMsg {
         player: u32,
         /// Wessen Einheit den letzten Schlag geführt hat.
         by: Option<u32>,
+    },
+    /// Diese Einheiten sind im Kampf gefallen (der Client lässt sie umfallen und versinken).
+    UnitsDied {
+        unit_ids: Vec<u32>,
+    },
+    /// Schüsse der Fernkämpfer in diesem Takt (für fliegende Pfeile und Bolzen im Client).
+    Shots {
+        shots: Vec<Shot>,
     },
     /// Nur noch ein Spieler (oder ein Bündnis) hat seinen König: das Spiel ist entschieden.
     GameOver {
@@ -539,6 +553,27 @@ pub struct MapCheck {
     pub errors: Vec<MapIssue>,
     /// Hinweise: spielbar, aber wahrscheinlich ungewollt.
     pub warnings: Vec<MapIssue>,
+}
+
+/// Ein Schuss: von wo nach wo (Feld-Koordinaten), wer schoss und womit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Shot {
+    pub from: (f32, f32),
+    pub to: (f32, f32),
+    pub from_wall: bool,
+    pub to_wall: bool,
+    pub kind: UnitKind,
+}
+
+/// Ziel eines Angriffsbefehls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum AttackTarget {
+    Unit { id: u32 },
+    /// Gebäude, Mauern und Tore: nur Nahkämpfer reißen sie ein.
+    Building { id: u32 },
 }
 
 /// Art einer Einheit.
@@ -1059,11 +1094,14 @@ pub struct ArmyDef {
     /// So viele Sekunden nach dem Tod eines Arbeiters, Trägers oder Karrens kommt Ersatz
     /// (aus einem Wohnhaus bzw. am eigenen Gebäude). 0 = nie.
     pub civilian_respawn_seconds: f32,
+    /// Bauen, Ausbauen und Reparieren nur, wenn in diesem Umkreis (Felder) kein feindlicher
+    /// Soldat oder König steht. 0 = immer erlaubt.
+    pub enemy_block_radius: f32,
 }
 
 impl Default for ArmyDef {
     fn default() -> Self {
-        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, attack_seconds: 1.5, melee_range: 2.0, civilian_respawn_seconds: 30.0 }
+        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, attack_seconds: 1.5, melee_range: 2.0, civilian_respawn_seconds: 30.0, enemy_block_radius: 50.0 }
     }
 }
 

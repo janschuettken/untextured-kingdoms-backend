@@ -1,19 +1,20 @@
 //! Kampf (Grundgerüst) und Spielziel.
 //!
 //! Soldaten und König mit `attack` greifen von selbst die nächste feindliche
-//! Kampfeinheit in Reichweite an, solange sie stehen. Fernkämpfer (Reichweite
+//! Einheit in Reichweite an (auch Zivilisten), solange sie stehen. Mit einem
+//! Angriffsbefehl (`order_attack`) verfolgen sie ein Ziel, bis es fällt; Nahkämpfer
+//! reißen so auch Gebäude, Mauern und Tore ein. Fernkämpfer (Reichweite
 //! über `army.melee_range`) können Einheiten mit `ranged_immune` (dem König)
 //! nichts anhaben. Nahkampf geht nur auf derselben Ebene (Boden oder Wehrgang).
 //!
 //! Fällt ein König, scheidet sein Spieler aus: alles, was ihm gehört, verschwindet.
 //! Bleibt nur noch ein Spieler oder ein Bündnis übrig, ist das Spiel entschieden.
 //!
-//! Noch nicht da: Trefferchance, Höhenvorteil, Deckung, Angriffsbefehl und
-//! Verfolgen, Angriff auf Gebäude und Zivilisten.
+//! Noch nicht da: Trefferchance, Höhenvorteil, Deckung.
 
 use std::collections::HashMap;
 
-use protocol::{ServerMsg, UnitKind};
+use protocol::{AttackTarget, ServerMsg, Shot, UnitKind};
 
 use super::{Unit, World};
 
@@ -21,6 +22,8 @@ use super::{Unit, World};
 const CELL: f32 = 8.0;
 /// Halbe Körperbreite: so weit reicht ein Schlag über die Reichweite hinaus.
 const REACH: f32 = 0.5;
+/// Beim Verfolgen: so oft (Sekunden) wird der Weg zum Ziel neu gesucht.
+const CHASE_SECONDS: f32 = 1.0;
 
 /// Bündnis eines Spielers: (true, Bündnis) oder allein (false, Spieler).
 type TeamKey = (bool, u32);
@@ -59,13 +62,70 @@ impl World {
         self.winners.as_deref()
     }
 
+    /// Angriffsbefehl: wer dem Ziel schaden kann, verfolgt und greift es an; die
+    /// anderen (Fernkämpfer gegen König oder Gebäude, Verbündete) laufen nur hin.
+    pub fn order_attack(&mut self, player: u32, unit_ids: &[u32], target: AttackTarget) -> bool {
+        let Some((owner, pos)) = self.attack_target_info(target) else { return false };
+        let mut movers = Vec::new();
+        for k in 0..self.units.len() {
+            let u = &self.units[k];
+            if u.owner != player || u.is_civilian() || !unit_ids.contains(&u.id) {
+                continue;
+            }
+            if self.can_attack(player, owner) && self.can_hurt(u, target) {
+                let u = &mut self.units[k];
+                u.attack_order = Some(target);
+                u.chase_timer = 0.0;
+            } else {
+                movers.push(u.id);
+            }
+        }
+        if !movers.is_empty() {
+            self.order_move(player, &movers, pos);
+        }
+        true
+    }
+
+    /// Besitzer und Lage eines Angriffsziels (Gebäude: Mitte).
+    fn attack_target_info(&self, target: AttackTarget) -> Option<(u32, (f32, f32))> {
+        match target {
+            AttackTarget::Unit { id } => self.units.iter().find(|u| u.id == id).map(|u| (u.owner, u.pos)),
+            AttackTarget::Building { id } => {
+                let b = self.buildings.iter().find(|b| b.id == id)?;
+                Some((b.owner, (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0)))
+            }
+        }
+    }
+
+    /// Kann diese Einheit dem Ziel überhaupt schaden? Fernkämpfer nichts gegen `ranged_immune`
+    /// (den König) und nichts gegen Gebäude; Zivilisten nie.
+    fn can_hurt(&self, u: &Unit, target: AttackTarget) -> bool {
+        let Some(def) = self.economy.unit(u.kind) else { return false };
+        if def.attack == 0 || def.range <= 0.0 {
+            return false;
+        }
+        let ranged = self.economy.is_ranged(def.range);
+        match target {
+            AttackTarget::Building { .. } => !ranged,
+            AttackTarget::Unit { id } => self
+                .units
+                .iter()
+                .find(|t| t.id == id)
+                .and_then(|t| self.economy.unit(t.kind))
+                .is_some_and(|t| !(ranged && t.ranged_immune)),
+        }
+    }
+
     pub(super) fn step_combat(&mut self, dt: f32) {
         let attack_seconds = self.economy.def.army.attack_seconds;
-        // Wer kämpfen kann (hat Werte) und wer angreift (hat Schaden und Reichweite).
+        // Wer kämpfen kann (hat Werte) und wer von selbst angreift (hat Schaden und Reichweite).
         let mut fighters = Vec::new();
+        let mut ordered = Vec::new();
         let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
         let mut teams: Vec<TeamKey> = Vec::new();
+        let mut index: HashMap<u32, usize> = HashMap::new();
         for (k, u) in self.units.iter_mut().enumerate() {
+            index.insert(u.id, k);
             let Some(def) = self.economy.unit(u.kind) else { continue };
             u.attack_cooldown = (u.attack_cooldown - dt).max(0.0);
             let team = match self.teams.get(&u.owner) {
@@ -76,14 +136,92 @@ impl World {
                 teams.push(team);
             }
             grid.entry(((u.pos.0 / CELL) as i32, (u.pos.1 / CELL) as i32)).or_default().push(k);
-            if def.attack > 0 && def.range > 0.0 && u.attack_cooldown <= 0.0 && u.path.is_empty() {
+            if u.attack_order.is_some() {
+                ordered.push(k);
+            } else if def.attack > 0 && def.range > 0.0 && u.attack_cooldown <= 0.0 && u.path.is_empty() {
                 fighters.push(k);
             }
         }
-        if teams.len() < 2 {
+        if teams.len() < 2 && ordered.is_empty() {
             return;
         }
         let mut hits: Vec<(usize, u32, u32)> = Vec::new();
+        let mut building_hits: Vec<(u32, u32)> = Vec::new();
+        let mut shots: Vec<Shot> = Vec::new();
+        // Angriffsbefehle: hingehen, verfolgen, zuschlagen.
+        for k in ordered {
+            let u = &self.units[k];
+            let Some(order) = u.attack_order else { continue };
+            let Some(def) = self.economy.unit(u.kind) else { continue };
+            let ranged = self.economy.is_ranged(def.range);
+            let reach = def.range + REACH;
+            // Wo steht das Ziel, wie weit ist es, und kann man es von hier treffen?
+            let found = match order {
+                AttackTarget::Unit { id } => index.get(&id).map(|&j| {
+                    let t = &self.units[j];
+                    let d = (t.pos.0 - u.pos.0).hypot(t.pos.1 - u.pos.1);
+                    (t.owner, t.pos, t.on_wall, d, ranged || t.on_wall == u.on_wall, Some(j))
+                }),
+                AttackTarget::Building { id } => self.buildings.iter().find(|b| b.id == id).map(|b| {
+                    let dx = (b.x as f32 - u.pos.0).max(u.pos.0 - (b.x + b.w) as f32).max(0.0);
+                    let dy = (b.y as f32 - u.pos.1).max(u.pos.1 - (b.y + b.h) as f32).max(0.0);
+                    let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
+                    (b.owner, self.foot_of(center, u.pos), false, dx.hypot(dy), true, None)
+                }),
+            };
+            let Some((owner, pos, on_wall, dist, level_ok, j)) = found.filter(|f| self.can_attack(u.owner, f.0) && self.can_hurt(u, order)) else {
+                // Ziel gefallen, abgerissen oder nicht (mehr) angreifbar: stehen bleiben.
+                let u = &mut self.units[k];
+                u.attack_order = None;
+                u.path.clear();
+                u.layers.clear();
+                u.target = Some(u.pos);
+                continue;
+            };
+            if dist <= reach && level_ok {
+                let (attack, by) = (def.attack, u.owner);
+                let u = &mut self.units[k];
+                // Fernkämpfer schießen nur im Stand: wer gerade noch lief, hält erst an.
+                let was_moving = !u.path.is_empty();
+                u.path.clear();
+                u.layers.clear();
+                u.target = Some(u.pos);
+                if ranged && was_moving {
+                    continue;
+                }
+                if u.attack_cooldown <= 0.0 {
+                    u.attack_cooldown = attack_seconds;
+                    match (order, j) {
+                        (AttackTarget::Unit { .. }, Some(j)) => {
+                            hits.push((j, attack, by));
+                            if ranged {
+                                let (s, t) = (&self.units[k], &self.units[j]);
+                                shots.push(Shot { from: s.pos, to: t.pos, from_wall: s.on_wall, to_wall: t.on_wall, kind: s.kind });
+                            }
+                        }
+                        (AttackTarget::Building { id }, _) => building_hits.push((id, attack)),
+                        _ => {}
+                    }
+                }
+                continue;
+            }
+            let _ = owner;
+            // Verfolgen: ab und zu den Weg zum Ziel neu suchen.
+            let timer = self.units[k].chase_timer - dt;
+            if timer > 0.0 && !self.units[k].path.is_empty() {
+                self.units[k].chase_timer = timer;
+                continue;
+            }
+            let (from, from_wall, me) = (u.pos, u.on_wall, u.owner);
+            let (path, layers) = self.plan(me, from, from_wall, pos, on_wall);
+            let u = &mut self.units[k];
+            u.chase_timer = CHASE_SECONDS;
+            u.path = path;
+            u.layers = layers;
+            u.target = Some(pos);
+            u.target_wall = on_wall;
+        }
+        // Von selbst: die nächste feindliche Einheit in Reichweite.
         for &k in &fighters {
             let u = &self.units[k];
             let def = self.economy.unit(u.kind).expect("oben geprüft");
@@ -117,7 +255,24 @@ impl World {
             }
             if let Some((_, j)) = best {
                 hits.push((j, def.attack, u.owner));
+                if ranged {
+                    let t = &self.units[j];
+                    shots.push(Shot { from: u.pos, to: t.pos, from_wall: u.on_wall, to_wall: t.on_wall, kind: u.kind });
+                }
                 self.units[k].attack_cooldown = attack_seconds;
+            }
+        }
+        if !shots.is_empty() {
+            self.events.push(ServerMsg::Shots { shots });
+        }
+        // Gebäude: Schaden, bei 0 eingerissen.
+        for (id, attack) in building_hits {
+            let Some(b) = self.buildings.iter_mut().find(|b| b.id == id) else { continue };
+            b.hp = b.hp.saturating_sub(attack);
+            if b.hp == 0 {
+                self.destroy_building(id);
+            } else {
+                self.dirty_buildings.insert(id);
             }
         }
         if hits.is_empty() {
@@ -135,20 +290,97 @@ impl World {
         let mut kings: Vec<(u32, u32)> = Vec::new();
         let mut dead: Vec<usize> = killed_by.keys().copied().collect();
         dead.sort_unstable_by(|a, b| b.cmp(a));
+        let mut died = Vec::new();
         for j in dead {
             let u = self.units.remove(j);
+            died.push(u.id);
             if u.kind == UnitKind::King {
                 kings.push((u.owner, killed_by[&j]));
             }
             self.dirty_stocks.insert(u.owner);
         }
+        self.events.push(ServerMsg::UnitsDied { unit_ids: died });
+        let kings_empty = kings.is_empty();
         for (player, by) in kings {
-            self.eliminate(player, Some(by));
+            self.knock_out(player, Some(by));
+        }
+        // Erst alle ausscheiden lassen: fallen beide letzten Könige im selben Takt, ist es unentschieden.
+        if !kings_empty {
+            self.check_victory();
         }
     }
 
+    /// Steht ein feindlicher Soldat oder König im Umkreis `army.enemy_block_radius`?
+    /// Dann darf hier nicht gebaut, ausgebaut oder repariert werden.
+    pub(super) fn check_no_enemy(&self, player: u32, at: (f32, f32)) -> Result<(), protocol::Text> {
+        let radius = self.economy.def.army.enemy_block_radius;
+        if radius <= 0.0 {
+            return Ok(());
+        }
+        let near = self.units.iter().any(|u| {
+            self.economy.unit(u.kind).is_some_and(|d| d.attack > 0)
+                && self.can_attack(player, u.owner)
+                && (u.pos.0 - at.0).hypot(u.pos.1 - at.1) <= radius
+        });
+        if near {
+            return Err(protocol::Text::new("error.enemy_near").arg("radius", radius));
+        }
+        Ok(())
+    }
+
+    /// Beschädigtes Gebäude reparieren: kostet den fehlenden Anteil aller Bau- und Ausbaukosten
+    /// (aufgerundet), danach ist es wieder heil.
+    pub fn repair(&mut self, player: u32, id: u32) -> Result<protocol::BuildingState, protocol::Text> {
+        let b = self.buildings.iter().find(|b| b.id == id).ok_or_else(|| protocol::Text::new("error.no_building"))?;
+        if b.owner != player {
+            return Err(protocol::Text::new("error.not_yours"));
+        }
+        let def = self.economy.building(b.kind).ok_or_else(|| protocol::Text::new("error.unknown_building"))?;
+        let max = def.max_hp.max(1);
+        if b.hp >= max {
+            return Err(protocol::Text::new("error.not_damaged"));
+        }
+        let cost = self.repair_cost(b);
+        let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
+        self.check_no_enemy(player, center)?;
+        self.pay(player, &cost)?;
+        let b = self.buildings.iter_mut().find(|b| b.id == id).expect("eben gefunden");
+        b.hp = max;
+        Ok(b.clone())
+    }
+
+    /// Was die Reparatur kostet (fehlender Anteil der Kosten bis zur jetzigen Stufe).
+    pub fn repair_cost(&self, b: &protocol::BuildingState) -> Vec<protocol::GoodAmount> {
+        let Some(def) = self.economy.building(b.kind) else { return Vec::new() };
+        let max = def.max_hp.max(1);
+        let missing = max.saturating_sub(b.hp.min(max));
+        super::level_cost(def, b.level.min(255) as u8)
+            .into_iter()
+            .map(|c| protocol::GoodAmount { good: c.good, amount: (c.amount * missing).div_ceil(max) })
+            .filter(|c| c.amount > 0)
+            .collect()
+    }
+
+    /// Gebäude im Kampf eingerissen: verschwindet wie beim Abriss, nur ohne Erstattung.
+    fn destroy_building(&mut self, id: u32) {
+        let Some(b) = self.buildings.iter().find(|b| b.id == id).cloned() else { return };
+        self.remove_building(id);
+        if self.economy.building(b.kind).is_some_and(|d| d.hub) {
+            self.update_capacity(b.owner);
+        }
+        self.events.push(ServerMsg::BuildingRemoved { building_id: id });
+        self.replan_all();
+    }
+
     /// Spieler scheidet aus: alles von ihm verschwindet, danach prüfen, ob jemand gewonnen hat.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn eliminate(&mut self, player: u32, by: Option<u32>) {
+        self.knock_out(player, by);
+        self.check_victory();
+    }
+
+    /// Spieler scheidet aus, ohne schon den Sieg zu prüfen.
+    fn knock_out(&mut self, player: u32, by: Option<u32>) {
         if !self.eliminated.insert(player) {
             return;
         }
@@ -159,7 +391,6 @@ impl World {
         self.unpaid.remove(&player);
         self.replan_all();
         self.events.push(ServerMsg::PlayerDefeated { player, by });
-        self.check_victory();
     }
 
     /// Nur noch ein Bündnis (oder ein Spieler) übrig: Spiel entschieden.
@@ -172,7 +403,8 @@ impl World {
         teams.dedup();
         teams.sort();
         teams.dedup();
-        if teams.len() <= 1 && !alive.is_empty() {
+        // Niemand mehr übrig (alle letzten Könige zugleich gefallen): unentschieden, `winners` leer.
+        if teams.len() <= 1 {
             self.winners = Some(alive.clone());
             self.events.push(ServerMsg::GameOver { winners: alive });
         }
@@ -245,6 +477,20 @@ mod tests {
     }
 
     #[test]
+    fn fallen_beide_koenige_zugleich_ist_es_unentschieden() {
+        let mut w = world();
+        for p in [1, 2] {
+            let k = w.units.iter_mut().find(|u| u.owner == p && u.kind == UnitKind::King).unwrap();
+            k.damage = 299;
+        }
+        let pos = king(&w, 1).unwrap().pos;
+        w.units.iter_mut().find(|u| u.owner == 2 && u.kind == UnitKind::King).unwrap().pos = (pos.0 + 1.0, pos.1);
+        run(&mut w, 2.0);
+        assert!(w.is_eliminated(1) && w.is_eliminated(2));
+        assert_eq!(w.winners(), Some(&[][..]));
+    }
+
+    #[test]
     fn koenig_wehrt_sich_im_nahkampf() {
         let mut w = world();
         let id = next_to_king(&mut w, 1, UnitKind::Spearman, 2, 1.0);
@@ -284,6 +530,81 @@ mod tests {
         w.units.push(Unit::new(20_002, 1, UnitKind::Archer, (pos.0 + 8.0, pos.1)));
         run(&mut w, 30.0);
         assert!(w.units.iter().any(|u| u.id == 20_001 && u.damage == 0), "Verbündete bleiben verschont");
+    }
+
+    /// Ganze Schritte (mit Laufen), nicht nur der Kampf.
+    fn steps(w: &mut World, seconds: f32) {
+        for _ in 0..(seconds * 20.0) as u32 {
+            w.step(0.05);
+        }
+    }
+
+    #[test]
+    fn angriffsbefehl_verfolgt_das_ziel() {
+        let mut w = world();
+        let k2 = king(&w, 2).unwrap().id;
+        let pos = king(&w, 2).unwrap().pos;
+        // Vor dem Bergfried (Süden), nicht in ihm.
+        let ids: Vec<u32> = (0..4)
+            .map(|i| {
+                let id = 30_000 + i;
+                w.units.push(Unit::new(id, 1, UnitKind::Knight, (pos.0 - 1.5 + i as f32, pos.1 + 6.0)));
+                id
+            })
+            .collect();
+        assert!(w.order_attack(1, &ids, protocol::AttackTarget::Unit { id: k2 }));
+        // Der König läuft weg, die Ritter hinterher.
+        w.order_move(2, &[k2], (pos.0, pos.1 + 8.0));
+        steps(&mut w, 90.0);
+        assert!(w.is_eliminated(2), "König eingeholt und getötet");
+    }
+
+    #[test]
+    fn bogenschuetze_laeuft_nur_hin_bei_koenig_und_schiesst_auf_soldaten() {
+        let mut w = world();
+        let k2 = king(&w, 2).unwrap().id;
+        let a = next_to_king(&mut w, 1, UnitKind::Archer, 2, 10.0);
+        w.order_attack(1, &[a], protocol::AttackTarget::Unit { id: k2 });
+        assert!(w.units.iter().find(|u| u.id == a).unwrap().attack_order.is_none(), "kein Angriff auf den König");
+        let s = next_to_king(&mut w, 2, UnitKind::Spearman, 2, 3.0);
+        let a2 = next_to_king(&mut w, 1, UnitKind::Archer, 2, 12.0);
+        w.order_attack(1, &[a2], protocol::AttackTarget::Unit { id: s });
+        w.take_events();
+        steps(&mut w, 3.0);
+        assert!(w.take_events().iter().any(|e| matches!(e, ServerMsg::Shots { .. })), "Pfeile fliegen");
+    }
+
+    #[test]
+    fn nahkaempfer_reissen_gebaeude_ein_fernkaempfer_nicht() {
+        let mut w = world();
+        let keep = w.buildings.iter().find(|b| b.owner == 2 && b.kind == BuildingKind::Keep).unwrap().clone();
+        let a = next_to_king(&mut w, 1, UnitKind::Archer, 2, 6.0);
+        w.order_attack(1, &[a], protocol::AttackTarget::Building { id: keep.id });
+        assert!(w.units.iter().find(|u| u.id == a).unwrap().attack_order.is_none());
+        let ids: Vec<u32> = (0..6).map(|i| next_to_king(&mut w, 1, UnitKind::Swordsman, 2, 3.0 + i as f32 * 0.7)).collect();
+        // König 2 weg, damit er die Schwertkämpfer nicht aufhält.
+        w.units.retain(|u| !(u.owner == 2 && u.kind == UnitKind::King));
+        w.order_attack(1, &ids, protocol::AttackTarget::Building { id: keep.id });
+        steps(&mut w, 300.0);
+        assert!(!w.buildings.iter().any(|b| b.id == keep.id), "Bergfried eingerissen");
+        assert!(w.take_events().iter().any(|e| matches!(e, ServerMsg::BuildingRemoved { building_id } if *building_id == keep.id)));
+    }
+
+    #[test]
+    fn reparieren_kostet_anteilig_und_nicht_bei_feinden() {
+        let mut w = world();
+        let keep = w.buildings.iter().find(|b| b.owner == 2 && b.kind == BuildingKind::Keep).unwrap().id;
+        let max = w.economy.building(BuildingKind::Keep).unwrap().max_hp;
+        w.buildings.iter_mut().find(|b| b.id == keep).unwrap().hp = max / 2;
+        let cost = w.repair_cost(w.buildings.iter().find(|b| b.id == keep).unwrap());
+        let s = next_to_king(&mut w, 1, UnitKind::Spearman, 2, 20.0);
+        assert_eq!(w.repair(2, keep).unwrap_err().key, "error.enemy_near");
+        // Weg mit dem Speerträger und dem König von 1 (steht womöglich auch nah).
+        w.units.retain(|u| u.id != s && u.owner != 1);
+        w.admin_give(2, &cost, 0);
+        let b = w.repair(2, keep).unwrap();
+        assert_eq!(b.hp, max);
+        assert_eq!(w.repair(2, keep).unwrap_err().key, "error.not_damaged");
     }
 
     #[test]

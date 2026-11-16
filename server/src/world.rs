@@ -70,6 +70,12 @@ pub struct Unit {
     /// Sekunden bis zum nächsten Schlag oder Schuss.
     #[serde(default)]
     attack_cooldown: f32,
+    /// Angriffsbefehl: dieses Ziel verfolgen und angreifen, bis es fällt.
+    #[serde(default)]
+    attack_order: Option<protocol::AttackTarget>,
+    /// Sekunden bis zur nächsten Wegsuche beim Verfolgen.
+    #[serde(default)]
+    chase_timer: f32,
 }
 
 impl Unit {
@@ -92,6 +98,8 @@ impl Unit {
             trade: None,
             damage: 0,
             attack_cooldown: 0.0,
+            attack_order: None,
+            chase_timer: 0.0,
         }
     }
 
@@ -548,6 +556,9 @@ impl World {
             }
         }
         self.check_build_radius(player, &def, (x, y), (w, h))?;
+        if !free {
+            self.check_no_enemy(player, (x as f32 + w as f32 / 2.0, y as f32 + h as f32 / 2.0))?;
+        }
         // Tore und Türme dürfen auf eigene Mauern, alle Gebäude auf eigene Wege;
         // die kommen beim Bauen weg.
         let walls = self.removable_under(player, &def, (x, y), (w, h));
@@ -876,6 +887,8 @@ impl World {
         };
         let cost = next.cost.clone();
         let spawns = next.spawns.clone();
+        let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
+        self.check_no_enemy(player, center)?;
         self.pay(player, &cost)?;
         let b = self.buildings.iter_mut().find(|b| b.id == id).expect("eben gefunden");
         b.level += 1;
@@ -1017,6 +1030,10 @@ impl World {
         });
         if !reachable {
             return false;
+        }
+        // Ein Laufbefehl hebt einen Angriffsbefehl auf.
+        for &k in &chosen {
+            self.units[k].attack_order = None;
         }
         let mut orders = Vec::new();
         for (&k, &spot) in chosen.iter().zip(&spots) {

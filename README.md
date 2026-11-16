@@ -326,7 +326,13 @@ als“ einen anderen Startplatz übernehmen (`/ws?game=..&token=..&as=<nr>`) ode
 - Soldaten greifen auch feindliche Zivilisten an (Arbeiter, Träger, Karren, Handelskarren; Lebenspunkte unter `units`),
   nicht aber, wer gerade drinnen ist. Fehlende Arbeiter, Träger und Karren eines Gebäudes kommen nach
   `army.civilian_respawn_seconds` wieder (0 = nie); neue Arbeiter kommen aus dem nächsten Wohnhaus.
-- Noch offen: Trefferchance, Höhenvorteil, Deckung, Angriffsbefehl/Verfolgen, Angriff auf Gebäude.
+- Angriffsbefehl `attack` (Rechtsklick auf einen Feind): verfolgen und angreifen, bis das Ziel fällt. Nahkämpfer
+  reißen so Gebäude, Mauern und Tore ein (`hp` des Gebäudes); Fernkämpfer schießen nur im Stand (`shots` für die
+  Pfeile im Client) und laufen bei König oder Gebäude nur hin. Gefallene: `units_died`.
+- `repair_building`: kostet den fehlenden Anteil der Bau- und Ausbaukosten. Bauen, Ausbauen und Reparieren nur ohne
+  feindlichen Soldaten oder König im Umkreis `army.enemy_block_radius` (50).
+- Fallen die letzten Könige im selben Takt: `game_over` mit leerer Gewinnerliste (unentschieden).
+- Noch offen: Trefferchance, Höhenvorteil, Deckung.
 
 ## Accounts (PostgreSQL)
 

@@ -578,6 +578,8 @@ async fn handle_msg(
         | ClientMsg::TrainUnits { .. }
         | ClientMsg::CancelTraining { .. }
         | ClientMsg::PrioritizeTraining { .. }
+        | ClientMsg::Attack { .. }
+        | ClientMsg::RepairBuilding { .. }
         | ClientMsg::Trade { .. }
         | ClientMsg::SendGoods { .. }) => {
             let mut world = state.world.lock().unwrap();
@@ -640,6 +642,12 @@ pub fn apply_command(
         ClientMsg::MoveUnits { unit_ids, x, y } => {
             world.order_move(player_id, &unit_ids, (x, y));
         }
+        ClientMsg::Attack { unit_ids, target } => {
+            world.order_attack(player_id, &unit_ids, target);
+            for event in world.take_events() {
+                send(event);
+            }
+        }
         ClientMsg::PlaceBuilding {
             kind,
             x,
@@ -682,6 +690,10 @@ pub fn apply_command(
             // Für die Clients: alt weg, neu da (Belegung, Anschlüsse der Mauern).
             send(ServerMsg::BuildingRemoved { building_id });
             send(ServerMsg::BuildingPlaced { building });
+        }
+        ClientMsg::RepairBuilding { building_id } => {
+            let building = world.repair(player_id, building_id)?;
+            send(ServerMsg::BuildingChanged { building });
         }
         ClientMsg::UpgradeBuilding { building_id } => {
             let building = world.upgrade(player_id, building_id)?;
