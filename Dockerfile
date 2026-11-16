@@ -21,6 +21,7 @@ ENV MAPS_DIR=/data/maps
 ENV MAPS_SEED_DIR=/usr/local/share/untextured-kingdoms/maps
 # Balancing aus dem Editor landet hier (Volume), fehlt die Datei, gelten die eingebauten Werte.
 ENV ECONOMY_FILE=/data/economy.json
+ENV AI_PERSONALITIES_FILE=/data/ai_personalities.json
 # Laufende Spiele (je Spiel eine Datei), werden beim Start fortgesetzt.
 ENV SAVES_DIR=/data/games
 EXPOSE 8080

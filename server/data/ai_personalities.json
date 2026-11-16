@@ -1,0 +1,88 @@
+{
+  "personalities": [
+    {
+      "id": "balanced",
+      "name": {
+        "de": "Ausgewogen",
+        "en": "Balanced"
+      },
+      "description": {
+        "de": "Spielt so, wie die Stufe es vorsieht.",
+        "en": "Plays the way the level intends."
+      },
+      "aggression": 100,
+      "army": 100,
+      "castle": "level",
+      "buildings": {},
+      "units": {}
+    },
+    {
+      "id": "builder",
+      "name": {
+        "de": "Baumeister",
+        "en": "Builder"
+      },
+      "description": {
+        "de": "Baut lieber: mehr Häuser, Steinmetze, Türme und Pflaster, handelt am Markt. Greift selten an.",
+        "en": "Prefers building: more houses, masons, towers and paving, trades at the market. Rarely attacks."
+      },
+      "aggression": 40,
+      "army": 80,
+      "castle": "octagon",
+      "buildings": {
+        "house": 150,
+        "stonemason": 200,
+        "market": 200,
+        "tower": 200,
+        "stone_path": 200
+      },
+      "units": {}
+    },
+    {
+      "id": "warlord",
+      "name": {
+        "de": "Kriegsherr",
+        "en": "Warlord"
+      },
+      "description": {
+        "de": "Große Armee aus Speerträgern und Schwertkämpfern, greift früh und oft an. Kein Markt.",
+        "en": "Large army of spearmen and swordsmen, attacks early and often. No market."
+      },
+      "aggression": 170,
+      "army": 140,
+      "castle": "square",
+      "buildings": {
+        "market": 0,
+        "barracks": 200
+      },
+      "units": {
+        "spearman": 150,
+        "archer": 50,
+        "light_swordsman": 150
+      }
+    },
+    {
+      "id": "archer_lord",
+      "name": {
+        "de": "Bogenmeister",
+        "en": "Archer lord"
+      },
+      "description": {
+        "de": "Setzt auf Bogen- und Armbrustschützen und hohe Türme.",
+        "en": "Relies on archers, crossbowmen and towers."
+      },
+      "aggression": 80,
+      "army": 100,
+      "castle": "narrows",
+      "buildings": {
+        "bowyer": 200,
+        "tower": 200
+      },
+      "units": {
+        "spearman": 50,
+        "archer": 300,
+        "crossbowman": 100
+      }
+    }
+  ]
+}

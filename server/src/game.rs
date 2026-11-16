@@ -38,6 +38,8 @@ pub const TICK_RATE: u32 = 20;
 const VIEW_MARGIN: f32 = 24.0;
 /// Alle so viele Sekunden wird jedes laufende Spiel automatisch gespeichert.
 const AUTOSAVE_SECONDS: u64 = 60;
+/// So oft prüft er, ob die Burgen der verbundenen Spieler geschlossen sind.
+const CASTLE_CHECK_SECONDS: u64 = 2;
 
 /// Ein verbundener Client.
 pub struct Client {
@@ -54,6 +56,8 @@ pub struct Client {
     watch_sent: Option<Vec<(f32, f32)>>,
     /// Zuletzt geschickte `UnitInfo` der beobachteten Einheit.
     watch_info: Option<UnitInfo>,
+    /// Zuletzt geschickter Stand der eigenen Burg (geschlossen oder Lücke).
+    castle: Option<protocol::CastleStatus>,
 }
 
 /// Zustand eines laufenden Spiels.
@@ -93,9 +97,10 @@ impl Match {
         }
     }
 
-    /// Diese Startplätze spielt der Computer (Spieler-Nummer, Stärke).
-    pub fn set_computers(&mut self, list: &[(u32, protocol::AiLevel)]) {
-        *self.computers.get_mut().unwrap() = ai::computers(list);
+    /// Diese Startplätze spielt der Computer (Spieler-Nummer, Stärke, Charakter).
+    pub fn set_computers(&mut self, list: &[ai::Seat], personalities: &protocol::AiPersonalities) {
+        let economy = self.world.get_mut().unwrap().economy.clone();
+        *self.computers.get_mut().unwrap() = ai::computers(list, personalities, &economy);
     }
 
     pub fn is_online(&self, player: u32) -> bool {
@@ -196,7 +201,7 @@ fn game_loop(hub: Arc<Hub>, game: Arc<Game>, state: Arc<Match>) {
 }
 
 fn step(state: &Match, tick: u64) {
-    let (units, stocks, paths, infos) = {
+    let (units, stocks, paths, infos, castles) = {
         let mut world = state.world.lock().unwrap();
         let speed = state.game_speed.load(Ordering::Relaxed) as f32 / 100.0;
         let dt = speed / TICK_RATE as f32;
@@ -228,7 +233,14 @@ fn step(state: &Match, tick: u64) {
             .into_iter()
             .filter_map(|id| Some((id, (world.unit_owner(id)?, world.unit_info(id)?))))
             .collect();
-        (world.snapshot(), world.take_dirty_stocks(), paths, infos)
+        // Burg geschlossen? Alle zwei Sekunden für jeden verbundenen Spieler.
+        let castles: HashMap<u32, protocol::CastleStatus> = if tick.is_multiple_of(CASTLE_CHECK_SECONDS * TICK_RATE as u64) {
+            let players: Vec<u32> = state.clients.lock().unwrap().keys().copied().collect();
+            players.into_iter().map(|p| (p, world.castle_status(p))).collect()
+        } else {
+            HashMap::new()
+        };
+        (world.snapshot(), world.take_dirty_stocks(), paths, infos, castles)
     };
     let mut clients = state.clients.lock().unwrap();
     let players_online = clients.len() as u32;
@@ -238,6 +250,11 @@ fn step(state: &Match, tick: u64) {
         }
     }
     for (&player, client) in clients.iter_mut() {
+        if let Some(status) = castles.get(&player) {
+            if client.castle.as_ref() != Some(status) && client.tx.try_send(ServerMsg::Castle { status: status.clone() }).is_ok() {
+                client.castle = Some(status.clone());
+            }
+        }
         if let Some(id) = client.watch {
             let path = paths.get(&id).cloned().unwrap_or_default();
             if client.watch_sent.as_ref() != Some(&path)
@@ -370,6 +387,7 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
             watch: None,
             watch_sent: None,
             watch_info: None,
+            castle: None,
         };
         // Ist derselbe Spieler schon in einem anderen Fenster drin, übernimmt dieses.
         if let Some(old) = state.clients.lock().unwrap().insert(player_id, client) {

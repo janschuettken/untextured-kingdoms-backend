@@ -36,8 +36,14 @@
 //! - `PUT  /api/economy`  nur Admin: neue Daten prüfen, in die Datei schreiben und
 //!   sofort für alle Spiele übernehmen (`economy_changed` an alle Clients)
 //!
+//! - `GET  /api/ai-personalities`  Charaktere der Computergegner (für Lobby und Editor)
+//! - `GET  /api/ai-personalities/file`  nur Admin: als Datei `ai_personalities.json`
+//! - `PUT  /api/ai-personalities`  nur Admin: prüfen, speichern, sofort für alle
+//!   Computergegner übernehmen (auch in laufenden Spielen)
+//!
 //! Die Datei ist `ECONOMY_FILE`, Standard `server/data/economy.json`. Vor dem
-//! Überschreiben bleibt die alte Fassung als `economy.json.bak` liegen.
+//! Überschreiben bleibt die alte Fassung als `economy.json.bak` liegen. Charaktere
+//! ebenso in `AI_PERSONALITIES_FILE`, Standard `server/data/ai_personalities.json`.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -53,6 +59,7 @@ use sqlx::PgPool;
 use tracing::{info, warn};
 
 use crate::{
+    ai,
     economy::Economy,
     game::Match,
     lobby::{Game, Hub},
@@ -65,6 +72,7 @@ pub struct Admin {
     users: Vec<String>,
     db: Option<PgPool>,
     pub economy_file: PathBuf,
+    pub personalities_file: PathBuf,
 }
 
 impl Admin {
@@ -78,6 +86,11 @@ impl Admin {
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
                 PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/data/economy.json"))
+            });
+        let personalities_file = std::env::var("AI_PERSONALITIES_FILE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/data/ai_personalities.json"))
             });
         if let (Some(db), false) = (&db, users.is_empty()) {
             match sqlx::query("UPDATE accounts SET is_admin = true WHERE lower(username) = ANY($1) AND NOT is_admin")
@@ -100,6 +113,7 @@ impl Admin {
             users,
             db,
             economy_file,
+            personalities_file,
         }
     }
 
@@ -110,6 +124,7 @@ impl Admin {
             users: Vec::new(),
             db: None,
             economy_file: PathBuf::new(),
+            personalities_file: PathBuf::new(),
         }
     }
 
@@ -201,6 +216,8 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/api/rights", post(rights))
         .route("/api/economy", get(load).put(save))
         .route("/api/economy/file", get(download))
+        .route("/api/ai-personalities", get(load_personalities).put(save_personalities))
+        .route("/api/ai-personalities/file", get(download_personalities))
         .route("/api/games/{id}/players", get(players))
         .route("/api/games/{id}/players/{pid}/remove", post(remove_player))
         .route("/api/games/{id}/save", post(save_now))
@@ -445,6 +462,62 @@ async fn save(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: String) -> 
     StatusCode::NO_CONTENT.into_response()
 }
 
+async fn load_personalities(State(hub): State<Arc<Hub>>) -> Response {
+    Json(hub.personalities.lock().unwrap().clone()).into_response()
+}
+
+async fn download_personalities(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
+    if !hub.admin.allows(&headers).await {
+        return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
+    }
+    let text = ai::personality::to_json(&hub.personalities.lock().unwrap());
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8"),
+            (axum::http::header::CONTENT_DISPOSITION, "attachment; filename=\"ai_personalities.json\""),
+        ],
+        text,
+    )
+        .into_response()
+}
+
+async fn save_personalities(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: String) -> Response {
+    if !hub.admin.allows(&headers).await {
+        return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
+    }
+    let all = match ai::personality::parse(&body) {
+        Ok(a) => a,
+        Err(e) => return (StatusCode::UNPROCESSABLE_ENTITY, e).into_response(),
+    };
+    let path = &hub.admin.personalities_file;
+    if let Err(e) = write_with_backup(path, &ai::personality::to_json(&all)) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("{}: {e}", path.display())).into_response();
+    }
+    *hub.personalities.lock().unwrap() = all.clone();
+    let games: Vec<_> = hub.games.lock().unwrap().values().filter_map(|g| g.running.get().cloned()).collect();
+    for m in games {
+        let world = m.world.lock().unwrap();
+        for c in m.computers.lock().unwrap().iter_mut() {
+            c.reconfigure(&all, &world.economy);
+        }
+    }
+    info!("Charaktere der Computergegner gespeichert: {}", path.display());
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// Datei ersetzen, alte Fassung als `.json.bak` behalten.
+fn write_with_backup(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    if path.exists() {
+        std::fs::copy(path, path.with_extension("json.bak"))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path)
+}
+
 /// Das laufende Spiel zur Id, sonst 404.
 #[allow(clippy::result_large_err)]
 fn running(hub: &Hub, id: u32) -> Result<(Arc<Game>, Arc<Match>), Response> {
@@ -592,6 +665,7 @@ mod tests {
             users: parse_users(" Jan, ritter_kunibert ,,"),
             db: None,
             economy_file: PathBuf::new(),
+            personalities_file: PathBuf::new(),
         }
     }
 

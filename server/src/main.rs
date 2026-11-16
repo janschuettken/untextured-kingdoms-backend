@@ -58,6 +58,10 @@ async fn main() {
             std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/data/games"))
         });
     let hub = Arc::new(lobby::Hub::new(store, admin, economy, saves_dir));
+    match ai::personality::load(&hub.admin.personalities_file) {
+        Ok(all) => *hub.personalities.lock().unwrap() = all,
+        Err(e) => warn!("Charaktere der Computergegner ungültig ({e}), nehme die eingebauten"),
+    }
     hub.restore();
 
     let app = Router::new()

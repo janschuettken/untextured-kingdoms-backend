@@ -30,13 +30,14 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use protocol::{
-    AiLevel, GamePhase, GameSummary, LobbyClientMsg, LobbyGame, LobbyMember, LobbyServerMsg,
+    AiLevel, AiPersonalities, GamePhase, GameSummary, LobbyClientMsg, LobbyGame, LobbyMember, LobbyServerMsg,
     LobbySlot, Text,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::{
+    ai,
     admin::Admin,
     economy::Economy,
     game::{self, Match},
@@ -56,6 +57,9 @@ pub struct Member {
     /// (siehe `computer_token`), also kann sich niemand damit anmelden.
     #[serde(default)]
     pub computer: Option<AiLevel>,
+    /// Computergegner: Id seines Charakters (leer = der erste).
+    #[serde(default)]
+    pub personality: String,
 }
 
 impl Member {
@@ -64,6 +68,7 @@ impl Member {
             token: token.into(),
             name: name.into(),
             computer: None,
+            personality: String::new(),
         }
     }
 
@@ -107,11 +112,14 @@ impl Meta {
     }
 
     /// Computergegner mit ihrer Spieler-Nummer (Startplatz + 1).
-    pub fn computers(&self) -> Vec<(u32, AiLevel)> {
+    pub fn computers(&self) -> Vec<ai::Seat> {
         self.slots
             .iter()
             .enumerate()
-            .filter_map(|(i, s)| Some((i as u32 + 1, s.as_ref()?.computer?)))
+            .filter_map(|(i, s)| {
+                let m = s.as_ref()?;
+                Some(ai::Seat { player: i as u32 + 1, level: m.computer?, personality: m.personality.clone() })
+            })
             .collect()
     }
 }
@@ -152,6 +160,8 @@ pub struct Hub {
     pub admin: Admin,
     /// Wirtschaftsdaten für neue Spiele (laufende haben ihre eigene Kopie).
     pub economy: Mutex<Economy>,
+    /// Charaktere der Computergegner (Editor `/ai.html`).
+    pub personalities: Mutex<AiPersonalities>,
     pub saves_dir: PathBuf,
 }
 
@@ -200,6 +210,7 @@ impl Hub {
             store,
             admin,
             economy: Mutex::new(economy),
+            personalities: Mutex::new(ai::personality::parse(ai::personality::PERSONALITIES_JSON).expect("eingebaute Charaktere sind gültig")),
             saves_dir,
         }
     }
@@ -342,7 +353,7 @@ impl Hub {
                         running: OnceLock::new(),
                     });
                     let mut m = Match::new(world, file.map, file.map_text, file.speed);
-                    m.set_computers(&computers);
+                    m.set_computers(&computers, &self.personalities.lock().unwrap());
                     let m = Arc::new(m);
                     let _ = game.running.set(m.clone());
                     self.games.lock().unwrap().insert(file.id, game.clone());
@@ -421,6 +432,7 @@ impl Hub {
                             || lobby_online.contains(&m.token)
                             || in_game.contains(&(i as u32 + 1)),
                         computer: m.computer,
+                        personality: m.computer.map(|_| m.personality.clone()),
                     }),
                 })
                 .collect();
@@ -614,7 +626,7 @@ impl Hub {
     }
 
     /// Gastgeber setzt einen Computergegner auf einen freien Startplatz.
-    fn add_computer(&self, token: &str, slot: u32, level: AiLevel) -> Reply {
+    fn add_computer(&self, token: &str, slot: u32, level: AiLevel, personality: Option<String>) -> Reply {
         let Some(game) = self.game_of(token) else {
             return err("lobby.not_in_game");
         };
@@ -633,6 +645,10 @@ impl Hub {
             token: computer_token(game.id, self.next_conn.fetch_add(1, Ordering::Relaxed)),
             name: format!("Computer {}", slot + 1),
             computer: Some(level),
+            personality: {
+                let all = self.personalities.lock().unwrap();
+                ai::personality::find(&all, personality.as_deref().unwrap_or("")).id.clone()
+            },
         });
         Ok(())
     }
@@ -683,7 +699,7 @@ impl Hub {
             }
             meta.phase = GamePhase::Running;
             let mut m = Match::new(world, meta.map_name.clone(), meta.map_text.clone(), 100);
-            m.set_computers(&meta.computers());
+            m.set_computers(&meta.computers(), &self.personalities.lock().unwrap());
             Arc::new(m)
         };
         let _ = game.running.set(m.clone());
@@ -709,7 +725,7 @@ impl Hub {
             LobbyClientMsg::TakeSlot { slot } => self.take_slot(token, slot),
             LobbyClientMsg::SetMap { map } => self.set_map(token, &map),
             LobbyClientMsg::StartGame => self.start(token),
-            LobbyClientMsg::AddComputer { slot, level } => self.add_computer(token, slot, level),
+            LobbyClientMsg::AddComputer { slot, level, personality } => self.add_computer(token, slot, level, personality),
             LobbyClientMsg::RemoveComputer { slot } => self.remove_computer(token, slot),
         }
     }
@@ -839,18 +855,18 @@ mod tests {
         let id = hub.game_of(A).unwrap().id;
         hub.join(B, "Bert", id).unwrap();
         assert!(
-            hub.add_computer(B, 2, AiLevel::Easy).is_err(),
+            hub.add_computer(B, 2, AiLevel::Easy, None).is_err(),
             "nur der Gastgeber"
         );
         assert!(
-            hub.add_computer(A, 1, AiLevel::Easy).is_err(),
+            hub.add_computer(A, 1, AiLevel::Easy, None).is_err(),
             "Platz ist besetzt"
         );
-        hub.add_computer(A, 2, AiLevel::Normal).unwrap();
+        hub.add_computer(A, 2, AiLevel::Normal, None).unwrap();
         let token = {
             let game = hub.game(id).unwrap();
             let meta = game.meta.lock().unwrap();
-            assert_eq!(meta.computers(), vec![(3, AiLevel::Normal)]);
+            assert_eq!(meta.computers(), vec![ai::Seat { player: 3, level: AiLevel::Normal, personality: "balanced".into() }]);
             meta.slots[2].as_ref().unwrap().token.clone()
         };
         assert!(

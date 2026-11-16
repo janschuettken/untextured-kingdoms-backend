@@ -13,4 +13,8 @@ online: boolean,
 /**
  * Gesetzt bei einem Computergegner: seine Stärke.
  */
-computer: AiLevel | null, };
+computer: AiLevel | null, 
+/**
+ * Computergegner: sein Charakter (Id aus `ai_personalities.json`).
+ */
+personality: string | null, };

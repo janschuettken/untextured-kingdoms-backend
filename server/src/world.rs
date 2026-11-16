@@ -12,6 +12,8 @@ use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod army;
 mod errand;
+mod enclosure;
+pub use enclosure::castle_closed;
 mod gate;
 mod market;
 mod gather;

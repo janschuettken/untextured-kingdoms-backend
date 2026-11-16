@@ -4,4 +4,8 @@ import type { AiLevel } from "./AiLevel";
 /**
  * Nachrichten vom Client an die Lobby (WebSocket `/lobby`).
  */
-export type LobbyClientMsg = { "type": "hello", token: string, name: string, } | { "type": "set_name", name: string, } | { "type": "ping", client_time: number, } | { "type": "create_game", map: string, } | { "type": "join_game", game_id: number, } | { "type": "leave_game" } | { "type": "take_slot", slot: number, } | { "type": "set_map", map: string, } | { "type": "start_game" } | { "type": "add_computer", slot: number, level: AiLevel, } | { "type": "remove_computer", slot: number, };
+export type LobbyClientMsg = { "type": "hello", token: string, name: string, } | { "type": "set_name", name: string, } | { "type": "ping", client_time: number, } | { "type": "create_game", map: string, } | { "type": "join_game", game_id: number, } | { "type": "leave_game" } | { "type": "take_slot", slot: number, } | { "type": "set_map", map: string, } | { "type": "start_game" } | { "type": "add_computer", slot: number, level: AiLevel, 
+/**
+ * Charakter (Id aus `ai_personalities.json`), leer = der erste.
+ */
+personality?: string, } | { "type": "remove_computer", slot: number, };

@@ -190,6 +190,10 @@ pub enum ServerMsg {
         unit_id: u32,
         path: Vec<(f32, f32)>,
     },
+    /// Ist die eigene Burg geschlossen? Kommt beim Verbinden und wenn es sich ändert.
+    Castle {
+        status: CastleStatus,
+    },
     /// Was die beobachtete eigene Einheit tut, wohin und mit welcher Ladung.
     /// Kommt nur, wenn sich etwas ändert.
     UnitInfo {
@@ -224,6 +228,10 @@ pub enum LobbyClientMsg {
         slot: u32,
         #[serde(default)]
         level: AiLevel,
+        /// Charakter (Id aus `ai_personalities.json`), leer = der erste.
+        #[serde(default)]
+        #[ts(optional)]
+        personality: Option<String>,
     },
     /// Nur Gastgeber, nur vor dem Start: den Computergegner von diesem Startplatz nehmen.
     RemoveComputer { slot: u32 },
@@ -316,6 +324,83 @@ pub struct LobbyMember {
     /// Gesetzt bei einem Computergegner: seine Stärke.
     #[serde(default)]
     pub computer: Option<AiLevel>,
+    /// Computergegner: sein Charakter (Id aus `ai_personalities.json`).
+    #[serde(default)]
+    pub personality: Option<String>,
+}
+
+/// Ob ein Gegner zu Fuß bis an den eigenen Bergfried kommt (eigene Tore gelten als zu,
+/// außer sie stehen auf „offen“).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CastleStatus {
+    /// Hat überhaupt Mauern, Tore oder Türme.
+    pub walled: bool,
+    /// Kein Weg von einem fremden Startplatz zum Bergfried: man muss erst durch die Mauer.
+    pub closed: bool,
+    /// Offen: hier geht der Weg hinein (Feld an der eigenen Befestigung), falls es eins gibt.
+    pub gap: Option<(u32, u32)>,
+}
+
+/// Charaktere der Computergegner (Datei `server/data/ai_personalities.json`, Editor `/ai.html`).
+/// Die Stärke (`AiLevel`) bestimmt, wie gut er spielt; der Charakter, was er lieber baut und
+/// ausbildet und wie gern er angreift. Beides wird getrennt gewählt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AiPersonalities {
+    pub personalities: Vec<AiPersonality>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AiPersonality {
+    /// Kurz, nur Kleinbuchstaben, Ziffern und `_` (steht im Spielstand).
+    pub id: String,
+    /// Name je Sprache (`de`, `en`, ...).
+    #[serde(default)]
+    pub name: std::collections::BTreeMap<String, String>,
+    /// Beschreibung je Sprache.
+    #[serde(default)]
+    pub description: std::collections::BTreeMap<String, String>,
+    /// Angriffslust in Prozent: 100 = wie die Stufe, 0 = greift nie an, 200 = früher, öfter,
+    /// auch gegen stärkere Gegner.
+    #[serde(default = "percent_100")]
+    pub aggression: u32,
+    /// Armeegröße in Prozent der Stufe.
+    #[serde(default = "percent_100")]
+    pub army: u32,
+    /// Gebäude in Prozent: 100 = wie die Stufe, 0 = baut es nie, 50 = halb so viele,
+    /// 200 = doppelt so viele. Steht es nicht in der Bauliste der Stufe, baut er ab 200 eins
+    /// (300 zwei, ...). Fehlende Gebäude gelten als 100.
+    #[serde(default)]
+    pub buildings: std::collections::BTreeMap<BuildingKind, u32>,
+    /// Grundriss der Burg.
+    #[serde(default)]
+    pub castle: CastleLayout,
+    /// Soldaten in Prozent: wie oft er sie im Verhältnis ausbildet. 0 = nie. Soldaten, die die
+    /// Stufe nicht ausbildet, nimmt er ab 1 dazu (und baut, was sie brauchen).
+    #[serde(default)]
+    pub units: std::collections::BTreeMap<UnitKind, u32>,
+}
+
+/// Wie ein Computergegner seine Burg anlegt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CastleLayout {
+    /// Wie die Stufe es vorsieht (leicht: eckig, normal: achteckig, schwer: Engstelle).
+    #[default]
+    Level,
+    /// Rechteckiger Ring mit einem Tor je Seite.
+    Square,
+    /// Ring mit abgeschrägten Ecken (mehr Platz, Türme auf den Schrägen).
+    Octagon,
+    /// Mauer nur an Engstellen, die Wasser, Wald, Fels oder Hänge lassen; sonst eckig.
+    Narrows,
+}
+
+fn percent_100() -> u32 {
+    100
 }
 
 /// Art eines Feldes.
@@ -388,7 +473,7 @@ pub struct MapCheck {
 }
 
 /// Art einer Einheit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum UnitKind {
