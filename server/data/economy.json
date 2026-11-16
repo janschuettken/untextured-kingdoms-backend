@@ -327,6 +327,54 @@
       ]
     },
     {
+      "kind": "gatehouse",
+      "category": "fortification",
+      "build_radius": 50,
+      "w": 5,
+      "h": 2,
+      "max_hp": 3000,
+      "service_radius": 0,
+      "no_entrance": true,
+      "spawns": [],
+      "workers": 0,
+      "walkway_from_level": 1,
+      "stairs_from_level": 1,
+      "gate_radius": 10,
+      "garrison": 0,
+      "on_walls": true,
+      "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
+      "levels": [
+        {
+          "cost": [
+            {
+              "good": "blocks",
+              "amount": 30
+            },
+            {
+              "good": "wood",
+              "amount": 10
+            },
+            {
+              "good": "boards",
+              "amount": 10
+            },
+            {
+              "good": "iron",
+              "amount": 4
+            }
+          ],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": []
+        }
+      ]
+    },
+    {
       "kind": "palisade",
       "category": "fortification",
       "build_radius": 50,
@@ -408,10 +456,10 @@
       "hub": true,
       "spawns": [],
       "workers": 0,
-      "walkway_from_level": 0,
-      "stairs_from_level": 0,
+      "walkway_from_level": 1,
+      "stairs_from_level": 1,
       "gate_radius": 0,
-      "garrison": 0,
+      "garrison": 16,
       "on_walls": false,
       "first_free": true,
       "hub_goods": ["wood", "boards", "stone", "blocks", "iron_ore", "iron", "leather"],

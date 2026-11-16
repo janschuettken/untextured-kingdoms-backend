@@ -599,6 +599,8 @@ pub enum BuildingKind {
     WoodPath,
     /// Gepflasterter Weg: darauf läuft man noch schneller.
     StonePath,
+    /// Großes Torhaus: zwei Türme, dazwischen ein tiefer Durchgang mit Tor.
+    Gatehouse,
 }
 
 /// Gruppe im Baumenü.

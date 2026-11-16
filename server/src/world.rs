@@ -538,7 +538,7 @@ impl World {
             rotation,
             entrance,
             inventory: Vec::new(),
-            gate_open: kind == BuildingKind::Gate,
+            gate_open: gate::is_gate(kind),
             training: Vec::new(),
             training_left: 0.0,
             progress: 0.0,
@@ -1541,6 +1541,29 @@ mod tests {
         w.place_building(1, BuildingKind::StonePath, 5, 5).unwrap();
         assert!(w.map.nav.is_open(5, 5));
         assert!(w.economy.building(BuildingKind::StonePath).unwrap().road_speed_percent > 0);
+    }
+
+    #[test]
+    fn weg_im_nachbargebiet_wird_genommen() {
+        // Start und Ziel im oberen Kartenstreifen, der Weg liegt knapp darunter im
+        // nächsten Suchgebiet (16er-Blöcke).
+        let row = "0".repeat(64);
+        let text = format!("spawn 2 14\nspawn 4 14\n{}", format!("{row}\n").repeat(40));
+        let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people().without_start_building().without_build_radius();
+        let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
+        w.spawn_player(1);
+        w.admin_give(1, &[GoodAmount { good: protocol::Good::Stone, amount: 500 }], 0);
+        for x in 2..=60 {
+            w.place_building(1, BuildingKind::StonePath, x, 17).unwrap();
+        }
+        let id = w.units[0].id;
+        assert!(w.order_move(1, &[id], (60.5, 14.5)));
+        let mut via_road = false;
+        for _ in 0..20 * 60 {
+            w.step(0.05);
+            via_road |= w.units[0].pos.1 >= 17.0;
+        }
+        assert!(via_road, "Weg im Nachbargebiet nicht genommen");
     }
 
     #[test]
