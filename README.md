@@ -311,7 +311,19 @@ als“ einen anderen Startplatz übernehmen (`/ws?game=..&token=..&as=<nr>`) ode
   Markierung. Dieselbe Prüfung nutzen die Computer.
 - Er rechnet jedes Mal aus dem Spielstand, gespeichert werden nur Stärke und Charakter (im Startplatz der
   Spieldatei). Eine Welle unterwegs geht nach dem Laden heim.
-- Kampf gibt es noch nicht; Angriffe laufen schon los (siehe oben).
+- Kampf ist ein Grundgerüst (siehe Spielziel und Kampf): Wellen laufen hin, und was dort in Reichweite steht,
+  kämpft. Verbündete greift er nicht an.
+
+## Spielziel und Kampf
+
+- Jeder Spieler hat einen König. Fällt er, scheidet der Spieler aus: alle seine Einheiten und Gebäude
+  verschwinden (`player_defeated`). Bleibt nur ein Spieler oder ein Bündnis übrig, kommt `game_over`.
+- Der König steht in `economy.json` unter `units` (Lebenspunkte, Angriff, Reichweite) und hat
+  `ranged_immune`: Fernkämpfer (Reichweite über `army.melee_range`) können ihn nicht verletzen.
+- Kampf ist ein Grundgerüst (`server/src/world/combat.rs`): stehende Einheiten mit `attack` schlagen alle
+  `army.attack_seconds` die nächste feindliche Kampfeinheit in Reichweite. Nahkampf nur auf derselben Ebene.
+- Bündnisse: `World::set_teams` (Spieler → Bündnis). Verbündete greifen sich nicht an und gewinnen zusammen.
+- Noch offen: Trefferchance, Höhenvorteil, Deckung, Angriffsbefehl/Verfolgen, Angriff auf Gebäude und Zivilisten.
 
 ## Accounts (PostgreSQL)
 

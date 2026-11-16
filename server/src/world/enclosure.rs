@@ -48,14 +48,21 @@ impl World {
         }
         let mut goal = vec![false; (w * h) as usize];
         let mut any_goal = false;
+        // Verbündete zählen nicht als Gegner: ihre Bergfriede und die Startplätze daneben fallen weg.
+        let friendly: Vec<(f32, f32)> = self
+            .buildings
+            .iter()
+            .filter(|b| b.kind == BuildingKind::Keep && (b.owner == player || self.allied(player, b.owner)))
+            .map(|b| (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0))
+            .collect();
         for &(sx, sy) in &self.map.spawns {
-            if (sx as f32 - center.0).hypot(sy as f32 - center.1) > OWN_SPAWN {
+            if friendly.iter().all(|c| (sx as f32 - c.0).hypot(sy as f32 - c.1) > OWN_SPAWN) {
                 goal[idx(sx as i32, sy as i32)] = true;
                 any_goal = true;
             }
         }
         // Fremde Bergfriede auch (der Startplatz selbst ist oft verbaut): die Felder davor.
-        for b in self.buildings.iter().filter(|b| b.owner != player && b.kind == BuildingKind::Keep) {
+        for b in self.buildings.iter().filter(|b| b.owner != player && b.kind == BuildingKind::Keep && !self.allied(player, b.owner)) {
             if let Some((ex, ey)) = b.entrance {
                 goal[idx(ex as i32, ey as i32)] = true;
                 any_goal = true;

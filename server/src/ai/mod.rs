@@ -50,6 +50,8 @@ const HUB_DISTANCE: f32 = 22.0;
 const REMOTE_INPUT: u32 = 60;
 /// So viel Stein bleibt liegen, bevor er Pflasterwege legt.
 const ROAD_STONE_RESERVE: u32 = 25;
+/// Feindliche Soldaten näher als so viele Felder am Bergfried: Verteidigung.
+const THREAT_RADIUS: f32 = 30.0;
 /// So oft prüft er, ob die fertige Mauer dicht ist.
 const SEAL_SECONDS: f32 = 30.0;
 /// Soldaten, die weiter als so viele Felder vom Sammelpunkt stehen, holt er zurück.
@@ -186,7 +188,11 @@ impl Computer {
         };
         self.trade(world, &stock, &missing, &mut cmds);
         self.train(world, &stock, &mut cmds);
-        self.attack(world, layout, &mut cmds);
+        self.guard_king(world, &mut cmds);
+        let defending = self.defend(world, &mut cmds);
+        if !defending {
+            self.attack(world, layout, &mut cmds);
+        }
         self.rally(world, layout, &mut cmds);
         cmds
     }
@@ -726,6 +732,51 @@ impl Computer {
         let units: Vec<u32> = wave.iter().map(|u| u.id).collect();
         cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: goal.0, y: goal.1 });
         self.campaign = Some(Campaign { target, units, start_power: power, goal, arrived: None });
+    }
+
+    /// Der König steht oben auf dem Bergfried: dort kommt kein Nahkämpfer vom Boden an ihn
+    /// heran, und Fernkämpfer können ihm nichts. (Darf jeder Spieler genauso.)
+    fn guard_king(&self, world: &World, cmds: &mut Vec<ClientMsg>) {
+        let p = self.player;
+        let Some(king) = world.units.iter().find(|u| u.owner == p && u.kind == UnitKind::King) else { return };
+        if king.is_on_wall() || king.is_moving() {
+            return;
+        }
+        let Some(keep) = world.buildings.iter().find(|b| b.owner == p && b.kind == BuildingKind::Keep) else { return };
+        if world.economy.building(BuildingKind::Keep).is_none_or(|d| d.garrison == 0) {
+            return;
+        }
+        let c = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
+        cmds.push(ClientMsg::MoveUnits { unit_ids: vec![king.id], x: c.0, y: c.1 });
+    }
+
+    /// Feinde nahe am Bergfried: alle Soldaten am Boden, die nicht mit einer Welle unterwegs
+    /// sind, gehen auf den, der dem Bergfried am nächsten ist. `true`, solange er sich wehrt
+    /// (dann schickt er keine neue Welle los).
+    fn defend(&self, world: &World, cmds: &mut Vec<ClientMsg>) -> bool {
+        let p = self.player;
+        let Some(keep) = world.buildings.iter().find(|b| b.owner == p && b.kind == BuildingKind::Keep) else { return false };
+        let c = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
+        let dist = |u: &crate::world::Unit| (u.pos.0 - c.0).hypot(u.pos.1 - c.1);
+        let threat = world
+            .units
+            .iter()
+            .filter(|u| u.kind.is_soldier() && u.owner != p && world.can_attack(p, u.owner) && dist(u) < THREAT_RADIUS)
+            .min_by(|a, b| dist(a).total_cmp(&dist(b)));
+        let Some(threat) = threat else { return false };
+        let defenders: Vec<u32> = world
+            .units
+            .iter()
+            .filter(|u| u.owner == p && u.kind.is_soldier() && !u.is_on_wall() && !self.on_campaign(u.id))
+            // Wer schon nah dran ist, kämpft von selbst.
+            .filter(|u| (u.pos.0 - threat.pos.0).hypot(u.pos.1 - threat.pos.1) > 2.0)
+            .map(|u| u.id)
+            .collect();
+        if !defenders.is_empty() {
+            debug!("Computer {p}: verteidigt gegen Spieler {}", threat.owner);
+            cmds.push(ClientMsg::MoveUnits { unit_ids: defenders, x: threat.pos.0, y: threat.pos.1 });
+        }
+        true
     }
 
     /// Ist dieser Soldat gerade mit einer Welle unterwegs?

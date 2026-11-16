@@ -65,7 +65,11 @@ fn play_seats(
         if step % (10.0 / dt) as u32 == 0 {
             watch(&world, &ais);
         }
-        let _ = world.take_events();
+        for e in world.take_events() {
+            if let protocol::ServerMsg::PlayerDefeated { player, by } = e {
+                println!("min {:.0}: Spieler {player} ausgeschieden (König gefallen durch {by:?})", step as f32 * dt / 60.0);
+            }
+        }
         let _ = world.take_dirty_stocks();
     }
     assert!(rejected < 5, "{rejected} Befehle abgelehnt: er soll vorher prüfen");
@@ -158,8 +162,11 @@ fn vier_computer_auf_zufallskarte_mit_fluessen() {
             kinds(BuildingKind::Tower),
             world.units.iter().filter(|u| u.owner == p && u.is_on_wall()).count()
         );
-        assert!(n >= 12, "Spieler {p}: nur {n} Gebäude");
+        // Mit Kampf kann einer ausscheiden (König gefallen): dann wurde er erobert.
+        assert!(n >= 12 || world.is_eliminated(p), "Spieler {p}: nur {n} Gebäude");
     }
+    // Mindestens die beiden schweren halten durch.
+    assert!(!world.is_eliminated(3) || !world.is_eliminated(4));
 }
 
 /// Der schwere Computer schätzt den leichten als schwächer ein und schickt eine Welle hin.

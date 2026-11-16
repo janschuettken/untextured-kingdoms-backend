@@ -17,4 +17,8 @@ computer: AiLevel | null,
 /**
  * Computergegner: sein Charakter (Id aus `ai_personalities.json`).
  */
-personality: string | null, };
+personality: string | null, 
+/**
+ * Bündnis (gleiche Zahl ab 1 = verbündet), 0 = keins.
+ */
+team: number, };

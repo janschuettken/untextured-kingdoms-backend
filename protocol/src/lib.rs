@@ -93,6 +93,14 @@ pub enum ClientMsg {
     View { x0: f32, y0: f32, x1: f32, y1: f32 },
     /// Eigenes Gebäude an eine andere Stelle versetzen (kostet `move_cost_percent` der Baukosten).
     MoveBuilding { building_id: u32, x: u32, y: u32, #[serde(default)] rotation: u8 },
+    /// Waren (und Taler) an einen Verbündeten schicken, ohne Markt. Wie sie ankommen,
+    /// legt `TradeMode` des Spiels fest (sofort oder mit Handelskarren).
+    SendGoods {
+        to: u32,
+        goods: Vec<GoodAmount>,
+        #[serde(default)]
+        taler: u32,
+    },
 }
 
 /// Nachrichten vom Server an den Client.
@@ -199,6 +207,56 @@ pub enum ServerMsg {
     UnitInfo {
         info: UnitInfo,
     },
+    /// Mitspieler, Bündnisse und Handelsart. Kommt nach `welcome`.
+    Diplomacy {
+        players: Vec<PlayerInfo>,
+        trade_mode: TradeMode,
+    },
+    /// Waren zwischen Verbündeten: losgeschickt (`arrived` = false, nur bei Karren)
+    /// oder angekommen. Geht nur an Absender und Empfänger.
+    Shipment {
+        from: u32,
+        to: u32,
+        goods: Vec<GoodAmount>,
+        taler: u32,
+        arrived: bool,
+        /// Wie viele Handelskarren fahren (0 = sofort angekommen).
+        carts: u32,
+    },
+    /// Der König dieses Spielers ist tot: er scheidet aus, alles von ihm ist verschwunden.
+    /// Geht an alle; ein ausgeschiedener Spieler bekommt es beim Verbinden noch einmal.
+    PlayerDefeated {
+        player: u32,
+        /// Wessen Einheit den letzten Schlag geführt hat.
+        by: Option<u32>,
+    },
+    /// Nur noch ein Spieler (oder ein Bündnis) hat seinen König: das Spiel ist entschieden.
+    GameOver {
+        winners: Vec<u32>,
+    },
+}
+
+/// Ein Spieler im laufenden Spiel.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PlayerInfo {
+    pub id: u32,
+    pub name: String,
+    /// Bündnis: Spieler mit derselben Zahl (ab 1) sind verbündet, 0 = allein.
+    pub team: u8,
+    pub computer: bool,
+}
+
+/// Wie Waren zwischen Verbündeten ankommen (Einstellung des Spiels in der Lobby).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TradeMode {
+    /// Sofort im Lager des Verbündeten.
+    #[default]
+    Instant,
+    /// Handelskarren fahren vom eigenen Lager zu seinem und verschwinden dort.
+    Carts,
 }
 
 /// Nachrichten vom Client an die Lobby (WebSocket `/lobby`).
@@ -235,6 +293,11 @@ pub enum LobbyClientMsg {
     },
     /// Nur Gastgeber, nur vor dem Start: den Computergegner von diesem Startplatz nehmen.
     RemoveComputer { slot: u32 },
+    /// Nur vor dem Start: Bündnis eines Startplatzes (0 = keins). Den eigenen darf
+    /// jeder setzen, die der Computergegner nur der Gastgeber.
+    SetTeam { slot: u32, team: u8 },
+    /// Nur Gastgeber, nur vor dem Start: wie Waren zwischen Verbündeten ankommen.
+    SetTradeMode { mode: TradeMode },
 }
 
 /// Stärke eines Computergegners. Was jede Stufe tut, steht im Server (`server/src/ai/`).
@@ -300,6 +363,9 @@ pub struct LobbyGame {
     pub host: String,
     /// Ein Eintrag je Startplatz der Karte, in derselben Reihenfolge.
     pub slots: Vec<LobbySlot>,
+    /// Handel unter Verbündeten: sofort oder mit Karren.
+    #[serde(default)]
+    pub trade_mode: TradeMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -327,6 +393,9 @@ pub struct LobbyMember {
     /// Computergegner: sein Charakter (Id aus `ai_personalities.json`).
     #[serde(default)]
     pub personality: Option<String>,
+    /// Bündnis (gleiche Zahl ab 1 = verbündet), 0 = keins.
+    #[serde(default)]
+    pub team: u8,
 }
 
 /// Ob ein Gegner zu Fuß bis an den eigenen Bergfried kommt (eigene Tore gelten als zu,
@@ -497,6 +566,8 @@ pub enum UnitKind {
     Swordsman,
     /// Ritter zu Pferd: schnell und stark, teuer.
     Knight,
+    /// Handelskarren: bringt Waren zu einem Verbündeten und verschwindet dort.
+    TradeCart,
 }
 
 impl UnitKind {
@@ -574,6 +645,9 @@ pub struct UnitState {
     /// Arbeiter ist in seinem Gebäude (steht dort und arbeitet): außen nicht zu sehen.
     #[serde(default)]
     pub inside: bool,
+    /// Lebenspunkte (Höchstwert: `hp` der Einheit in `economy.units`). 0 = hat keine (Träger, Arbeiter).
+    #[serde(default)]
+    pub hp: u32,
 }
 
 /// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.
@@ -956,6 +1030,10 @@ pub struct UnitDef {
     /// Sold in Talern je Zahltag (siehe `army.upkeep_seconds`).
     #[serde(default)]
     pub upkeep: u32,
+    /// Fernkämpfer (Reichweite über `army.melee_range`) können diese Einheit nicht verletzen
+    /// (der König: nur Nahkämpfer können ihn töten).
+    #[serde(default)]
+    pub ranged_immune: bool,
 }
 
 /// Regeln für das Heer.
@@ -969,11 +1047,15 @@ pub struct ArmyDef {
     pub unpaid_speed_percent: u32,
     /// So viele Soldaten kann eine Kaserne höchstens in der Warteschlange haben.
     pub queue_max: u32,
+    /// Sekunden zwischen zwei Schlägen oder Schüssen einer Einheit.
+    pub attack_seconds: f32,
+    /// Bis zu dieser Reichweite (Felder) zählt ein Angriff als Nahkampf, darüber als Fernkampf.
+    pub melee_range: f32,
 }
 
 impl Default for ArmyDef {
     fn default() -> Self {
-        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10 }
+        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, attack_seconds: 1.5, melee_range: 2.0 }
     }
 }
 

@@ -1,13 +1,14 @@
 //! Angriffe: Stärke der Gegner grob einschätzen, eine Welle sammeln, hinmarschieren.
 //!
-//! Kampf gibt es noch nicht. Die Welle läuft trotzdem schon los, bleibt eine Weile vor
-//! der gegnerischen Burg (so weit sie kommt, vor geschlossenen Toren und Mauern) und
-//! geht dann wieder heim. Sobald Einheiten kämpfen, kämpfen sie dort; Verluste lassen
-//! die Welle umkehren (`retreat_below`).
+//! Die Welle läuft zur gegnerischen Burg (so weit sie kommt, vor geschlossenen Toren und
+//! Mauern), kämpft dort mit allem in Reichweite (Kampf-Grundgerüst in `world/combat.rs`),
+//! bleibt eine Weile und geht dann wieder heim. Verluste lassen sie früher umkehren
+//! (`retreat_below`). Mauern und Tore angreifen kann sie noch nicht.
 //!
 //! Geschätzt wird aus dem, was jeder Spieler sieht: Soldaten auf der Karte (oben auf
 //! Mauern zählen mehr), Türme und eine geschlossene Mauer. Eine Höchstentfernung gibt
-//! es nicht: das Ziel ist der schwächste Gegner, bei Gleichstand der nächste.
+//! es nicht: das Ziel ist der schwächste Gegner, bei Gleichstand der nächste. Verbündete
+//! greift er nie an.
 
 use protocol::{BuildingKind, UnitKind};
 
@@ -67,7 +68,7 @@ pub fn choose_target(world: &World, me: u32, from: (f32, f32)) -> Option<(u32, f
     let mut targets: Vec<(u32, f32, f32, (u32, u32))> = world
         .buildings
         .iter()
-        .filter(|b| b.owner != me && b.owner != 0 && b.kind == BuildingKind::Keep)
+        .filter(|b| b.owner != me && b.owner != 0 && b.kind == BuildingKind::Keep && world.can_attack(me, b.owner))
         .map(|b| {
             let c = b.entrance.unwrap_or((b.x + b.w / 2, b.y + b.h / 2));
             let d = (c.0 as f32 - from.0).hypot(c.1 as f32 - from.1);
