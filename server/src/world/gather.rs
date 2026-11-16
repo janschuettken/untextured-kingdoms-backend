@@ -229,6 +229,39 @@ impl World {
             })
     }
 
+    /// Tür des nächsten eigenen Wohnhauses (Gebäude mit Wohnplatz auf seiner Stufe).
+    pub(super) fn home_door(&self, owner: u32, except: u32, near: (f32, f32)) -> Option<(f32, f32)> {
+        self.buildings
+            .iter()
+            .filter(|h| h.owner == owner && h.id != except)
+            .filter(|h| {
+                self.economy.building(h.kind).and_then(|d| d.levels.get(h.level.max(1) as usize - 1)).is_some_and(|l| l.housing > 0)
+            })
+            .min_by(|a, b| {
+                let d = |h: &protocol::BuildingState| (h.x as f32 + h.w as f32 / 2.0 - near.0).hypot(h.y as f32 + h.h as f32 / 2.0 - near.1);
+                d(a).total_cmp(&d(b))
+            })
+            .and_then(|h| self.door(h, near))
+    }
+
+    /// Betrieb bekommt (wieder) eine Wohnung für seine Arbeiter: sie kommen aus dem
+    /// nächsten Wohnhaus und laufen zur Arbeit, statt plötzlich am Betrieb zu stehen.
+    pub(super) fn send_workers_from_home(&mut self, building: u32) {
+        let Some(b) = self.buildings.iter().find(|b| b.id == building).cloned() else { return };
+        let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
+        let (Some(from), Some(work)) = (self.home_door(b.owner, b.id, center), self.door(&b, center)) else { return };
+        let path = self.map.nav.waypoints(from, work);
+        // Wer noch eine Last trägt, bringt sie erst weg.
+        for u in self.units.iter_mut().filter(|u| u.kind == UnitKind::Worker && u.home == Some(b.id) && u.carrying.is_none()) {
+            u.pos = from;
+            u.path = path.clone();
+            u.layers.clear();
+            u.on_wall = false;
+            u.target = Some(work);
+            u.gather = None;
+        }
+    }
+
     /// Arbeiter für einen neuen Betrieb (mindestens einer).
     pub(super) fn spawn_workers(&mut self, bi: usize) {
         let b = self.buildings[bi].clone();
@@ -239,18 +272,19 @@ impl World {
         }
         let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
         let Some(work) = self.door(&b, center) else { return };
-        // Neue Arbeiter kommen am Bergfried an (sonst am nächsten eigenen Lager)
-        // und laufen von dort zu ihrem Betrieb.
-        let start = self
-            .buildings
-            .iter()
-            .filter(|h| h.owner == b.owner && h.id != b.id && self.economy.building(h.kind).is_some_and(|d| d.hub))
-            .min_by_key(|h| {
-                let keep = h.kind != protocol::BuildingKind::Keep;
-                let d = (h.x as f32 + h.w as f32 / 2.0 - center.0).hypot(h.y as f32 + h.h as f32 / 2.0 - center.1);
-                (keep, d as u32)
-            })
-            .and_then(|h| self.door(h, center));
+        // Neue Arbeiter kommen aus dem nächsten eigenen Wohnhaus (ohne Wohnhaus
+        // am Bergfried, sonst am nächsten Lager) und laufen von dort zu ihrem Betrieb.
+        let start = self.home_door(b.owner, b.id, center).or_else(|| {
+            self.buildings
+                .iter()
+                .filter(|h| h.owner == b.owner && h.id != b.id && self.economy.building(h.kind).is_some_and(|d| d.hub))
+                .min_by_key(|h| {
+                    let keep = h.kind != protocol::BuildingKind::Keep;
+                    let d = (h.x as f32 + h.w as f32 / 2.0 - center.0).hypot(h.y as f32 + h.h as f32 / 2.0 - center.1);
+                    (keep, d as u32)
+                })
+                .and_then(|h| self.door(h, center))
+        });
         for _ in 0..def.workers.max(1) {
             let id = self.next_unit_id;
             self.next_unit_id += 1;

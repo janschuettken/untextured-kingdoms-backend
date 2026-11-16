@@ -88,7 +88,12 @@ impl World {
                 self.dirty_stocks.insert(player);
             }
         }
+        // Wer gerade eine Wohnung bekommen hat, kommt aus dem Wohnhaus zur Arbeit.
+        let housed: Vec<u32> = self.unstaffed.difference(&unstaffed).copied().collect();
         self.unstaffed = unstaffed;
+        for id in housed {
+            self.send_workers_from_home(id);
+        }
         self.idle_units = idle;
     }
 
@@ -134,6 +139,29 @@ mod tests {
         assert_ne!(b.status, BuildingStatus::NoWorkers);
         let housing = w.economy.building(BuildingKind::House).unwrap().levels[0].housing;
         assert_eq!((w.people[&1].housing, w.people[&1].working), (housing, 1));
+    }
+
+    #[test]
+    fn arbeiter_kommen_aus_dem_wohnhaus() {
+        let mut w = world();
+        let door = |w: &World, id: u32| {
+            let b = w.buildings.iter().find(|b| b.id == id).unwrap();
+            let (ex, ey) = b.entrance.unwrap();
+            (ex as f32 + 0.5, ey as f32 + 0.5)
+        };
+        let near = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).hypot(a.1 - b.1) < 0.6;
+        // Erst der Betrieb, dann das Haus: der Arbeiter erscheint am Haus, nicht am Betrieb.
+        let saw = w.place_building(1, BuildingKind::Sawmill, 2, 2).unwrap();
+        w.step(0.05);
+        let house = w.place_building(1, BuildingKind::House, 20, 20).unwrap();
+        w.step(0.05);
+        let worker = w.units.iter().find(|u| u.home == Some(saw.id)).unwrap();
+        assert!(near(worker.pos, door(&w, house.id)) || !worker.path.is_empty() && worker.pos.1 > 15.0, "am Haus: {:?}", worker.pos);
+        assert!(!worker.path.is_empty(), "läuft zur Arbeit");
+        // Mit Haus: neue Arbeiter starten gleich dort.
+        let wood = w.place_building(1, BuildingKind::Woodcutter, 2, 10).unwrap();
+        let worker = w.units.iter().find(|u| u.home == Some(wood.id)).unwrap();
+        assert!(near(worker.pos, door(&w, house.id)), "am Haus: {:?}", worker.pos);
     }
 
     #[test]
