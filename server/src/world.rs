@@ -167,6 +167,8 @@ pub struct World {
     teams: HashMap<u32, u32>,
     /// Gewinner, sobald das Spiel entschieden ist.
     winners: Option<Vec<u32>>,
+    /// Sekunden, seit einem Gebäude ein Arbeiter, Träger oder Karren fehlt (siehe `people.rs`).
+    respawn_clock: HashMap<u32, f32>,
 }
 
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
@@ -247,6 +249,7 @@ impl World {
             eliminated: BTreeSet::new(),
             teams: HashMap::new(),
             winners: None,
+            respawn_clock: HashMap::new(),
             worker_carries_default: true,
         }
     }

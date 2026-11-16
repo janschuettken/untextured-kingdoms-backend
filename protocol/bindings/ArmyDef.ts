@@ -23,4 +23,9 @@ attack_seconds: number,
 /**
  * Bis zu dieser Reichweite (Felder) zählt ein Angriff als Nahkampf, darüber als Fernkampf.
  */
-melee_range: number, };
+melee_range: number, 
+/**
+ * So viele Sekunden nach dem Tod eines Arbeiters, Trägers oder Karrens kommt Ersatz
+ * (aus einem Wohnhaus bzw. am eigenen Gebäude). 0 = nie.
+ */
+civilian_respawn_seconds: number, };

@@ -101,6 +101,10 @@ impl World {
                             continue;
                         }
                         let Some(tdef) = self.economy.unit(t.kind) else { continue };
+                        // Wer drinnen arbeitet oder wartet, ist nicht zu erreichen.
+                        if t.kind.is_civilian() && self.inside(t) {
+                            continue;
+                        }
                         if (ranged && tdef.ranged_immune) || (!ranged && t.on_wall != u.on_wall) {
                             continue;
                         }
@@ -262,6 +266,24 @@ mod tests {
         w.take_events();
         w.eliminate(3, Some(1));
         assert_eq!(w.winners(), Some(&[1, 2][..]));
+    }
+
+    #[test]
+    fn soldaten_greifen_feindliche_zivilisten_an_aber_nicht_verbuendete() {
+        let mut w = world();
+        let pos = king(&w, 2).unwrap().pos;
+        w.units.push(Unit::new(20_001, 2, UnitKind::Carrier, (pos.0 + 4.0, pos.1)));
+        w.units.push(Unit::new(20_002, 1, UnitKind::Archer, (pos.0 + 8.0, pos.1)));
+        run(&mut w, 30.0);
+        assert!(!w.units.iter().any(|u| u.id == 20_001), "feindlicher Träger ist gefallen");
+
+        let mut w = world();
+        w.set_teams([(1, 7), (2, 7)].into_iter().collect());
+        let pos = king(&w, 2).unwrap().pos;
+        w.units.push(Unit::new(20_001, 2, UnitKind::Carrier, (pos.0 + 4.0, pos.1)));
+        w.units.push(Unit::new(20_002, 1, UnitKind::Archer, (pos.0 + 8.0, pos.1)));
+        run(&mut w, 30.0);
+        assert!(w.units.iter().any(|u| u.id == 20_001 && u.damage == 0), "Verbündete bleiben verschont");
     }
 
     #[test]

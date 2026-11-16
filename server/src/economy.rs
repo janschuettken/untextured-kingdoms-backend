@@ -67,6 +67,12 @@ impl Economy {
         if !def.units.iter().any(|u| u.kind == UnitKind::King) {
             def.units.insert(0, default_king(def.movement.king_speed));
         }
+        // Zivilisten ohne Werte: Grundwerte (nur Lebenspunkte).
+        for (kind, hp) in [(UnitKind::Worker, 30), (UnitKind::Carrier, 30), (UnitKind::Cart, 60), (UnitKind::TradeCart, 60)] {
+            if !def.units.iter().any(|u| u.kind == kind) {
+                def.units.push(UnitDef { kind, hp, ranged_immune: false, attack: 0, range: 0.0, ..default_king(1.0) });
+            }
+        }
         let mut buildings = HashMap::new();
         for (i, b) in def.buildings.iter().enumerate() {
             if buildings.insert(b.kind, i).is_some() {
@@ -140,15 +146,15 @@ impl Economy {
             }
         }
         for (i, u) in def.units.iter().enumerate() {
-            if !u.kind.is_soldier() && u.kind != UnitKind::King {
-                return Err(format!("Einheit {:?}: nur Soldaten und der König haben Kampfwerte", u.kind));
+            if !u.kind.is_soldier() && u.kind != UnitKind::King && !u.kind.is_civilian() {
+                return Err(format!("Einheit {:?}: hat keine Kampfwerte", u.kind));
             }
             if def.units[..i].iter().any(|v| v.kind == u.kind) {
                 return Err(format!("Einheit {:?} doppelt", u.kind));
             }
-            if u.kind == UnitKind::King {
+            if u.kind == UnitKind::King || u.kind.is_civilian() {
                 if u.hp == 0 {
-                    return Err("König: braucht Lebenspunkte".into());
+                    return Err(format!("Einheit {:?}: braucht Lebenspunkte", u.kind));
                 }
                 continue;
             }
@@ -161,8 +167,8 @@ impl Economy {
         }
         for b in &def.buildings {
             for (n, level) in b.levels.iter().enumerate() {
-                if level.trains.contains(&UnitKind::King) {
-                    return Err(format!("{:?} Stufe {}: der König wird nicht ausgebildet", b.kind, n + 1));
+                if let Some(k) = level.trains.iter().find(|k| !k.is_soldier()) {
+                    return Err(format!("{:?} Stufe {}: {k:?} wird nicht ausgebildet", b.kind, n + 1));
                 }
                 if let Some(k) = level.trains.iter().find(|k| !def.units.iter().any(|u| u.kind == **k)) {
                     return Err(format!("{:?} Stufe {}: Einheit {k:?} fehlt unter units", b.kind, n + 1));
@@ -184,6 +190,9 @@ impl Economy {
         }
         if !(army.melee_range >= 0.0 && army.melee_range.is_finite()) {
             return Err("Heer: melee_range darf nicht negativ sein".into());
+        }
+        if !(army.civilian_respawn_seconds >= 0.0 && army.civilian_respawn_seconds.is_finite()) {
+            return Err("Heer: civilian_respawn_seconds darf nicht negativ sein (0 = kein Ersatz)".into());
         }
         let goods = |list: &[GoodAmount]| list.iter().all(|g| def.goods.contains(&g.good));
         if !def.buildings.iter().all(|b| b.levels.iter().all(|l| goods(&l.cost)))

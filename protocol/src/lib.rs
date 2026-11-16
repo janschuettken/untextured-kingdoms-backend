@@ -575,6 +575,11 @@ impl UnitKind {
     pub fn is_soldier(self) -> bool {
         matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight)
     }
+
+    /// Zivilisten: Arbeiter, Träger und Karren. Sie kämpfen nicht, können aber angegriffen werden.
+    pub fn is_civilian(self) -> bool {
+        matches!(self, UnitKind::Carrier | UnitKind::Cart | UnitKind::Worker | UnitKind::TradeCart)
+    }
 }
 
 /// Was eine Einheit gerade tut (für die Anzeige beim Anklicken).
@@ -1051,11 +1056,14 @@ pub struct ArmyDef {
     pub attack_seconds: f32,
     /// Bis zu dieser Reichweite (Felder) zählt ein Angriff als Nahkampf, darüber als Fernkampf.
     pub melee_range: f32,
+    /// So viele Sekunden nach dem Tod eines Arbeiters, Trägers oder Karrens kommt Ersatz
+    /// (aus einem Wohnhaus bzw. am eigenen Gebäude). 0 = nie.
+    pub civilian_respawn_seconds: f32,
 }
 
 impl Default for ArmyDef {
     fn default() -> Self {
-        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, attack_seconds: 1.5, melee_range: 2.0 }
+        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, attack_seconds: 1.5, melee_range: 2.0, civilian_respawn_seconds: 30.0 }
     }
 }
 

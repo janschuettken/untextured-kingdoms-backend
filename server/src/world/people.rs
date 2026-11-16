@@ -10,9 +10,9 @@
 //! dem Vorrat (von der Ware, von der am meisten da ist). Reicht es nicht, sind
 //! alle hungrig und arbeiten und laufen bis zur nächsten Mahlzeit langsamer.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
-use protocol::{GoodAmount, PeopleState};
+use protocol::{GoodAmount, PeopleState, UnitKind};
 
 use super::World;
 
@@ -95,6 +95,50 @@ impl World {
             self.send_workers_from_home(id);
         }
         self.idle_units = idle;
+        self.step_respawn(dt);
+    }
+
+    /// Gefallene Arbeiter, Träger und Karren werden nach `army.civilian_respawn_seconds`
+    /// ersetzt, einer nach dem anderen (Arbeiter kommen aus dem Wohnhaus).
+    fn step_respawn(&mut self, dt: f32) {
+        let secs = self.economy.def.army.civilian_respawn_seconds;
+        if secs <= 0.0 {
+            self.respawn_clock.clear();
+            return;
+        }
+        let mut have: BTreeMap<(u32, UnitKind), u32> = BTreeMap::new();
+        for u in &self.units {
+            if let Some(h) = u.home {
+                *have.entry((h, u.kind)).or_default() += 1;
+            }
+        }
+        let mut due: Vec<(usize, UnitKind)> = Vec::new();
+        let mut missing_any: HashSet<u32> = HashSet::new();
+        for (bi, b) in self.buildings.iter().enumerate() {
+            let Some(def) = self.economy.building(b.kind) else { continue };
+            let mut totals: BTreeMap<UnitKind, u32> = BTreeMap::new();
+            totals.insert(UnitKind::Worker, self.worker_slots(b));
+            for s in def.spawns.iter().chain(def.levels.iter().take(b.level.max(1) as usize).flat_map(|l| &l.spawns)) {
+                *totals.entry(s.kind).or_default() += s.count;
+            }
+            let Some((&kind, _)) = totals.iter().find(|(k, n)| have.get(&(b.id, **k)).copied().unwrap_or(0) < **n) else { continue };
+            missing_any.insert(b.id);
+            let clock = self.respawn_clock.entry(b.id).or_insert(0.0);
+            *clock += dt;
+            if *clock >= secs {
+                *clock = 0.0;
+                due.push((bi, kind));
+            }
+        }
+        self.respawn_clock.retain(|id, _| missing_any.contains(id));
+        for (bi, kind) in due {
+            if kind == UnitKind::Worker {
+                self.spawn_worker_units(bi, 1);
+            } else {
+                let b = self.buildings[bi].clone();
+                self.spawn_transport(&b, kind, 0);
+            }
+        }
     }
 
     /// Tempo-Faktor für Arbeit und Laufen: hungrig langsamer.
@@ -162,6 +206,23 @@ mod tests {
         let wood = w.place_building(1, BuildingKind::Woodcutter, 2, 10).unwrap();
         let worker = w.units.iter().find(|u| u.home == Some(wood.id)).unwrap();
         assert!(near(worker.pos, door(&w, house.id)), "am Haus: {:?}", worker.pos);
+    }
+
+    #[test]
+    fn gefallene_zivilisten_werden_ersetzt() {
+        let mut w = world();
+        w.place_building(1, BuildingKind::House, 20, 20).unwrap();
+        let saw = w.place_building(1, BuildingKind::Sawmill, 2, 2).unwrap();
+        w.units.retain(|u| u.home != Some(saw.id));
+        let secs = w.economy.def.army.civilian_respawn_seconds;
+        for _ in 0..((secs - 1.0) * 20.0) as u32 {
+            w.step(0.05);
+        }
+        assert!(!w.units.iter().any(|u| u.home == Some(saw.id)), "noch kein Ersatz");
+        for _ in 0..40 {
+            w.step(0.05);
+        }
+        assert_eq!(w.units.iter().filter(|u| u.home == Some(saw.id) && u.kind == protocol::UnitKind::Worker).count(), 1);
     }
 
     #[test]

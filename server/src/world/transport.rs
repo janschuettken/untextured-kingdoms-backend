@@ -771,6 +771,7 @@ mod tests {
         s.paused = false;
         s.cart_deliveries = true;
         shed(&mut w, 10, 12, 2);
+        w.economy.def.army.civilian_respawn_seconds = 0.0; // entfernte Träger nicht ersetzen
         w.units.retain(|u| u.kind != UnitKind::Carrier);
         let cap = w.inventories[&mill].capacity_of(Good::Wood);
         let mut supplied = 0;
@@ -844,6 +845,7 @@ mod tests {
         assert_eq!(cart_load, cap, "Karren holt alles auf einmal");
         assert!(central(&w, Good::Fruit) >= fruit + cap);
         // Ohne Träger: Kleinkram lässt auch der Karren liegen.
+        w.economy.def.army.civilian_respawn_seconds = 0.0; // entfernte Träger nicht ersetzen
         w.units.retain(|u| u.kind != UnitKind::Carrier);
         // Wenig liegt herum: dafür fährt der Karren nicht. Erst anhalten und
         // eine laufende Fahrt zu Ende fahren lassen.
@@ -910,6 +912,7 @@ mod tests {
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
         granary(&mut w, 2, 12);
         shed(&mut w, 12, 2, 2);
+        w.economy.def.army.civilian_respawn_seconds = 0.0; // entfernte Träger nicht ersetzen
         w.units.retain(|u| u.kind != UnitKind::Carrier);
         let a = w.place_building(1, BuildingKind::Orchard, 24, 2).unwrap();
         let b = w.place_building(1, BuildingKind::Orchard, 32, 2).unwrap();

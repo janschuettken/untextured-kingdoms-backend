@@ -323,7 +323,10 @@ als“ einen anderen Startplatz übernehmen (`/ws?game=..&token=..&as=<nr>`) ode
 - Kampf ist ein Grundgerüst (`server/src/world/combat.rs`): stehende Einheiten mit `attack` schlagen alle
   `army.attack_seconds` die nächste feindliche Kampfeinheit in Reichweite. Nahkampf nur auf derselben Ebene.
 - Bündnisse: `World::set_teams` (Spieler → Bündnis). Verbündete greifen sich nicht an und gewinnen zusammen.
-- Noch offen: Trefferchance, Höhenvorteil, Deckung, Angriffsbefehl/Verfolgen, Angriff auf Gebäude und Zivilisten.
+- Soldaten greifen auch feindliche Zivilisten an (Arbeiter, Träger, Karren, Handelskarren; Lebenspunkte unter `units`),
+  nicht aber, wer gerade drinnen ist. Fehlende Arbeiter, Träger und Karren eines Gebäudes kommen nach
+  `army.civilian_respawn_seconds` wieder (0 = nie); neue Arbeiter kommen aus dem nächsten Wohnhaus.
+- Noch offen: Trefferchance, Höhenvorteil, Deckung, Angriffsbefehl/Verfolgen, Angriff auf Gebäude.
 
 ## Accounts (PostgreSQL)
 

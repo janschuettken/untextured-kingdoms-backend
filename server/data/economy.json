@@ -1540,6 +1540,50 @@
       "ranged_immune": true
     },
     {
+      "kind": "worker",
+      "cost": [],
+      "taler": 0,
+      "seconds": 0,
+      "speed": 1,
+      "hp": 30,
+      "attack": 0,
+      "range": 0,
+      "upkeep": 0
+    },
+    {
+      "kind": "carrier",
+      "cost": [],
+      "taler": 0,
+      "seconds": 0,
+      "speed": 1,
+      "hp": 30,
+      "attack": 0,
+      "range": 0,
+      "upkeep": 0
+    },
+    {
+      "kind": "cart",
+      "cost": [],
+      "taler": 0,
+      "seconds": 0,
+      "speed": 1,
+      "hp": 60,
+      "attack": 0,
+      "range": 0,
+      "upkeep": 0
+    },
+    {
+      "kind": "trade_cart",
+      "cost": [],
+      "taler": 0,
+      "seconds": 0,
+      "speed": 1,
+      "hp": 60,
+      "attack": 0,
+      "range": 0,
+      "upkeep": 0
+    },
+    {
       "kind": "spearman",
       "cost": [{"good": "spear", "amount": 1}],
       "taler": 10,
@@ -1621,6 +1665,7 @@
     "unpaid_speed_percent": 60,
     "queue_max": 10,
     "attack_seconds": 1.5,
-    "melee_range": 2
+    "melee_range": 2,
+    "civilian_respawn_seconds": 30
   }
 }

@@ -264,12 +264,23 @@ impl World {
 
     /// Arbeiter für einen neuen Betrieb (mindestens einer).
     pub(super) fn spawn_workers(&mut self, bi: usize) {
-        let b = self.buildings[bi].clone();
-        let Some(def) = self.economy.building(b.kind) else { return };
-        // Abbau- und Herstellungsbetriebe; Mauern, Lager usw. haben keine Arbeiter.
+        let n = self.worker_slots(&self.buildings[bi]);
+        self.spawn_worker_units(bi, n);
+    }
+
+    /// So viele Arbeiter gehören zu diesem Gebäude (Abbau- und Herstellungsbetriebe;
+    /// Mauern, Lager usw. haben keine).
+    pub(super) fn worker_slots(&self, b: &protocol::BuildingState) -> u32 {
+        let Some(def) = self.economy.building(b.kind) else { return 0 };
         if def.gathers.is_empty() && def.levels.iter().all(|l| l.recipes.is_empty()) {
-            return;
+            return 0;
         }
+        def.workers.max(1)
+    }
+
+    /// `count` neue Arbeiter für das Gebäude `bi`.
+    pub(super) fn spawn_worker_units(&mut self, bi: usize, count: u32) {
+        let b = self.buildings[bi].clone();
         let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
         let Some(work) = self.door(&b, center) else { return };
         // Neue Arbeiter kommen aus dem nächsten eigenen Wohnhaus (ohne Wohnhaus
@@ -285,7 +296,7 @@ impl World {
                 })
                 .and_then(|h| self.door(h, center))
         });
-        for _ in 0..def.workers.max(1) {
+        for _ in 0..count {
             let id = self.next_unit_id;
             self.next_unit_id += 1;
             let mut u = super::Unit::new(id, b.owner, UnitKind::Worker, start.unwrap_or(work));
@@ -374,6 +385,7 @@ mod tests {
     fn ohne_traeger_traegt_der_arbeiter_selbst() {
         let mut w = world();
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.economy.def.army.civilian_respawn_seconds = 0.0; // entfernte Träger nicht ersetzen
         w.units.retain(|u| !u.is_transport());
         let b = w.place_building(1, BuildingKind::Woodcutter, 18, 2).unwrap();
         let before = w.stocks[&1].amount(Good::Wood);
