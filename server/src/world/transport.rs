@@ -762,11 +762,14 @@ mod tests {
 
     #[test]
     fn karren_fuellen_eingangslager_auf() {
-        // Der Arbeiter trägt selbst (Standard), trotzdem bringt der Karren Holz in großen Ladungen.
+        // Der Arbeiter trägt selbst (Standard), mit „Karren liefern“ bringt der Karren trotzdem Holz in großen Ladungen.
         let mut w = flat(40, 20);
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
         let mill = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap().id;
-        w.buildings.iter_mut().find(|b| b.id == mill).unwrap().settings.paused = false;
+        assert!(!w.buildings.iter().find(|b| b.id == mill).unwrap().settings.cart_deliveries, "Standard: aus");
+        let s = &mut w.buildings.iter_mut().find(|b| b.id == mill).unwrap().settings;
+        s.paused = false;
+        s.cart_deliveries = true;
         shed(&mut w, 10, 12, 2);
         w.units.retain(|u| u.kind != UnitKind::Carrier);
         let cap = w.inventories[&mill].capacity_of(Good::Wood);
