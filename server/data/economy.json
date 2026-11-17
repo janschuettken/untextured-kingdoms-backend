@@ -1419,8 +1419,8 @@
       "id": "grind_flour",
       "building": "mill",
       "inputs": [{"good": "grain", "amount": 1}],
-      "outputs": [{"good": "flour", "amount": 2}],
-      "seconds": 8,
+      "outputs": [{"good": "flour", "amount": 1}],
+      "seconds": 10,
       "unattended_percent": 0
     },
     {
@@ -1548,7 +1548,8 @@
       "hp": 30,
       "attack": 0,
       "range": 0,
-      "upkeep": 0
+      "upkeep": 0,
+      "ranged_immune": false
     },
     {
       "kind": "carrier",
@@ -1559,7 +1560,8 @@
       "hp": 30,
       "attack": 0,
       "range": 0,
-      "upkeep": 0
+      "upkeep": 0,
+      "ranged_immune": false
     },
     {
       "kind": "cart",
@@ -1570,7 +1572,8 @@
       "hp": 60,
       "attack": 0,
       "range": 0,
-      "upkeep": 0
+      "upkeep": 0,
+      "ranged_immune": false
     },
     {
       "kind": "trade_cart",
@@ -1581,7 +1584,8 @@
       "hp": 60,
       "attack": 0,
       "range": 0,
-      "upkeep": 0
+      "upkeep": 0,
+      "ranged_immune": false
     },
     {
       "kind": "spearman",
