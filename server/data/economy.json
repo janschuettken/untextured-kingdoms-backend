@@ -1308,7 +1308,7 @@
       "building": "woodcutter",
       "inputs": [],
       "outputs": [{"good": "wood", "amount": 1}],
-      "seconds": 6,
+      "seconds": 3,
       "unattended_percent": 0
     },
     {
