@@ -1533,11 +1533,11 @@
       "taler": 0,
       "seconds": 0,
       "speed": 1.5,
-      "hp": 300,
-      "attack": 14,
+      "hp": 500,
+      "attack": 20,
       "range": 1.2,
       "upkeep": 0,
-      "ranged_immune": true
+      "ranged_immune": false
     },
     {
       "kind": "worker",
