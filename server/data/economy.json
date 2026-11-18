@@ -1364,7 +1364,7 @@
       "building": "bowyer",
       "inputs": [{"good": "wood", "amount": 2}],
       "outputs": [{"good": "longbow", "amount": 1}],
-      "seconds": 10,
+      "seconds": 20,
       "unattended_percent": 0
     },
     {
@@ -1372,7 +1372,7 @@
       "building": "bowyer",
       "inputs": [{"good": "wood", "amount": 1}, {"good": "iron", "amount": 1}],
       "outputs": [{"good": "crossbow", "amount": 1}],
-      "seconds": 15,
+      "seconds": 30,
       "unattended_percent": 0
     },
     {
