@@ -270,6 +270,8 @@ fn step(state: &Match, tick: u64) {
             if world.is_eliminated(computer.player) {
                 continue;
             }
+            // Der Computer plant seine Wirtschaft mit selbst tragenden Arbeitern.
+            world.self_carry.insert(computer.player);
             for cmd in computer.think(&world, dt) {
                 if let Err(text) = apply_command(&mut world, &state.ticks, computer.player, cmd) {
                     computer.rejected(&text);
@@ -655,6 +657,7 @@ async fn handle_msg(
         | ClientMsg::Dismount { .. }
         | ClientMsg::RepairBuilding { .. }
         | ClientMsg::Trade { .. }
+        | ClientMsg::SetAutoTrade { .. }
         | ClientMsg::SendGoods { .. }) => {
             let mut world = state.world.lock().unwrap();
             if let Err(text) = apply_command(&mut world, &state.ticks, player_id, msg) {
@@ -805,6 +808,7 @@ pub fn apply_command(
             send(ServerMsg::BuildingChanged { building });
         }
         ClientMsg::Trade { good, amount, sell } => world.trade(player_id, good, amount, sell)?,
+        ClientMsg::SetAutoTrade { good, buy_below, sell_above } => world.set_auto_trade(player_id, good, buy_below, sell_above)?,
         ClientMsg::SendGoods { to, goods, taler } => {
             world.send_goods(player_id, to, &goods, taler)?;
             for event in world.take_events() {

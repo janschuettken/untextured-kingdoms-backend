@@ -17,11 +17,15 @@ needed: number,
  */
 working: number, 
 /**
- * Bei der letzten Mahlzeit gab es nicht genug Essen.
+ * Mindestens ein Bewohner hat bei seiner letzten Mahlzeit nichts bekommen.
  */
 hungry: boolean, 
 /**
- * So viele wurden bei der letzten Mahlzeit satt (von `working`).
+ * So viele Bewohner hungern gerade (von `working`; nur sie sind langsamer).
+ */
+hungry_count: number, 
+/**
+ * So viele sind satt (von `working`).
  */
 fed: number, 
 /**

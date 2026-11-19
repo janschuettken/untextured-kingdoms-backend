@@ -51,4 +51,8 @@ progress_seq: number,
 /**
  * Tor auf einem Weg gebaut: so viel % schneller ist der Durchgang (0 = kein Weg).
  */
-road_under: number, };
+road_under: number, 
+/**
+ * Nur Lager: so viel passt insgesamt hinein (belegt = Summe von `inventory`).
+ */
+capacity: number, };

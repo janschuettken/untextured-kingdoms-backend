@@ -102,6 +102,8 @@ pub enum ClientMsg {
     PrioritizeTraining { building_id: u32, index: u32, count: u32 },
     /// Am Markt handeln: `sell` = verkaufen, sonst kaufen. Bezahlt wird in Talern.
     Trade { good: Good, amount: u32, sell: bool },
+    /// Automatisch handeln: unter `buy_below` kaufen, über `sell_above` verkaufen (0 = aus).
+    SetAutoTrade { good: Good, buy_below: u32, sell_above: u32 },
     /// Als Admin anmelden (Token aus der Server-Umgebung `ADMIN_TOKEN`).
     AdminLogin { token: String },
     /// Nur Admin: sich selbst Waren ins Lager legen.
@@ -900,6 +902,21 @@ pub struct StockState {
     pub taler: u32,
     #[serde(default)]
     pub army: ArmyState,
+    /// Automatischer Handel am Markt je Ware.
+    #[serde(default)]
+    pub auto_trade: Vec<AutoTrade>,
+}
+
+/// Automatischer Handel für eine Ware: kaufen, solange weniger als `buy_below`
+/// im Vorrat liegt, verkaufen, was über `sell_above` liegt. 0 = aus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AutoTrade {
+    pub good: Good,
+    #[serde(default)]
+    pub buy_below: u32,
+    #[serde(default)]
+    pub sell_above: u32,
 }
 
 /// Lagerplatz einer Lagerart beim Spieler (alle Lager dieser Art zusammen).
@@ -1414,9 +1431,12 @@ pub struct PeopleState {
     pub needed: u32,
     /// So viele davon haben eine Wohnung und arbeiten.
     pub working: u32,
-    /// Bei der letzten Mahlzeit gab es nicht genug Essen.
+    /// Mindestens ein Bewohner hat bei seiner letzten Mahlzeit nichts bekommen.
     pub hungry: bool,
-    /// So viele wurden bei der letzten Mahlzeit satt (von `working`).
+    /// So viele Bewohner hungern gerade (von `working`; nur sie sind langsamer).
+    #[serde(default)]
+    pub hungry_count: u32,
+    /// So viele sind satt (von `working`).
     #[serde(default)]
     pub fed: u32,
     /// Sekunden (Spielzeit) bis zur nächsten Mahlzeit, Stand beim Senden.
@@ -1497,6 +1517,8 @@ pub enum BuildingStatus {
     NoResource,
     /// Lager des Betriebs voll, das Ergebnis passt nicht hinein (Träger fehlen?).
     StorageFull,
+    /// Lager des Betriebs voll, und in keinem eigenen Lager ist Platz für das Ergebnis.
+    NoStorageRoom,
     /// Keine Wohnung frei für die Arbeiter: mehr Häuser bauen.
     NoWorkers,
     /// Der Arbeiter trägt gerade selbst Waren (kein Wagenschuppen mit Trägern).
@@ -1556,6 +1578,9 @@ pub struct BuildingState {
     /// Tor auf einem Weg gebaut: so viel % schneller ist der Durchgang (0 = kein Weg).
     #[serde(default)]
     pub road_under: u32,
+    /// Nur Lager: so viel passt insgesamt hinein (belegt = Summe von `inventory`).
+    #[serde(default)]
+    pub capacity: u32,
 }
 
 fn default_true() -> bool {

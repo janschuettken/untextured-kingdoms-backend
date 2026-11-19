@@ -17,13 +17,13 @@ impl World {
     pub(super) fn step_progress(&mut self, dt: f32) {
         // Abbaubetriebe: der am weitesten fortgeschrittene Arbeiter am Feld.
         let mut gathering: HashMap<u32, (f32, f32)> = HashMap::new();
-        for u in &self.units {
+        for (k, u) in self.units.iter().enumerate() {
             let (UnitKind::Worker, Some(home), Some(Gather::Working { left, .. })) = (u.kind, u.home, u.gather) else { continue };
             let Some(b) = self.buildings.iter().find(|b| b.id == home) else { continue };
             let Some(recipe) = b.settings.recipe.as_ref().and_then(|r| self.economy.recipe(r)) else { continue };
             let seconds = recipe.seconds.max(0.01);
             let p = (1.0 - left / seconds).clamp(0.0, 1.0);
-            let rate = self.hunger_factor(b.owner) / seconds;
+            let rate = self.unit_hunger_factor(k) / seconds;
             let e = gathering.entry(home).or_insert((0.0, 0.0));
             if p >= e.0 {
                 *e = (p, rate);
@@ -46,7 +46,7 @@ impl World {
                     (Some(r), Some(e)) => {
                         let seconds = r.seconds.max(0.01);
                         let running = b.status == BuildingStatus::Working;
-                        let rate = if running { self.speed(i) * self.hunger_factor(b.owner) / seconds } else { 0.0 };
+                        let rate = if running { self.speed(i) * self.building_hunger_factor(id) / seconds } else { 0.0 };
                         ((e / seconds).min(1.0), rate)
                     }
                     _ => (0.0, 0.0),

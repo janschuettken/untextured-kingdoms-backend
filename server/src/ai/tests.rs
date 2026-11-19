@@ -54,6 +54,7 @@ fn play_seats(
     let mut rejected = 0;
     for step in 0..(minutes as f32 * 60.0 / dt) as u32 {
         for ai in &mut ais {
+            world.self_carry.insert(ai.player);
             for cmd in ai.think(&world, dt) {
                 if let Err(e) = apply_command(&mut world, &ticks, ai.player, cmd) {
                     println!("Spieler {}: abgelehnt {}", ai.player, e.key);
