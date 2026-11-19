@@ -376,9 +376,9 @@ impl World {
         }
     }
 
-    /// Darf hier gerade gebaut werden (kein Feind im Umkreis, siehe `check_no_enemy`)?
-    pub fn enemy_near(&self, player: u32, at: (f32, f32)) -> bool {
-        self.check_no_enemy(player, at).is_err()
+    /// Darf dieses Gebäude hier gerade gebaut werden (kein Feind im Umkreis, siehe `check_no_enemy`)?
+    pub fn enemy_near(&self, player: u32, kind: protocol::BuildingKind, at: (f32, f32)) -> bool {
+        self.check_no_enemy(player, kind, at).is_err()
     }
 
     /// Nächste feindliche Einheit, die Einheit `k` von hier treffen kann. Kämpfer (Soldaten,
@@ -430,10 +430,10 @@ impl World {
         })
     }
 
-    /// Steht ein feindlicher Soldat oder König im Umkreis `army.enemy_block_radius`?
-    /// Dann darf hier nicht gebaut, ausgebaut oder repariert werden.
-    pub fn check_no_enemy(&self, player: u32, at: (f32, f32)) -> Result<(), protocol::Text> {
-        let radius = self.economy.def.army.enemy_block_radius;
+    /// Steht ein feindlicher Soldat oder König näher als `enemy_radius` des Gebäudes?
+    /// Dann darf es hier nicht gebaut, ausgebaut oder repariert werden.
+    pub fn check_no_enemy(&self, player: u32, kind: protocol::BuildingKind, at: (f32, f32)) -> Result<(), protocol::Text> {
+        let radius = self.economy.building(kind).map_or(0.0, |d| d.enemy_radius);
         if radius <= 0.0 {
             return Ok(());
         }
@@ -462,7 +462,7 @@ impl World {
         }
         let cost = self.repair_cost(b);
         let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
-        self.check_no_enemy(player, center)?;
+        self.check_no_enemy(player, b.kind, center)?;
         self.pay(player, &cost)?;
         let b = self.buildings.iter_mut().find(|b| b.id == id).expect("eben gefunden");
         let was_ruin = b.hp == 0;

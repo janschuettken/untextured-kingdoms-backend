@@ -279,20 +279,20 @@ impl Computer {
     }
 
     fn no_enemy_near(&self, world: &World, cmd: &ClientMsg) -> bool {
-        let at = match cmd {
+        let (kind, at) = match cmd {
             ClientMsg::PlaceBuilding { kind, x, y, .. } => {
                 let (w, h) = world.economy.building(*kind).map_or((1, 1), |d| (d.w, d.h));
-                (*x as f32 + w as f32 / 2.0, *y as f32 + h as f32 / 2.0)
+                (*kind, (*x as f32 + w as f32 / 2.0, *y as f32 + h as f32 / 2.0))
             }
             ClientMsg::UpgradeBuilding { building_id } | ClientMsg::RepairBuilding { building_id } => {
                 match world.buildings.iter().find(|b| b.id == *building_id) {
-                    Some(b) => (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0),
+                    Some(b) => (b.kind, (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0)),
                     None => return true,
                 }
             }
             _ => return true,
         };
-        world.check_no_enemy(self.player, at).is_ok()
+        world.check_no_enemy(self.player, kind, at).is_ok()
     }
 
     /// Ein Befehl wurde abgelehnt (sollte selten sein, er prüft vorher).
@@ -512,7 +512,7 @@ impl Computer {
             let Some(next) = def.levels.get(b.level as usize) else { continue };
             // Mit Feinden in der Nähe darf nicht ausgebaut werden.
             let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
-            if next.cost.iter().all(|c| have(stock, c.good) >= c.amount) && world.check_no_enemy(self.player, center).is_ok() {
+            if next.cost.iter().all(|c| have(stock, c.good) >= c.amount) && world.check_no_enemy(self.player, b.kind, center).is_ok() {
                 cmds.push(ClientMsg::UpgradeBuilding { building_id: b.id });
             }
             return;
@@ -673,7 +673,7 @@ impl Computer {
                 if swapped >= self.profile.walls_per_think / 2 || !budget.can_pay(world, kind) {
                     break;
                 }
-                if world.enemy_near(p, (b.x as f32 + 0.5, b.y as f32 + 0.5)) {
+                if world.enemy_near(p, kind, (b.x as f32 + 0.5, b.y as f32 + 0.5)) {
                     continue;
                 }
                 budget.pay(world, kind);
