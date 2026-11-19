@@ -85,7 +85,7 @@ pub struct Unit {
 }
 
 impl Unit {
-    fn new(id: u32, owner: u32, kind: UnitKind, pos: (f32, f32)) -> Unit {
+    pub(crate) fn new(id: u32, owner: u32, kind: UnitKind, pos: (f32, f32)) -> Unit {
         Unit {
             id,
             owner,
@@ -921,6 +921,9 @@ impl World {
             for n in 0..s.count {
                 self.spawn_transport(&b, s.kind, n);
             }
+        }
+        if self.economy.building(b.kind).is_some_and(|d| d.hub) {
+            self.update_capacity(player);
         }
         Ok(b)
     }

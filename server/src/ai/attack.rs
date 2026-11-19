@@ -101,3 +101,58 @@ pub fn choose_target(world: &World, me: u32, from: (f32, f32)) -> Option<(u32, f
     }
     None
 }
+
+/// Hilfe für einen angegriffenen Verbündeten. Nicht gespeichert, wie die Welle.
+#[derive(Debug, Clone)]
+pub struct Relief {
+    pub ally: u32,
+    pub units: Vec<u32>,
+    pub start_power: f32,
+    /// Spätestens dann geht sie wieder heim.
+    pub until: f32,
+}
+
+/// Mittelpunkt des Bergfrieds eines Spielers.
+pub fn keep_center(world: &World, player: u32) -> Option<(f32, f32)> {
+    world
+        .buildings
+        .iter()
+        .find(|b| b.owner == player && b.kind == BuildingKind::Keep)
+        .map(|b| (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0))
+}
+
+/// Feindliche Soldaten (Feinde von `me`, die `defender` angreifen dürfen) nahe am Bergfried
+/// von `defender`, der nächste zuerst.
+pub fn threats(world: &World, defender: u32, me: u32, radius: f32) -> Vec<&crate::world::Unit> {
+    let Some(c) = keep_center(world, defender) else { return Vec::new() };
+    let dist = |u: &crate::world::Unit| (u.pos.0 - c.0).hypot(u.pos.1 - c.1);
+    let mut list: Vec<&crate::world::Unit> = world
+        .units
+        .iter()
+        .filter(|u| u.kind.is_soldier() && world.can_attack(me, u.owner) && world.can_attack(defender, u.owner) && dist(u) < radius)
+        .collect();
+    list.sort_by(|a, b| dist(a).total_cmp(&dist(b)));
+    list
+}
+
+/// Wie stark eine Welle mindestens sein muss: `superiority` mal der Gegner, mit Mut
+/// (`daring`, 0 bis 1) weniger, und umso weniger, je länger er schon wartet (in Pausen
+/// zwischen zwei Wellen gemessen). Mut 0: nie schwächer; Mut 1: sofort, egal wie stark.
+pub fn needed_ratio(superiority: f32, daring: f32, waited_cooldowns: f32) -> f32 {
+    superiority * (1.0 - daring * (1.0 + waited_cooldowns.max(0.0))).max(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needed_ratio;
+
+    #[test]
+    fn mut_senkt_die_huerde_mit_der_zeit() {
+        assert_eq!(needed_ratio(1.3, 0.0, 100.0), 1.3, "ohne Mut nie schwächer");
+        assert_eq!(needed_ratio(1.3, 1.0, 0.0), 0.0, "ständig");
+        let a = needed_ratio(1.3, 0.3, 0.0);
+        let b = needed_ratio(1.3, 0.3, 1.0);
+        assert!(a < 1.3 && b < a);
+        assert_eq!(needed_ratio(1.3, 0.3, 3.0), 0.0, "nach langem Warten greift er an");
+    }
+}

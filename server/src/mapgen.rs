@@ -23,6 +23,11 @@ pub struct Params {
     pub forest: f32,
     pub stone: f32,
     pub iron: f32,
+    /// Größe der einzelnen Wald-, Stein- und Eisenflecken als Faktor auf den
+    /// Radius (1,0 = normal, 0,5 bis 3,0). Die Menge oben bestimmt die Anzahl.
+    pub forest_size: f32,
+    pub stone_size: f32,
+    pub iron_size: f32,
     /// 0 = flach, 1 = normal, 2 = sehr hügelig.
     pub hills: f32,
     /// Anzahl Flüsse.
@@ -40,6 +45,9 @@ impl Params {
             forest: 1.0,
             stone: 1.0,
             iron: 1.0,
+            forest_size: 1.0,
+            stone_size: 1.0,
+            iron_size: 1.0,
             hills: 1.0,
             rivers: 1,
         }
@@ -58,6 +66,11 @@ fn times(rng: &mut Rng, base: f32, f: f32) -> usize {
 fn grow(r: f32, f: f32) -> f32 {
     r * (1.0 + 0.35 * (f - 1.0).max(0.0))
 }
+
+/// Kleinster Radius eines Stein- oder Eisenflecks: so bleibt er mindestens fünf Felder breit.
+const MIN_DEPOSIT_RADIUS: f32 = 2.0;
+/// Größenregler: von halber bis dreifacher Fleckgröße.
+pub const SIZE_RANGE: (f32, f32) = (0.5, 3.0);
 
 /// SplitMix64: klein, schnell und für Karten zufällig genug.
 struct Rng(u64);
@@ -519,6 +532,17 @@ pub fn generate(p: &Params) -> String {
     };
     let (farmland, forest, stone, iron, hills) =
         (clamp(p.farmland), clamp(p.forest), clamp(p.stone), clamp(p.iron), clamp(p.hills));
+    let size = |v: f32| {
+        if v.is_finite() {
+            v.clamp(SIZE_RANGE.0, SIZE_RANGE.1)
+        } else {
+            1.0
+        }
+    };
+    let (forest_size, stone_size, iron_size) = (size(p.forest_size), size(p.stone_size), size(p.iron_size));
+    // Radius eines Flecks: Grundgröße, über 100 % Menge etwas größer, dazu der Größenregler.
+    let stone_r = |f: f32| (grow(3.0, f) * stone_size).max(MIN_DEPOSIT_RADIUS);
+    let iron_r = |f: f32| (grow(2.6, f) * iron_size).max(MIN_DEPOSIT_RADIUS);
 
     // Höhen: Terrassen zu je zwei Stufen. Wo die Kante scharf ist, entsteht
     // eine Wand, sonst eine Schräge.
@@ -586,6 +610,7 @@ pub fn generate(p: &Params) -> String {
     g.connect(&mut rng);
 
     // Wald: Gruppen aus Rauschen, nicht auf Startplätzen. 0,62 ist normal.
+    // Größere Flecken = gröberes Rauschen (gleicher Anteil, aber zusammenhängender).
     let forest_threshold = 0.74 - 0.12 * forest;
     for y in 0..h {
         for x in 0..w {
@@ -593,7 +618,7 @@ pub fn generate(p: &Params) -> String {
             if forest > 0.0
                 && g.level[i] != WATER
                 && !g.reserved[i]
-                && forest_noise.fbm(x as f32, y as f32, 40.0, 3) > forest_threshold
+                && forest_noise.fbm(x as f32, y as f32, 40.0 * forest_size, 3) > forest_threshold
             {
                 g.res[i] = b'W';
             }
@@ -603,10 +628,10 @@ pub fn generate(p: &Params) -> String {
     for &(sx, sy) in &spawns {
         let c = (sx as f32, sy as f32);
         for _ in 0..times(&mut rng, 2.0, stone) {
-            g.blob_near(&mut rng, c, (22.0, 36.0), grow(3.0, stone), b'S', None);
+            g.blob_near(&mut rng, c, (22.0, 36.0), stone_r(stone), b'S', None);
         }
         for _ in 0..times(&mut rng, 1.0, iron) {
-            g.blob_near(&mut rng, c, (30.0, 44.0), grow(2.6, iron), b'E', None);
+            g.blob_near(&mut rng, c, (30.0, 44.0), iron_r(iron), b'E', None);
         }
         let fields = times(&mut rng, 2.0, farmland);
         for k in 0..fields {
@@ -618,7 +643,7 @@ pub fn generate(p: &Params) -> String {
             }
         }
         for _ in 0..times(&mut rng, 3.0, forest) {
-            g.blob_near(&mut rng, c, (20.0, 34.0), grow(4.0, forest), b'W', None);
+            g.blob_near(&mut rng, c, (20.0, 34.0), grow(4.0, forest) * forest_size, b'W', None);
         }
     }
     // Und verstreut über die Karte, je nach Fläche.
@@ -628,8 +653,8 @@ pub fn generate(p: &Params) -> String {
         for _ in 0..times(rng, extra, f) {
             let (x, y) = (rng.range(0.0, w as f32) as i32, rng.range(0.0, h as f32) as i32);
             match kind {
-                b'S' => _ = g.blob(x, y, grow(3.0, f), b'S', None),
-                b'E' => _ = g.blob(x, y, grow(2.6, f), b'E', None),
+                b'S' => _ = g.blob(x, y, stone_r(f), b'S', None),
+                b'E' => _ = g.blob(x, y, iron_r(f), b'E', None),
                 b'F' => {
                     let r = grow(5.5, f);
                     let _ = g.blob(x, y, r, b'A', Some((r * 0.55, b'F')));
@@ -651,11 +676,14 @@ pub fn generate(p: &Params) -> String {
     let _ = writeln!(out, "# Zufallskarte {w} x {h} für {} Spieler, Seed {}.", p.players, p.seed);
     let _ = writeln!(
         out,
-        "# Acker {:.0} %, Wald {:.0} %, Stein {:.0} %, Eisen {:.0} %, Hügel {:.0} %, Flüsse {}.",
+        "# Acker {:.0} %, Wald {:.0} % (Größe {:.0} %), Stein {:.0} % (Größe {:.0} %), Eisen {:.0} % (Größe {:.0} %), Hügel {:.0} %, Flüsse {}.",
         farmland * 100.0,
         forest * 100.0,
+        forest_size * 100.0,
         stone * 100.0,
+        stone_size * 100.0,
         iron * 100.0,
+        iron_size * 100.0,
         hills * 100.0,
         p.rivers.min(MAX_RIVERS)
     );
@@ -727,8 +755,19 @@ mod tests {
 
     #[test]
     fn regler_extreme() {
-        for (f, hills, rivers) in [(0.0, 0.0, 0), (2.0, 2.0, 4), (0.5, 1.5, 8)] {
-            let p = Params { farmland: f, forest: f, stone: f, iron: f, hills, rivers, ..Params::new(256, 256, 4, 11) };
+        for (f, hills, rivers, sz) in [(0.0, 0.0, 0, 0.5), (2.0, 2.0, 4, 3.0), (0.5, 1.5, 8, 1.0), (1.0, 1.0, 1, 3.0)] {
+            let p = Params {
+                farmland: f,
+                forest: f,
+                stone: f,
+                iron: f,
+                forest_size: sz,
+                stone_size: sz,
+                iron_size: sz,
+                hills,
+                rivers,
+                ..Params::new(256, 256, 4, 11)
+            };
             let text = generate(&p);
             let result = GameMap::load(&text);
             assert!(result.errors.is_empty(), "{f}/{hills}/{rivers}: {:?}", result.errors.first());
@@ -738,6 +777,49 @@ mod tests {
                 let path = map.nav.find_path((s0.0 as i32, s0.1 as i32), (s.0 as i32, s.1 as i32));
                 assert_eq!(path.last(), Some(&(s.0 as i32, s.1 as i32)), "{f}/{hills}/{rivers}: {s:?}");
             }
+        }
+    }
+
+    /// Durchschnittliche Felder je zusammenhängendem Fleck einer Ressource.
+    fn mean_patch(text: &str, c: u8) -> f32 {
+        let rows: Vec<&[u8]> = text.split("[resources]\n").nth(1).unwrap().lines().map(str::as_bytes).collect();
+        let (h, w) = (rows.len(), rows[0].len());
+        let mut seen = vec![false; w * h];
+        let (mut patches, mut cells) = (0, 0);
+        for y in 0..h {
+            for x in 0..w {
+                if rows[y][x] != c || seen[y * w + x] {
+                    continue;
+                }
+                patches += 1;
+                let mut stack = vec![(x, y)];
+                seen[y * w + x] = true;
+                while let Some((x, y)) = stack.pop() {
+                    cells += 1;
+                    for (dx, dy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                        let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+                        if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
+                            continue;
+                        }
+                        let (nx, ny) = (nx as usize, ny as usize);
+                        if rows[ny][nx] == c && !seen[ny * w + nx] {
+                            seen[ny * w + nx] = true;
+                            stack.push((nx, ny));
+                        }
+                    }
+                }
+            }
+        }
+        cells as f32 / patches.max(1) as f32
+    }
+
+    #[test]
+    fn groessere_flecken() {
+        let small = generate(&Params { forest_size: 0.5, stone_size: 0.5, iron_size: 0.5, ..Params::new(256, 256, 2, 5) });
+        let big = generate(&Params { forest_size: 2.5, stone_size: 2.5, iron_size: 2.5, ..Params::new(256, 256, 2, 5) });
+        for c in [b'W', b'S', b'E'] {
+            let (a, b) = (mean_patch(&small, c), mean_patch(&big, c));
+            assert!(b > a * 1.5, "{}: klein {a}, groß {b}", c as char);
         }
     }
 

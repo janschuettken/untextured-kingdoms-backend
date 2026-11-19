@@ -12,6 +12,8 @@
       },
       "aggression": 100,
       "army": 100,
+      "daring": 30,
+      "helpfulness": 50,
       "castle": "level",
       "buildings": {},
       "units": {}
@@ -28,6 +30,8 @@
       },
       "aggression": 40,
       "army": 80,
+      "daring": 10,
+      "helpfulness": 80,
       "castle": "octagon",
       "buildings": {
         "house": 150,
@@ -50,6 +54,8 @@
       },
       "aggression": 170,
       "army": 140,
+      "daring": 70,
+      "helpfulness": 30,
       "castle": "square",
       "buildings": {
         "market": 0,
@@ -73,6 +79,8 @@
       },
       "aggression": 80,
       "army": 100,
+      "daring": 20,
+      "helpfulness": 50,
       "castle": "narrows",
       "buildings": {
         "bowyer": 200,

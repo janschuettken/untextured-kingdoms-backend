@@ -26,6 +26,18 @@ aggression: number,
  */
 army: number, 
 /**
+ * Angriff trotz Unterlegenheit, 0 bis 100: 0 = nur, wenn er sich stärker glaubt;
+ * 100 = ständig, sobald eine Welle bereit ist. Dazwischen greift er umso eher an, je
+ * länger er schon wartet.
+ */
+daring: number, 
+/**
+ * Hilfsbereitschaft gegenüber Verbündeten, 0 bis 100: 0 = hilft nie; sonst schickt er
+ * Truppen (höchstens diesen Anteil seiner freien Soldaten) und Waren, wenn ein
+ * Verbündeter angegriffen wird.
+ */
+helpfulness: number, 
+/**
  * Gebäude in Prozent: 100 = wie die Stufe, 0 = baut es nie, 50 = halb so viele,
  * 200 = doppelt so viele. Steht es nicht in der Bauliste der Stufe, baut er ab 200 eins
  * (300 zwei, ...). Fehlende Gebäude gelten als 100.
