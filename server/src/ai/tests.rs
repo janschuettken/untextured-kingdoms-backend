@@ -111,7 +111,9 @@ fn normaler_computer_baut_mehr() {
     let stock = world.stock_state(1);
     assert!(count(&world, BuildingKind::Woodcutter) >= 4);
     assert!(count(&world, BuildingKind::Barracks) >= 1);
-    assert!(stock.army.soldiers >= 6, "{:?}", stock.army);
+    // Seit neue Betriebe im Umkreis des Wagenschuppens nicht mehr selbst tragen,
+    // kommt der Computer in 40 Minuten auf etwas weniger Soldaten (vorher 6).
+    assert!(stock.army.soldiers >= 4, "{:?}", stock.army);
     assert!(count(&world, BuildingKind::Gate) >= 1, "{:?} {:?}", stock.pools, stock.goods);
 }
 

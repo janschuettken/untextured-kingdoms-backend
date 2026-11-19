@@ -76,6 +76,12 @@ pub struct Unit {
     /// Sekunden bis zur nächsten Wegsuche beim Verfolgen.
     #[serde(default)]
     chase_timer: f32,
+    /// Bewohner: Sekunden bis zur eigenen nächsten Mahlzeit (`None` = noch nicht verteilt).
+    #[serde(default)]
+    meal_in: Option<f32>,
+    /// Bewohner: bei der letzten Mahlzeit nichts bekommen, arbeitet und läuft langsamer.
+    #[serde(default)]
+    hungry: bool,
 }
 
 impl Unit {
@@ -100,6 +106,8 @@ impl Unit {
             attack_cooldown: 0.0,
             attack_order: None,
             chase_timer: 0.0,
+            meal_in: None,
+            hungry: false,
         }
     }
 
@@ -153,7 +161,14 @@ pub struct World {
     events: Vec<ServerMsg>,
     /// Bewohner je Spieler (Wohnplätze, Arbeiter, Hunger).
     people: HashMap<u32, PeopleState>,
-    meal_timer: HashMap<u32, f32>,
+    /// Sekunden bis zur nächsten Mahlzeit irgendeines Bewohners, je Spieler.
+    meal_soonest: HashMap<u32, f32>,
+    /// Automatischer Handel je Spieler (siehe `market.rs`).
+    auto_trade: HashMap<u32, Vec<protocol::AutoTrade>>,
+    /// Sekunden seit dem letzten automatischen Handel.
+    auto_trade_clock: f32,
+    /// Tempo-Faktor je Betrieb, dessen Arbeiter (teils) hungern (siehe `people.rs`).
+    worker_hunger: HashMap<u32, f32>,
     /// Betriebe ohne Arbeiter (keine Wohnung frei).
     unstaffed: HashSet<u32>,
     /// Träger und Karren ohne Wohnung: sie warten zu Hause.
@@ -247,7 +262,10 @@ impl World {
             progress_clock: HashMap::new(),
             events: Vec::new(),
             people: HashMap::new(),
-            meal_timer: HashMap::new(),
+            meal_soonest: HashMap::new(),
+            worker_hunger: HashMap::new(),
+            auto_trade: HashMap::new(),
+            auto_trade_clock: 0.0,
             unstaffed: HashSet::new(),
             idle_units: HashSet::new(),
             gather_status: HashMap::new(),
@@ -269,11 +287,10 @@ impl World {
     }
 
     pub fn stock_state(&self, player: u32) -> StockState {
-        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, pools: Vec::new(), people: Default::default(), taler: 0, army: Default::default() });
+        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, pools: Vec::new(), people: Default::default(), taler: 0, army: Default::default(), auto_trade: Vec::new() });
+        state.auto_trade = self.auto_trade.get(&player).cloned().unwrap_or_default();
         state.people = self.people.get(&player).cloned().unwrap_or_default();
-        let meal = self.economy.def.population.meal_seconds;
-        let timer = self.meal_timer.get(&player).copied().unwrap_or(0.0);
-        state.people.next_meal_in = (meal - timer).max(0.0).ceil() as u32;
+        state.people.next_meal_in = self.meal_soonest.get(&player).copied().unwrap_or(0.0).max(0.0).ceil() as u32;
         state.army = self.army_state(player);
         state
     }
@@ -453,7 +470,8 @@ impl World {
         }
         self.stocks.remove(&player);
         self.people.remove(&player);
-        self.meal_timer.remove(&player);
+        self.meal_soonest.remove(&player);
+        self.auto_trade.remove(&player);
         ids
     }
 
@@ -612,12 +630,12 @@ impl World {
             stores: None,
             keep_in_stock: Vec::new(),
             gate: GateMode::Auto,
-            worker_carries: self.worker_carries_default,
+            worker_carries: self.worker_carries_default && !self.cart_shed_covers(player, x, y, w, h),
             cart_deliveries: false,
             stop_at: Vec::new(),
         };
         let status = if settings.recipe.is_some() { BuildingStatus::Working } else { BuildingStatus::Idle };
-        let b = BuildingState {
+        let mut b = BuildingState {
             id: self.next_building_id,
             owner: player,
             kind,
@@ -639,6 +657,7 @@ impl World {
             progress_rate: 0.0,
             progress_seq: 0,
             road_under,
+            capacity: 0,
         };
         self.next_building_id += 1;
         if let Some((ex, ey)) = entrance {
@@ -646,6 +665,11 @@ impl World {
         }
         self.set_footprint(&b, true);
         self.buildings.push(b.clone());
+        if def.hub {
+            let cap = self.hub_capacity(b.id);
+            b.capacity = cap;
+            self.buildings.last_mut().expect("eben angelegt").capacity = cap;
+        }
         if !def.hub {
             let (cap, limits) = self.inventory_limits(b.kind);
             let mut inv = Stock::new(cap);
@@ -1221,21 +1245,22 @@ impl World {
         self.step_gates();
         self.step_army(dt);
         self.step_trade(dt);
+        self.step_auto_trade(dt);
         self.step_combat(dt);
         self.balance_hubs();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
         let king = self.economy.def.movement.king_speed;
         let worker = self.economy.def.movement.worker_speed;
-        let hungry: HashMap<u32, f32> = self.stocks.keys().map(|&p| (p, self.hunger_factor(p))).collect();
+        let hungry_speed = self.hungry_speed();
         let soldier: Vec<f32> = self.units.iter().map(|u| if u.kind.is_soldier() { self.soldier_speed(u.owner, u.kind) } else { 0.0 }).collect();
         let nav = &self.map.nav;
         for (k, unit) in self.units.iter_mut().enumerate() {
             let speed = match unit.kind {
                 UnitKind::King => king,
-                UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
-                UnitKind::Cart | UnitKind::TradeCart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
-                UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
+                UnitKind::Carrier => carrier * if unit.hungry { hungry_speed } else { 1.0 },
+                UnitKind::Cart | UnitKind::TradeCart => cart * if unit.hungry { hungry_speed } else { 1.0 },
+                UnitKind::Worker => worker * if unit.hungry { hungry_speed } else { 1.0 },
                 UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
             };
             // Auf Wegen schneller (oben auf der Mauer zählt der Boden nicht).
@@ -1265,12 +1290,13 @@ impl World {
     /// Geänderte Gebäude (Status, Lager) an alle Clients melden.
     fn flush_buildings(&mut self) {
         for id in std::mem::take(&mut self.dirty_buildings) {
-            let goods = match self.inventories.get(&id) {
-                Some(s) => s.state().goods,
-                None => self.hub_state(id).unwrap_or_default(),
+            let (goods, capacity) = match self.inventories.get(&id) {
+                Some(s) => (s.state().goods, 0),
+                None => (self.hub_state(id).unwrap_or_default(), self.hub_capacity(id)),
             };
             let Some(b) = self.buildings.iter_mut().find(|b| b.id == id) else { continue };
             b.inventory = goods;
+            b.capacity = capacity;
             self.events.push(ServerMsg::BuildingChanged { building: b.clone() });
         }
     }

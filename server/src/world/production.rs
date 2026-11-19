@@ -88,7 +88,7 @@ impl World {
                 0.0
             }
         };
-        let elapsed = elapsed + dt * self.speed(i) * self.hunger_factor(self.buildings[i].owner);
+        let elapsed = elapsed + dt * self.speed(i) * self.building_hunger_factor(id);
         self.work.get_mut(&id).expect("eben angelegt").elapsed = Some(elapsed);
         if elapsed < recipe.seconds {
             return BuildingStatus::Working;
@@ -97,8 +97,9 @@ impl World {
         // Fertig: Ergebnis ins eigene Lager, wenn alles hineinpasst. Abholen
         // ist Sache der Träger.
         let inv = self.inventories.get_mut(&id).expect("Betrieb hat ein Lager");
-        if recipe.outputs.iter().any(|o| o.amount > inv.room(o.good)) {
-            return BuildingStatus::StorageFull;
+        let blocked: Vec<_> = recipe.outputs.iter().filter(|o| o.amount > inv.room(o.good)).map(|o| o.good).collect();
+        if !blocked.is_empty() {
+            return self.full_status(self.buildings[i].owner, blocked);
         }
         for o in &recipe.outputs {
             inv.add(o.good, o.amount);
@@ -259,6 +260,8 @@ impl World {
             .any(|g| !goods.contains(g)) {
             return Err(Text::new("error.unknown_good"));
         }
+        // Lieferungen nimmt jeder Betrieb an (der Schalter ist vorerst ausgeblendet).
+        let settings = BuildingSettings { accept_deliveries: true, ..settings };
         if b.settings.recipe != settings.recipe {
             // Rezept gewechselt: laufender Durchlauf verfällt (Eingänge sind verbraucht).
             self.work.remove(&id);

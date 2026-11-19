@@ -30,6 +30,8 @@ pub struct SaveGame {
     inventories: HashMap<u32, Stock>,
     work: HashMap<u32, Work>,
     people: HashMap<u32, PeopleState>,
+    /// Alt: gemeinsame Essenszeit je Spieler (heute isst jeder Bewohner für sich).
+    #[serde(default)]
     meal_timer: HashMap<u32, f32>,
     #[serde(default)]
     hub_goods: HashMap<u32, super::storage::HubGoods>,
@@ -43,6 +45,8 @@ pub struct SaveGame {
     teams: HashMap<u32, u32>,
     #[serde(default)]
     winners: Option<Vec<u32>>,
+    #[serde(default)]
+    auto_trade: HashMap<u32, Vec<protocol::AutoTrade>>,
 }
 
 impl World {
@@ -60,7 +64,7 @@ impl World {
             inventories: self.inventories.clone(),
             work: self.work.clone(),
             people: self.people.clone(),
-            meal_timer: self.meal_timer.clone(),
+            meal_timer: HashMap::new(),
             hub_goods: self.hub_goods.clone(),
             next_unit_id: self.next_unit_id,
             next_building_id: self.next_building_id,
@@ -68,6 +72,7 @@ impl World {
             eliminated: self.eliminated.clone(),
             teams: self.teams.clone(),
             winners: self.winners.clone(),
+            auto_trade: self.auto_trade.clone(),
         }
     }
 
@@ -96,7 +101,6 @@ impl World {
         w.inventories = save.inventories;
         w.work = save.work;
         w.people = save.people;
-        w.meal_timer = save.meal_timer;
         w.hub_goods = save.hub_goods;
         w.next_unit_id = save.next_unit_id;
         w.next_building_id = save.next_building_id;
@@ -104,6 +108,7 @@ impl World {
         w.eliminated = save.eliminated;
         w.teams = save.teams;
         w.winners = save.winners;
+        w.auto_trade = save.auto_trade;
         // Ältere Stände: Herstellungsbetriebe hatten noch keine eigenen Arbeiter.
         for bi in 0..w.buildings.len() {
             let id = w.buildings[bi].id;

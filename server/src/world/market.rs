@@ -9,7 +9,55 @@ use protocol::{BuildingKind, Good, GoodAmount, Text};
 
 use super::{Refusal, World};
 
+/// Alle so viele Sekunden (Spielzeit) wird automatisch gehandelt.
+const AUTO_TRADE_SECONDS: f32 = 5.0;
+
 impl World {
+    /// Automatischen Handel für eine Ware einstellen (0 = aus).
+    pub fn set_auto_trade(&mut self, player: u32, good: Good, buy_below: u32, sell_above: u32) -> Result<(), Refusal> {
+        if !self.economy.def.market.prices.iter().any(|p| p.good == good) {
+            return Err(Text::new("error.not_traded"));
+        }
+        if buy_below > 0 && sell_above > 0 && sell_above <= buy_below {
+            return Err(Text::new("error.auto_trade_range"));
+        }
+        let rules = self.auto_trade.entry(player).or_default();
+        rules.retain(|r| r.good != good);
+        if buy_below > 0 || sell_above > 0 {
+            rules.push(protocol::AutoTrade { good, buy_below, sell_above });
+            rules.sort_by_key(|r| r.good);
+        }
+        self.dirty_stocks.insert(player);
+        Ok(())
+    }
+
+    /// Automatisch kaufen und verkaufen, was eingestellt ist (braucht einen Markt mit Arbeiter).
+    pub(super) fn step_auto_trade(&mut self, dt: f32) {
+        self.auto_trade_clock += dt;
+        if self.auto_trade_clock < AUTO_TRADE_SECONDS {
+            return;
+        }
+        self.auto_trade_clock = 0.0;
+        let rules: Vec<(u32, protocol::AutoTrade)> = self.auto_trade.iter().flat_map(|(&p, r)| r.iter().map(move |r| (p, *r))).collect();
+        for (player, r) in rules {
+            if self.eliminated.contains(&player) {
+                continue;
+            }
+            let Some(stock) = self.stocks.get(&player) else { continue };
+            let have = stock.amount(r.good);
+            let Some(price) = self.economy.def.market.prices.iter().find(|p| p.good == r.good).copied() else { continue };
+            if r.sell_above > 0 && have > r.sell_above {
+                let _ = self.trade(player, r.good, have - r.sell_above, true);
+            } else if r.buy_below > 0 && have < r.buy_below {
+                let afford = if price.buy > 0 { stock.taler / price.buy } else { u32::MAX };
+                let amount = (r.buy_below - have).min(afford).min(stock.room(r.good));
+                if amount > 0 {
+                    let _ = self.trade(player, r.good, amount, false);
+                }
+            }
+        }
+    }
+
     pub fn trade(&mut self, player: u32, good: Good, amount: u32, sell: bool) -> Result<(), Refusal> {
         if amount == 0 {
             return Ok(());
@@ -76,5 +124,23 @@ mod tests {
         assert_eq!(w.stock_state(1).taler, taler + 10 * price.sell - 2 * price.buy);
         assert_eq!(w.trade(1, Good::Bread, 280, false).unwrap_err().key, "error.not_enough_taler");
         assert_eq!(w.trade(1, Good::Bread, 1000, true).unwrap_err().key, "error.not_enough");
+
+        // Automatisch: über 5 verkaufen, unter 3 kaufen.
+        assert_eq!(w.set_auto_trade(1, Good::Bread, 5, 5).unwrap_err().key, "error.auto_trade_range");
+        w.set_auto_trade(1, Good::Bread, 3, 5).unwrap();
+        assert_eq!(w.stock_state(1).auto_trade.len(), 1);
+        for _ in 0..120 {
+            w.step(0.05);
+        }
+        let bread = |w: &World| w.stock_state(1).goods.iter().find(|g| g.good == Good::Bread).map_or(0, |g| g.amount);
+        assert_eq!(bread(&w), 5, "Überschuss verkauft");
+        let all = bread(&w);
+        w.trade(1, Good::Bread, all, true).unwrap();
+        for _ in 0..120 {
+            w.step(0.05);
+        }
+        assert_eq!(bread(&w), 3, "bis zur Untergrenze gekauft");
+        w.set_auto_trade(1, Good::Bread, 0, 0).unwrap();
+        assert!(w.stock_state(1).auto_trade.is_empty());
     }
 }
