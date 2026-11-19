@@ -842,7 +842,7 @@ impl Computer {
             if done || power < r.start_power * RELIEF_RETREAT {
                 debug!("Computer {p}: Hilfe für Spieler {} kehrt heim", r.ally);
                 if let (Some(home), false) = (rally_point(world, p, layout), r.units.is_empty()) {
-                    cmds.push(ClientMsg::MoveUnits { unit_ids: r.units.clone(), x: home.0, y: home.1 });
+                    cmds.push(ClientMsg::MoveUnits { unit_ids: r.units.clone(), x: home.0, y: home.1, fast: None });
                 }
                 self.relief = None;
                 return;
@@ -855,7 +855,7 @@ impl Computer {
                 .map(|u| u.id)
                 .collect();
             if !idle.is_empty() {
-                cmds.push(ClientMsg::MoveUnits { unit_ids: idle, x: target.0, y: target.1 });
+                cmds.push(ClientMsg::MoveUnits { unit_ids: idle, x: target.0, y: target.1, fast: None });
             }
             return;
         }
@@ -906,7 +906,7 @@ impl Computer {
             units.push(u.id);
         }
         debug!("Computer {p}: hilft Spieler {ally} mit {} Soldaten ({power:.0} gegen {threat:.0})", units.len());
-        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: at.0, y: at.1 });
+        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: at.0, y: at.1, fast: None });
         self.relief = Some(Relief { ally, units, start_power: power, until: self.clock + RELIEF_SECONDS });
     }
 
