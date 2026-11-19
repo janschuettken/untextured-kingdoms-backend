@@ -532,6 +532,7 @@ impl World {
     fn place_start_building(&mut self, player: u32, kind: BuildingKind, (sx, sy): (u32, u32)) -> Option<BuildingState> {
         let def = self.economy.building(kind)?.clone();
         let mut placed = None;
+        let mut last_refusal = None;
         'search: for ring in 0..=12i64 {
             for dy in -ring..=ring {
                 for dx in -ring..=ring {
@@ -545,7 +546,11 @@ impl World {
                         if x < 0 || y < 0 {
                             continue;
                         }
-                        if let Ok(b) = self.place_building_at(player, kind, (x as u32, y as u32), rotation, 1, true) {
+                        let res = self.place_building_at(player, kind, (x as u32, y as u32), rotation, 1, true);
+                        if let Err(e) = &res {
+                            last_refusal = Some(e.clone());
+                        }
+                        if let Ok(b) = res {
                             // Mitspieler, die schon da sind, sollen ihn auch sehen.
                             self.events.push(ServerMsg::BuildingPlaced { building: b.clone() });
                             placed = Some(b);
@@ -556,7 +561,7 @@ impl World {
             }
         }
         if placed.is_none() {
-            tracing::warn!("Startgebäude {kind:?} für Spieler {player} passt nicht in die Nähe der Fahne ({sx}, {sy})");
+            tracing::warn!("Startgebäude {kind:?} für Spieler {player} passt nicht in die Nähe der Fahne ({sx}, {sy}): {last_refusal:?}");
         }
         placed
     }
@@ -676,7 +681,10 @@ impl World {
                 return Err(Text::new("error.limit_reached").arg("max", max));
             }
         }
-        self.check_build_radius(player, def.at(level as u32).build_radius, (x, y), (w, h))?;
+        // Das Startgebäude (der Bergfried) steht noch vor jedem Bergfried: kein Bauradius.
+        if !free {
+            self.check_build_radius(player, def.at(level as u32).build_radius, (x, y), (w, h))?;
+        }
         if !free {
             self.check_no_enemy(player, kind, (x as f32 + w as f32 / 2.0, y as f32 + h as f32 / 2.0))?;
         }
@@ -1951,6 +1959,25 @@ mod tests {
         assert!(w.buildings.iter().any(|b| b.owner == 2 && b.kind == BuildingKind::Keep));
         // Kein zweiter Bergfried.
         assert!(w.place_building(1, BuildingKind::Keep, 30, 2).is_err());
+    }
+
+    #[test]
+    fn bergfried_kommt_auch_mit_eigenem_bauradius() {
+        // Online-Balancing: der Bergfried selbst hat einen Bauradius. Den ersten setzt das Spiel trotzdem.
+        let mut v: serde_json::Value = serde_json::from_str(crate::economy::ECONOMY_JSON).unwrap();
+        for b in v["buildings"].as_array_mut().unwrap() {
+            if b["kind"] == "keep" {
+                for l in b["levels"].as_array_mut().unwrap() {
+                    l["build_radius"] = 30.into();
+                }
+            }
+        }
+        let eco = Economy::parse(&v.to_string()).unwrap().without_people();
+        let row = "0".repeat(40);
+        let text = format!("spawn 20 10\n{}", format!("{row}\n").repeat(20));
+        let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
+        w.spawn_player(1);
+        assert!(w.buildings.iter().any(|b| b.owner == 1 && b.kind == BuildingKind::Keep), "Bergfried gesetzt");
     }
 
     #[test]
