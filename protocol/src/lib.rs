@@ -873,6 +873,9 @@ pub struct BuildingLevel {
     /// So viele Bewohner passen auf dieser Stufe hinein (Wohnhäuser).
     #[serde(default)]
     pub housing: u32,
+    /// Lager: Gesamtplatz auf dieser Stufe (0 = wie beim Gebäude, `hub_capacity`).
+    #[serde(default)]
+    pub hub_capacity: u32,
     /// Einheiten, die mit dieser Stufe dazukommen (Wagenschuppen: Träger, dann Karren).
     #[serde(default)]
     pub spawns: Vec<UnitCount>,
