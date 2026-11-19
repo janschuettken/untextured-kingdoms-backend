@@ -22,6 +22,7 @@
 //!   (Zeiten in Unix-Sekunden, `game` = Spiel, in dem der Account gerade einen Platz hat)
 //!   Danach die Gäste ohne Account: `{ guest_id, username, guest: true, created, last_login, game }`
 //! - `POST /api/admin/guests/{id}/impersonate`  nur Admin: als dieser Gast spielen → `{ username, token }`
+//! - `GET  /api/admin/load`   nur Admin: Serverauslastung je laufendem Spiel (Dauer der Ticks gegen das Budget)
 //! - `POST /api/admin/users/{id}/impersonate`  nur Admin: als dieser Nutzer anmelden → `{ username, token }`
 //! - `POST /api/admin/users/{id}/admin`  nur Admin: `{ admin: bool }` Admin-Recht setzen (nicht bei sich selbst)
 //! - `POST /api/admin/users/{id}/maps`   nur Admin: `{ allowed: bool }` Karteneditor freischalten (`can_edit_maps`)
@@ -234,6 +235,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
     Router::new()
         .route("/api/admin", get(status).post(login))
         .route("/api/admin/users", get(list_users))
+        .route("/api/admin/load", get(server_load))
         .route("/api/admin/users/{id}/impersonate", post(impersonate))
         .route("/api/admin/guests/{id}/impersonate", post(impersonate_guest))
         .route("/api/admin/users/{id}/admin", post(set_admin))
@@ -252,6 +254,31 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/api/games/{id}/end", post(end_game))
         .layer(DefaultBodyLimit::max(1024 * 1024))
         .with_state(hub)
+}
+
+/// Serverauslastung: je laufendem Spiel, wie lange seine Ticks dauern (jedes Spiel hat
+/// einen eigenen Thread, also verteilen sich mehrere Spiele auf die Kerne).
+async fn server_load(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
+    if !hub.admin.allows(&headers).await {
+        return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
+    }
+    let games: Vec<Arc<Game>> = hub.games.lock().unwrap().values().cloned().collect();
+    let list: Vec<_> = games
+        .iter()
+        .filter_map(|g| {
+            let m = g.running.get()?;
+            Some(serde_json::json!({
+                "id": g.id,
+                "map": m.map_name,
+                "paused": m.paused(),
+                "players_online": m.online_players().len(),
+                "units": m.world.lock().unwrap().units.len(),
+                "load": m.load.lock().unwrap().summary(),
+            }))
+        })
+        .collect();
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    Json(serde_json::json!({ "cores": cores, "tick_rate": crate::game::TICK_RATE, "games": list })).into_response()
 }
 
 async fn status(State(hub): State<Arc<Hub>>) -> Response {
