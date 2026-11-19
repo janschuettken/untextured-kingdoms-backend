@@ -16,3 +16,5 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 argon2 = { version = "0.5", features = ["std"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 dotenvy = "0.15"
+lettre = { version = "0.11.24", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls-tls", "builder", "hostname"] }
+sha2 = "0.10"
