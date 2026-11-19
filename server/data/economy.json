@@ -996,7 +996,7 @@
       "w": 7,
       "h": 7,
       "height": 1,
-      "placement": {"resources": ["farmland", "fertile"], "min_share_percent": 50},
+      "placement": {"resources": ["farmland", "fertile"], "min_share_percent": 10},
       "no_entrance": false,
       "on_walls": false,
       "on_ramps": false,
@@ -1933,7 +1933,7 @@
       "range": 1.2,
       "upkeep": 0,
       "food": 0,
-      "ranged_immune": false,
+      "ranged_immune": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
