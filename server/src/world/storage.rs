@@ -133,7 +133,7 @@ impl World {
         let Some(b) = self.buildings.iter().find(|b| b.id == hub) else { return 0 };
         // Ausgebaut: höchste Stufe bis zur aktuellen, die einen eigenen Platz angibt.
         let level = self.economy.building(b.kind).and_then(|d| {
-            d.levels.iter().take(b.level.max(1) as usize).map(|l| l.hub_capacity).filter(|&n| n > 0).last()
+            d.levels.iter().take(b.level.max(1) as usize).map(|l| l.hub_capacity).rfind(|&n| n > 0)
         });
         if let Some(n) = level {
             return n;
