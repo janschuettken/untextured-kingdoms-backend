@@ -12,12 +12,14 @@ use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod army;
 mod diplomacy;
+mod ballistics;
 mod combat;
 mod errand;
 mod enclosure;
 pub use enclosure::castle_closed;
 pub use gate::{is_gate, passage_tiles};
 mod gate;
+mod heal;
 mod market;
 mod gather;
 mod save;
@@ -76,10 +78,28 @@ pub struct Unit {
     /// Sekunden bis zur nächsten Wegsuche beim Verfolgen.
     #[serde(default)]
     chase_timer: f32,
+    /// Gruppenmarsch: höchstens so schnell (Felder pro Sekunde), damit die Gruppe zusammenbleibt.
+    #[serde(default)]
+    speed_cap: Option<f32>,
+    /// Heiler: Sekunden bis zur nächsten Behandlung.
+    #[serde(default)]
+    heal_cooldown: f32,
+    /// Weitere Ziele nach dem aktuellen (Strg+Rechtsklick), das nächste zuerst.
+    #[serde(default)]
+    waypoints: Vec<Waypoint>,
+}
+
+/// Ein späteres Ziel eines Laufbefehls (siehe `Unit::waypoints`).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Waypoint {
+    to: (f32, f32),
+    wall: bool,
+    /// Gruppentempo für dieses Stück.
+    cap: Option<f32>,
 }
 
 impl Unit {
-    fn new(id: u32, owner: u32, kind: UnitKind, pos: (f32, f32)) -> Unit {
+    pub(crate) fn new(id: u32, owner: u32, kind: UnitKind, pos: (f32, f32)) -> Unit {
         Unit {
             id,
             owner,
@@ -100,6 +120,9 @@ impl Unit {
             attack_cooldown: 0.0,
             attack_order: None,
             chase_timer: 0.0,
+            speed_cap: None,
+            waypoints: Vec::new(),
+            heal_cooldown: 0.0,
         }
     }
 
@@ -164,12 +187,18 @@ pub struct World {
     pay_timer: HashMap<u32, f32>,
     /// Spieler, deren Sold am letzten Zahltag nicht gereicht hat.
     unpaid: HashSet<u32>,
+    /// Spieler, deren Soldaten am letzten Zahltag nicht satt wurden.
+    army_hungry: HashSet<u32>,
     /// Neue Betriebe: trägt der Arbeiter selbst? Im Spiel immer ja; Tests für Träger schalten es ab.
     pub(crate) worker_carries_default: bool,
+    /// Zufall für Treffer im Fernkampf (Deckung), siehe `combat.rs`.
+    combat_rng: u64,
     /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
     hub_goods: HashMap<u32, storage::HubGoods>,
     /// Wie Waren zwischen Verbündeten ankommen.
     trade_mode: protocol::TradeMode,
+    /// Fernkampf: Wurfbahn oder Sichtlinie (Lobby), siehe `ballistics.rs`.
+    shot_mode: protocol::ShotMode,
     /// Spieler, deren König gefallen ist (siehe `combat.rs`).
     eliminated: BTreeSet<u32>,
     /// Bündnis je Spieler; wer fehlt, kämpft allein (eigene Nummer). Siehe `diplomacy.rs`.
@@ -253,13 +282,16 @@ impl World {
             gather_status: HashMap::new(),
             pay_timer: HashMap::new(),
             unpaid: HashSet::new(),
+            army_hungry: HashSet::new(),
             hub_goods: HashMap::new(),
             trade_mode: protocol::TradeMode::default(),
+            shot_mode: protocol::ShotMode::default(),
             eliminated: BTreeSet::new(),
             teams: HashMap::new(),
             winners: None,
             respawn_clock: HashMap::new(),
             worker_carries_default: true,
+            combat_rng: 0x9E37_79B9_7F4A_7C15,
         }
     }
 
@@ -315,8 +347,8 @@ impl World {
     /// Eigenes Lager eines Betriebs je Ware, getrennt nach Eingängen (was ein
     /// Rezept dieser Gebäudeart verbraucht) und allem anderen (Ergebnisse).
     /// 0 im Balancing = `transport.building_capacity`.
-    fn inventory_limits(&self, kind: BuildingKind) -> (u32, BTreeMap<protocol::Good, u32>) {
-        let def = self.economy.building(kind);
+    fn inventory_limits(&self, kind: BuildingKind, level: u32) -> (u32, BTreeMap<protocol::Good, u32>) {
+        let def = self.economy.building(kind).map(|d| d.at(level));
         let or_default = |n: u32| if n > 0 { n } else { self.economy.def.transport.building_capacity.max(1) };
         let outputs = or_default(def.map_or(0, |d| d.storage_outputs));
         let inputs = or_default(def.map_or(0, |d| d.storage_inputs));
@@ -333,7 +365,7 @@ impl World {
 
     /// Lagergrößen aller Betriebe neu setzen (Balancing geändert, Spielstand geladen).
     pub(crate) fn update_inventory_capacities(&mut self) {
-        let caps: Vec<_> = self.buildings.iter().map(|b| (b.id, self.inventory_limits(b.kind))).collect();
+        let caps: Vec<_> = self.buildings.iter().map(|b| (b.id, self.inventory_limits(b.kind, b.level))).collect();
         for (id, (cap, limits)) in caps {
             if let Some(inv) = self.inventories.get_mut(&id) {
                 inv.capacity = cap;
@@ -489,7 +521,8 @@ impl World {
     /// None, wenn hier kein Tordurchgang liegt.
     fn road_through_gate(&mut self, player: u32, kind: BuildingKind, (x, y): (u32, u32)) -> Result<Option<BuildingState>, Refusal> {
         let Some(def) = self.economy.building(kind).cloned() else { return Ok(None) };
-        if def.road_speed_percent == 0 || x >= self.map.width || y >= self.map.height {
+        let speed = def.at(1).road_speed_percent;
+        if !def.is_road() || x >= self.map.width || y >= self.map.height {
             return Ok(None);
         }
         let id = self.occupied[(y * self.map.width + x) as usize];
@@ -498,13 +531,13 @@ impl World {
         if b.owner != player || !gate::is_gate(b.kind) || !gate::passage_tiles(b).contains(&(x, y)) {
             return Ok(None);
         }
-        if b.road_under >= def.road_speed_percent {
+        if b.road_under >= speed {
             return Err(Text::new("error.occupied"));
         }
         self.pay(player, &def.levels[0].cost)?;
         let old = self.buildings[bi].clone();
         self.set_footprint(&old, false);
-        self.buildings[bi].road_under = def.road_speed_percent;
+        self.buildings[bi].road_under = speed;
         let b = self.buildings[bi].clone();
         self.set_footprint(&b, true);
         self.dirty_buildings.insert(b.id);
@@ -555,7 +588,7 @@ impl World {
                 return Err(Text::new("error.limit_reached").arg("max", max));
             }
         }
-        self.check_build_radius(player, &def, (x, y), (w, h))?;
+        self.check_build_radius(player, def.at(level as u32).build_radius, (x, y), (w, h))?;
         if !free {
             self.check_no_enemy(player, (x as f32 + w as f32 / 2.0, y as f32 + h as f32 / 2.0))?;
         }
@@ -568,7 +601,7 @@ impl World {
             ux >= x as i64 && uy >= y as i64 && ux < (x + w) as i64 && uy < (y + h) as i64
         };
         // Träger weichen aus, alle anderen Einheiten stehen im Weg (nicht bei Wegen).
-        if def.road_speed_percent == 0 && self.units.iter().any(|u| !u.is_civilian() && covers(u.pos)) {
+        if !def.is_road() && self.units.iter().any(|u| !u.is_civilian() && covers(u.pos)) {
             return Err(Text::new("error.unit_in_way"));
         }
         Ok(PlacementPlan { def, rotation, level, w, h, cost, walls, entrance })
@@ -586,14 +619,14 @@ impl World {
     ) -> Result<BuildingState, Refusal> {
         let PlacementPlan { def, rotation, level, w, h, cost, walls, entrance } =
             self.placement_plan(player, kind, (x, y), rotation, level, free)?;
-        let max_hp = def.max_hp;
+        let max_hp = def.at(level as u32).max_hp;
         self.pay(player, &cost)?;
         // Tor auf einem Weg: der Durchgang bleibt so schnell wie der Weg.
         let road_under = if gate::is_gate(kind) {
             walls
                 .iter()
                 .filter_map(|id| self.buildings.iter().find(|b| b.id == *id))
-                .filter_map(|b| self.economy.building(b.kind).map(|d| d.road_speed_percent))
+                .filter_map(|b| self.economy.building(b.kind).map(|d| d.at(b.level).road_speed_percent))
                 .max()
                 .unwrap_or(0)
         } else {
@@ -608,12 +641,12 @@ impl World {
         let settings = BuildingSettings {
             recipe: def.levels[0].recipes.first().cloned(),
             paused: false,
-            accept_deliveries: true,
+            accept_deliveries: def.delivery.carriers,
             stores: None,
             keep_in_stock: Vec::new(),
             gate: GateMode::Auto,
-            worker_carries: self.worker_carries_default,
-            cart_deliveries: false,
+            worker_carries: def.delivery.worker && self.worker_carries_default,
+            cart_deliveries: def.delivery.carts,
             stop_at: Vec::new(),
         };
         let status = if settings.recipe.is_some() { BuildingStatus::Working } else { BuildingStatus::Idle };
@@ -647,7 +680,7 @@ impl World {
         self.set_footprint(&b, true);
         self.buildings.push(b.clone());
         if !def.hub {
-            let (cap, limits) = self.inventory_limits(b.kind);
+            let (cap, limits) = self.inventory_limits(b.kind, b.level);
             let mut inv = Stock::new(cap);
             inv.limits = limits;
             self.inventories.insert(b.id, inv);
@@ -655,10 +688,10 @@ impl World {
         if def.hub {
             self.update_capacity(player);
         }
-        if def.road_speed_percent == 0 {
+        if !def.is_road() {
             self.make_room(&b);
         }
-        let spawns: Vec<_> = def.spawns.iter().chain(def.levels.iter().take(level as usize).flat_map(|l| &l.spawns)).copied().collect();
+        let spawns: Vec<_> = def.levels.iter().take(level as usize).flat_map(|l| &l.spawns).copied().collect();
         for s in spawns {
             for n in 0..s.count {
                 self.spawn_transport(&b, s.kind, n);
@@ -679,7 +712,7 @@ impl World {
     /// Eigene Gebäude in dieser Fläche, die ein neues Gebäude dieser Art ersetzt:
     /// Mauerstücke (Mauer, hohe Mauer, Palisade), wenn es auf Mauern darf, und Wege.
     fn removable_under(&self, player: u32, def: &protocol::BuildingDef, (x, y): (u32, u32), (w, h): (u32, u32)) -> Vec<u32> {
-        let replaces_roads = def.road_speed_percent == 0;
+        let replaces_roads = !def.is_road();
         let mut ids: Vec<u32> = Vec::new();
         for ty in y..(y + h).min(self.map.height) {
             for tx in x..(x + w).min(self.map.width) {
@@ -689,7 +722,7 @@ impl World {
                 }
                 let wall = self.buildings.iter().find(|b| b.id == id).is_some_and(|b| {
                     let wall = matches!(b.kind, BuildingKind::Wall | BuildingKind::HighWall | BuildingKind::Palisade);
-                    let road = self.economy.building(b.kind).is_some_and(|d| d.road_speed_percent > 0);
+                    let road = self.economy.building(b.kind).is_some_and(|d| d.is_road());
                     b.owner == player && ((def.on_walls && wall) || (replaces_roads && road))
                 });
                 if wall {
@@ -744,7 +777,7 @@ impl World {
                     return Err(Text::new("error.occupied"));
                 }
                 // Wege dürfen vor Türen liegen, sie bleiben ja begehbar.
-                if def.road_speed_percent == 0 && self.entrances.get(&i).is_some_and(|b| !ignore.contains(b)) {
+                if !def.is_road() && self.entrances.get(&i).is_some_and(|b| !ignore.contains(b)) {
                     return Err(Text::new("error.blocks_entrance"));
                 }
                 let r = self.map.resources[i];
@@ -760,7 +793,8 @@ impl World {
                 .filter(|&(tx, ty)| p.resources.contains(&self.map.resources[(ty * self.map.width + tx) as usize]))
                 .count() as u32;
             // Abbaubetriebe mit Reichweite (Steinbruch, Mine): Rohstoff im Umkreis genügt.
-            let near = !def.gathers.is_empty() && def.gather_radius > 0 && self.resource_near(&p.resources, (x, y), (w, h), def.gather_radius);
+            let r = def.at(1).gather_radius;
+            let near = !def.gathers.is_empty() && r > 0 && self.resource_near(&p.resources, (x, y), (w, h), r);
             if !near && on * 100 < p.min_share_percent * w * h {
                 let names: Vec<String> = p.resources.iter().map(|r| resource_key(*r)).collect();
                 return Err(Text::new("error.needs_resource").arg("resources", names.join(",")));
@@ -841,7 +875,7 @@ impl World {
     /// Felder eines Gebäudes belegen (`true`) oder freigeben. Wege blockieren
     /// nicht, sondern machen das Feld schneller.
     pub(super) fn set_footprint(&mut self, b: &BuildingState, on: bool) {
-        let road = self.economy.building(b.kind).map_or(0, |d| d.road_speed_percent);
+        let road = self.economy.building(b.kind).filter(|d| d.is_road()).map_or(0, |d| d.at(b.level).road_speed_percent.max(1));
         for ty in b.y..b.y + b.h {
             for tx in b.x..b.x + b.w {
                 self.occupied[(ty * self.map.width + tx) as usize] = if on { b.id } else { 0 };
@@ -887,16 +921,36 @@ impl World {
         };
         let cost = next.cost.clone();
         let spawns = next.spawns.clone();
+        let (old_hp, new_hp, radius, road) = (def.at(b.level).max_hp, next.max_hp, next.build_radius, def.is_road());
         let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
+        let old = b.clone();
+        self.check_build_radius(player, radius, (old.x, old.y), (old.w, old.h))?;
         self.check_no_enemy(player, center)?;
         self.pay(player, &cost)?;
+        if road {
+            self.set_footprint(&old, false);
+        }
         let b = self.buildings.iter_mut().find(|b| b.id == id).expect("eben gefunden");
         b.level += 1;
+        // Mehr (oder weniger) Lebenspunkte auf der neuen Stufe: der Schaden bleibt.
+        b.hp = (b.hp + new_hp).saturating_sub(old_hp).clamp(1, new_hp.max(1));
         let b = b.clone();
+        if road {
+            self.set_footprint(&b, true);
+        }
+        let (cap, limits) = self.inventory_limits(b.kind, b.level);
+        if let Some(inv) = self.inventories.get_mut(&b.id) {
+            inv.capacity = cap;
+            inv.limits = limits;
+        }
+        self.dirty_buildings.insert(b.id);
         for s in spawns {
             for n in 0..s.count {
                 self.spawn_transport(&b, s.kind, n);
             }
+        }
+        if self.economy.building(b.kind).is_some_and(|d| d.hub) {
+            self.update_capacity(player);
         }
         Ok(b)
     }
@@ -980,6 +1034,19 @@ impl World {
     /// Liefert false, wenn keine der Einheiten das Ziel erreichen kann; dann
     /// läuft auch keine los. Wer nicht hinkommt, bleibt stehen.
     pub fn order_move(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32)) -> bool {
+        self.order_move_as(player, unit_ids, target, false)
+    }
+
+    /// Wie `order_move`. Eine Gruppe läuft im Tempo ihrer langsamsten Einheit; mit `fast`
+    /// (zweiter Befehl gleich hinterher) läuft jede so schnell sie kann.
+    pub fn order_move_as(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32), fast: bool) -> bool {
+        self.order_move_full(player, unit_ids, target, fast, false)
+    }
+
+    /// Wie `order_move_as`. Mit `append` (Strg+Rechtsklick) wird das Ziel hinten an die
+    /// Wegpunkte gehängt: wer gerade läuft, geht erst zu Ende und dann weiter. Ohne `append`
+    /// verfallen alle alten Wegpunkte.
+    pub fn order_move_full(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32), fast: bool, append: bool) -> bool {
         if !target.0.is_finite() || !target.1.is_finite() {
             return false;
         }
@@ -996,14 +1063,14 @@ impl World {
         for &(x, y) in &shut {
             self.map.nav.set_blocked(x, y, true);
         }
-        let ok = self.order_move_planned(player, unit_ids, target);
+        let ok = self.order_move_planned(player, unit_ids, target, fast, append);
         for &(x, y) in &shut {
             self.map.nav.set_blocked(x, y, false);
         }
         ok
     }
 
-    fn order_move_planned(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32)) -> bool {
+    fn order_move_planned(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32), fast: bool, append: bool) -> bool {
         let target = (
             target.0.clamp(0.0, self.map.width as f32 - 0.01),
             target.1.clamp(0.0, self.map.height as f32 - 0.01),
@@ -1012,6 +1079,34 @@ impl World {
         let chosen: Vec<usize> =
             (0..self.units.len()).filter(|&k| self.units[k].owner == player && !self.units[k].is_civilian() && unit_ids.contains(&self.units[k].id)).collect();
         let spots = self.formation(player, unit_ids, target, chosen.len(), target_wall);
+        if append {
+            // Wer noch unterwegs ist (oder schon Wegpunkte hat), merkt sich das Ziel für später.
+            let cap = if fast || chosen.len() < 2 {
+                None
+            } else {
+                chosen.iter().map(|&k| self.base_speed(&self.units[k])).min_by(f32::total_cmp)
+            };
+            let mut queued = false;
+            let mut rest = Vec::new();
+            for (&k, &spot) in chosen.iter().zip(&spots) {
+                let u = &mut self.units[k];
+                if u.path.is_empty() && u.waypoints.is_empty() && u.attack_order.is_none() {
+                    rest.push(k);
+                } else {
+                    u.waypoints.push(Waypoint { to: spot, wall: target_wall, cap });
+                    queued = true;
+                }
+            }
+            if rest.is_empty() {
+                return queued;
+            }
+            let ids: Vec<u32> = rest.iter().map(|&k| self.units[k].id).collect();
+            return self.order_move_planned(player, &ids, target, fast, false) || queued;
+        }
+        // Ein direkter Befehl löscht alle alten Wegpunkte.
+        for &k in &chosen {
+            self.units[k].waypoints.clear();
+        }
         let mut room = if target_wall { self.garrison_room(player, unit_ids, target) } else { None };
         // Turm voll: die übrigen stellen sich unten neben den Turm.
         let mut feet = match (room, chosen.first()) {
@@ -1064,14 +1159,40 @@ impl World {
         if orders.is_empty() {
             return false;
         }
+        // Gruppe: alle im Tempo der langsamsten (bei nur einer oder `fast`: keine Bremse).
+        let cap = if fast || orders.len() < 2 {
+            None
+        } else {
+            orders.iter().map(|o| self.base_speed(&self.units[o.0])).min_by(f32::total_cmp)
+        };
         for (k, to, wall, (path, layers)) in orders {
             let u = &mut self.units[k];
+            u.speed_cap = cap;
             u.path = path;
             u.layers = layers;
             u.target = Some(to);
             u.target_wall = wall;
         }
         true
+    }
+
+    /// Angekommen und noch Wegpunkte übrig? Dann zum nächsten. Unerreichbare werden übersprungen.
+    fn step_waypoints(&mut self) {
+        for k in 0..self.units.len() {
+            let u = &self.units[k];
+            if u.waypoints.is_empty() || !u.path.is_empty() || u.attack_order.is_some() {
+                continue;
+            }
+            let (owner, pos, on_wall) = (u.owner, u.pos, u.on_wall);
+            let next = self.units[k].waypoints.remove(0);
+            let (path, layers) = self.plan(owner, pos, on_wall, next.to, next.wall);
+            let u = &mut self.units[k];
+            u.speed_cap = next.cap;
+            u.path = path;
+            u.layers = layers;
+            u.target = Some(next.to);
+            u.target_wall = next.wall;
+        }
     }
 
     /// Ziele für eine Gruppe: ein enges Raster (`FORMATION_GAP`) um den
@@ -1100,11 +1221,11 @@ impl World {
             self.buildings
                 .iter()
                 .find(|b| b.id == on)
-                .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.garrison > 0))
+                .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.at(b.level).garrison > 0))
                 .map(|b| {
                     // Plattform groß genug für die Besatzung, aber innerhalb der Zinnen.
                     let side = b.w.min(b.h) as f32;
-                    let crew = self.economy.building(b.kind).map_or(0, |d| d.garrison) as f32;
+                    let crew = self.economy.building(b.kind).map_or(0, |d| d.at(b.level).garrison) as f32;
                     let need = FORMATION_GAP * (crew / std::f32::consts::PI).sqrt() * 1.2;
                     ((b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0), need.clamp(side * 0.3, side * 0.45))
                 })
@@ -1154,8 +1275,7 @@ impl World {
 
     /// Gebäude mit `build_radius` nur im Umkreis des eigenen Bergfrieds:
     /// die ganze Fläche muss drinliegen.
-    fn check_build_radius(&self, player: u32, def: &BuildingDef, at: (u32, u32), size: (u32, u32)) -> Result<(), Refusal> {
-        let r = def.build_radius;
+    fn check_build_radius(&self, player: u32, r: u32, at: (u32, u32), size: (u32, u32)) -> Result<(), Refusal> {
         if r == 0 {
             return Ok(());
         }
@@ -1176,7 +1296,7 @@ impl World {
     fn garrison_room(&self, player: u32, ordered: &[u32], target: (f32, f32)) -> Option<usize> {
         let i = (target.1 as u32 * self.map.width + target.0 as u32) as usize;
         let b = self.buildings.iter().find(|b| b.id == self.occupied[i])?;
-        let max = self.economy.building(b.kind)?.garrison as usize;
+        let max = self.economy.building(b.kind)?.at(b.level).garrison as usize;
         if max == 0 {
             return None;
         }
@@ -1222,6 +1342,8 @@ impl World {
         self.step_army(dt);
         self.step_trade(dt);
         self.step_combat(dt);
+        self.step_waypoints();
+        self.step_heal(dt);
         self.balance_hubs();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
@@ -1231,13 +1353,17 @@ impl World {
         let soldier: Vec<f32> = self.units.iter().map(|u| if u.kind.is_soldier() { self.soldier_speed(u.owner, u.kind) } else { 0.0 }).collect();
         let nav = &self.map.nav;
         for (k, unit) in self.units.iter_mut().enumerate() {
-            let speed = match unit.kind {
+            let full = match unit.kind {
                 UnitKind::King => king,
                 UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Cart | UnitKind::TradeCart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
-                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
+                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer => soldier[k],
             };
+            let speed = unit.speed_cap.map_or(full, |c| full.min(c));
+            if unit.path.is_empty() {
+                unit.speed_cap = None;
+            }
             // Auf Wegen schneller (oben auf der Mauer zählt der Boden nicht).
             let road = if unit.on_wall { 1.0 } else { nav.speed_at(unit.pos) };
             let mut budget = speed * road * dt;
@@ -1282,7 +1408,7 @@ impl World {
 
     /// Restlicher Weg einer Einheit (Wegpunkte).
     pub fn unit_path(&self, id: u32) -> Option<Vec<(f32, f32)>> {
-        self.units.iter().find(|u| u.id == id).map(|u| u.path.clone())
+        self.units.iter().find(|u| u.id == id).map(|u| u.path.iter().copied().chain(u.waypoints.iter().map(|w| w.to)).collect())
     }
 
     pub fn snapshot(&self) -> Vec<UnitState> {
@@ -1433,6 +1559,33 @@ mod tests {
         let mut world = World::new(GameMap::parse(&text).unwrap(), eco());
         world.spawn_player(1);
         world
+    }
+
+    #[test]
+    fn strg_rechtsklick_haengt_wegpunkte_an() {
+        let mut w = flat_world();
+        let id = w.units.iter().find(|u| u.kind == UnitKind::King).unwrap().id;
+        assert!(w.order_move(1, &[id], (20.5, 2.5)));
+        assert!(w.order_move_full(1, &[id], (20.5, 20.5), false, true));
+        assert!(w.order_move_full(1, &[id], (2.5, 20.5), false, true));
+        assert_eq!(w.unit_path(id).unwrap().last().copied(), Some((2.5, 20.5)), "Weg zeigt alle Wegpunkte");
+        let mut seen = [false; 3];
+        for _ in 0..20 * 120 {
+            w.step(0.05);
+            let p = w.units.iter().find(|u| u.id == id).unwrap().pos;
+            for (k, q) in [(20.5, 2.5), (20.5, 20.5), (2.5, 20.5)].into_iter().enumerate() {
+                if (p.0 - q.0).hypot(p.1 - q.1) < 0.5 && (k == 0 || seen[k - 1]) {
+                    seen[k] = true;
+                }
+            }
+        }
+        assert_eq!(seen, [true; 3], "der Reihe nach abgelaufen");
+        // Ein normaler Befehl löscht die alten Wegpunkte.
+        w.order_move(1, &[id], (20.5, 20.5));
+        w.order_move_full(1, &[id], (20.5, 2.5), false, true);
+        w.order_move(1, &[id], (10.5, 10.5));
+        assert_eq!(w.unit_path(id).unwrap().last().copied(), Some((10.5, 10.5)));
+        assert!(w.units.iter().find(|u| u.id == id).unwrap().waypoints.is_empty());
     }
 
     #[test]
@@ -1625,13 +1778,13 @@ mod tests {
         w.admin_give(1, &[GoodAmount { good: protocol::Good::Stone, amount: 500 }, GoodAmount { good: protocol::Good::Wood, amount: 500 }], 0);
         assert_eq!(w.place_building(1, BuildingKind::Wall, 10, 10).unwrap_err().key, "error.outside_build_radius", "ohne Bergfried");
         w.place_building(1, BuildingKind::Keep, 4, 4).unwrap();
-        let r = w.economy.building(BuildingKind::Wall).unwrap().build_radius;
+        let r = w.economy.building(BuildingKind::Wall).unwrap().at(1).build_radius;
         assert!(r > 0);
         w.place_building(1, BuildingKind::Wall, 10, 10).unwrap();
         assert_eq!(w.place_building(1, BuildingKind::Wall, 7 + r, 7).unwrap_err().key, "error.outside_build_radius");
         w.place_building(1, BuildingKind::Wall, 5 + r, 7).unwrap();
         // Ohne eigenen Umkreis (0) dürfen Gebäude beliebig weit weg.
-        assert_eq!(w.economy.building(BuildingKind::House).unwrap().build_radius, 0);
+        assert_eq!(w.economy.building(BuildingKind::House).unwrap().at(1).build_radius, 0);
         w.place_building(1, BuildingKind::House, 10 + r, 2).unwrap();
     }
 
@@ -1664,7 +1817,7 @@ mod tests {
         w.spawn_player(1);
         let keep = w.buildings.iter().find(|b| b.owner == 1 && b.kind == BuildingKind::Keep).unwrap();
         let center = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
-        let max = w.economy.building(BuildingKind::Keep).unwrap().garrison as usize;
+        let max = w.economy.building(BuildingKind::Keep).unwrap().at(1).garrison as usize;
         assert!(max >= 40, "deutlich mehr Platz als früher (16)");
         let spots = w.formation(1, &[], center, max, true);
         for (i, p) in spots.iter().enumerate() {
@@ -1717,7 +1870,7 @@ mod tests {
         w.admin_give(1, &[GoodAmount { good: protocol::Good::Stone, amount: 50 }], 0);
         w.place_building(1, BuildingKind::StonePath, 5, 5).unwrap();
         assert!(w.map.nav.is_open(5, 5));
-        assert!(w.economy.building(BuildingKind::StonePath).unwrap().road_speed_percent > 0);
+        assert!(w.economy.building(BuildingKind::StonePath).unwrap().is_road());
     }
 
     #[test]

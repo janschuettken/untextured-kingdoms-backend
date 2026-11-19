@@ -3,4 +3,4 @@
 /**
  * Art einer Einheit.
  */
-export type UnitKind = "king" | "carrier" | "cart" | "worker" | "spearman" | "archer" | "crossbowman" | "light_swordsman" | "swordsman" | "knight" | "trade_cart";
+export type UnitKind = "king" | "carrier" | "cart" | "worker" | "spearman" | "archer" | "crossbowman" | "light_swordsman" | "swordsman" | "knight" | "trade_cart" | "healer";

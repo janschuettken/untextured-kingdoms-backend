@@ -2,19 +2,24 @@
 import type { BuildingCategory } from "./BuildingCategory";
 import type { BuildingKind } from "./BuildingKind";
 import type { BuildingLevel } from "./BuildingLevel";
+import type { DeliveryDefaults } from "./DeliveryDefaults";
 import type { Good } from "./Good";
 import type { Placement } from "./Placement";
 import type { ResourceKind } from "./ResourceKind";
-import type { UnitCount } from "./UnitCount";
 
 /**
- * Feste Eigenschaften einer Gebäudeart.
+ * Feste Eigenschaften einer Gebäudeart. Was sich mit der Stufe ändern darf, steht in `levels`.
  */
 export type BuildingDef = { kind: BuildingKind, category: BuildingCategory, 
 /**
  * Grundfläche in Feldern.
  */
-w: number, h: number, max_hp: number, 
+w: number, h: number, 
+/**
+ * Höhe über dem Boden (Welt, 1 = ein Feld) für Pfeile: was darunter fliegt, stößt an.
+ * Je Ausbaustufe kommt ein Stockwerk dazu (nicht bei Befestigungen). 0 = Grundwert je Art.
+ */
+height: number, 
 /**
  * Höchstens so viele pro Spieler.
  */
@@ -28,17 +33,9 @@ placement: Placement | null,
  */
 gathers: Array<ResourceKind>, 
 /**
- * Wie weit um das Gebäude abgebaut wird (Felder vom Rand). 0 = nur unter dem Gebäude.
- */
-gather_radius: number, 
-/**
  * Aufgeben hinterlässt diesen Rohstoff auf der Fläche (Obstplantage → Wald).
  */
 releases_as: ResourceKind | null, 
-/**
- * Wagenschuppen: der Karren fährt nur Betriebe in diesem Umkreis (Felder) an. 0 = überall.
- */
-service_radius: number, 
 /**
  * Mauern und Türme haben keinen Eingang; alle anderen ein Feld davor, das frei bleiben muss.
  */
@@ -48,36 +45,6 @@ no_entrance: boolean,
  */
 hub: boolean, 
 /**
- * Einheiten, die zum Gebäude gehören (Träger, Karren).
- */
-spawns: Array<UnitCount>, 
-/**
- * Mindestens eine Stufe.
- * Arbeiter, die der Betrieb braucht (sie wohnen in Häusern und essen).
- */
-workers: number, 
-/**
- * Ab dieser Stufe können eigene Einheiten oben auf dem Gebäude laufen (Wehrgang). 0 = nie.
- */
-walkway_from_level: number, 
-/**
- * Tor: ab dieser Stufe führt eine Treppe im Tor auf den Wehrgang. 0 = nie.
- */
-stairs_from_level: number, 
-/**
- * Tor: im Modus „automatisch“ schließt es, sobald fremde Einheiten so nah (Felder) sind.
- */
-gate_radius: number, 
-/**
- * So viele Einheiten finden oben Platz. 0 = so viele, wie draufpassen.
- */
-garrison: number, 
-/**
- * Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte): die ganze Fläche
- * muss in diesem Umkreis liegen. 0 = überall.
- */
-build_radius: number, 
-/**
  * Darf direkt auf eigene Mauern gesetzt werden; die Mauer darunter wird abgerissen.
  */
 on_walls: boolean, 
@@ -85,11 +52,6 @@ on_walls: boolean,
  * Darf auf Schrägen stehen (Mauern folgen dem Gelände).
  */
 on_ramps: boolean, 
-/**
- * Weg: das Feld bleibt begehbar, und man läuft hier so viel Prozent schneller.
- * 0 = kein Weg.
- */
-road_speed_percent: number, 
 /**
  * Das erste Gebäude dieser Art je Spieler kostet nichts.
  */
@@ -99,14 +61,10 @@ first_free: boolean,
  */
 hub_goods: Array<Good>, 
 /**
- * Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
+ * Voreinstellung für neue Gebäude: wer liefert (Träger, Karren, Arbeiter selbst).
  */
-hub_capacity: number, 
+delivery: DeliveryDefaults, 
 /**
- * Betriebe: so viel passt je Eingangsware ins eigene Lager. 0 = `transport.building_capacity`.
+ * Mindestens eine Stufe.
  */
-storage_inputs: number, 
-/**
- * Betriebe: so viel passt je Ergebnis ins eigene Lager. 0 = `transport.building_capacity`.
- */
-storage_outputs: number, levels: Array<BuildingLevel>, };
+levels: Array<BuildingLevel>, };

@@ -163,7 +163,7 @@ impl World {
         let (bx0, by0) = (b.x as i64, b.y as i64);
         let (bx1, by1) = (bx0 + b.w as i64 - 1, by0 + b.h as i64 - 1);
         let (mw, mh) = (self.map.width as i64, self.map.height as i64);
-        let max_r = (def.gather_radius as i64).min(mw.max(mh));
+        let max_r = (def.at(b.level).gather_radius as i64).min(mw.max(mh));
         // Abstand eines Feldes zum Gebäuderand.
         let dist = |tx: i64, ty: i64| {
             let dx = (bx0 - tx).max(tx - bx1).max(0) as f32;
@@ -385,8 +385,8 @@ mod tests {
         assert_eq!(w.inventories[&b.id].capacity_of(Good::Longbow), std);
         let mut eco = w.economy.clone();
         let def = eco.def.buildings.iter_mut().find(|d| d.kind == BuildingKind::Bowyer).unwrap();
-        def.storage_inputs = 30;
-        def.storage_outputs = 5;
+        def.levels[0].storage_inputs = 30;
+        def.levels[0].storage_outputs = 5;
         w.set_economy(eco);
         assert_eq!(w.inventories[&b.id].capacity_of(Good::Wood), 30, "Eingang");
         assert_eq!(w.inventories[&b.id].capacity_of(Good::Longbow), 5, "Ergebnis");

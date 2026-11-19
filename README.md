@@ -305,6 +305,13 @@ als“ einen anderen Startplatz übernehmen (`/ws?game=..&token=..&as=<nr>`) ode
   ob die Burg geschlossen ist), nimmt den schwächsten (ohne Höchstentfernung) und schickt eine Welle, wenn sie stark
   genug ist. Wache bleibt daheim. Schwer wartet auf größere Wellen. Ohne Kampf bleibt die Welle eine Weile vor der
   gegnerischen Burg und geht dann heim; sobald es Kampf gibt, kämpft sie dort (bei Verlusten kehrt sie um).
+- **Mut** (`daring`, 0 bis 100, je Charakter und je Computer in der Lobby): wie sehr er auch gegen einen stärker
+  geschätzten Gegner angreift. 0 = nur, wenn er sich stärker glaubt; 100 = ständig, sobald eine Welle bereitsteht.
+  Dazwischen sinkt die nötige Überlegenheit, je länger eine fertige Welle schon wartet (`attack::needed_ratio`).
+- **Hilfsbereitschaft** (`helpfulness`, 0 bis 100): Wird ein Verbündeter am Bergfried bedrängt, schickt er Truppen,
+  aber nur so viele, wie gegen die Angreifer nötig sind (anderthalbfach), höchstens diesen Anteil der freien Soldaten
+  und nie die Wache daheim (gegen Scheinangriffe). Wird er selbst angegriffen, kommen sie heim. Alle 2 Minuten
+  schickt er dem Bedrängten außerdem einen Teil seiner Waffen und Rüstungen, Essen über einer Reserve und Taler.
 - **Burg geschlossen?** `World::castle_status` (`world/enclosure.rs`): Kommt man vom eigenen Bergfried zu Fuß zu
   einem fremden Startplatz (eigene Tore gelten als zu, außer „offen“)? Der Server schickt jedem Spieler
   `castle { status }` (alle 2 s, wenn es sich ändert); der Client zeigt oben ein Schild und an der Lücke eine rote
