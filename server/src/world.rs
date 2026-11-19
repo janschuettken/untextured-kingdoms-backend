@@ -1767,6 +1767,8 @@ mod tests {
     fn bauen_kostet_und_abriss_erstattet() {
         use protocol::Good;
         let mut w = flat_world();
+        // Feste Erstattung, unabhängig vom Balancing.
+        w.economy.def.demolish_refund_percent = 50;
         w.place_building(1, BuildingKind::Storehouse, 14, 14).unwrap(); // Platz für die Erstattung
         let wood = w.stocks[&1].amount(Good::Wood);
         let b = w.place_building(1, BuildingKind::Bowyer, 4, 4).unwrap();
@@ -1784,8 +1786,14 @@ mod tests {
         assert_eq!(w.upgrade(2, b.id).unwrap_err().key, "error.not_yours");
         let boards = w.stocks[&1].amount(protocol::Good::Boards);
         w.demolish(1, b.id).unwrap();
-        // Hälfte von Stufe 1 (20 Bretter) und Stufe 2 (30 Bretter) zurück.
-        assert_eq!(w.stocks[&1].amount(protocol::Good::Boards), boards + 10 + 15);
+        // Hälfte der Bretter von Stufe 1 und 2 zurück (Kosten aus economy.json).
+        let back: u32 = w.economy.building(BuildingKind::Bowyer).unwrap().levels[..2]
+            .iter()
+            .flat_map(|l| &l.cost)
+            .filter(|c| c.good == Good::Boards)
+            .map(|c| c.amount * 50 / 100)
+            .sum();
+        assert_eq!(w.stocks[&1].amount(protocol::Good::Boards), boards + back);
         assert!(!w.take_dirty_stocks().is_empty());
         assert!(w.take_dirty_stocks().is_empty(), "nur einmal melden");
     }

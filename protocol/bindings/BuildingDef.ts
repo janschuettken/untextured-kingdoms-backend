@@ -73,6 +73,10 @@ horse_capacity: number,
  */
 max_span: number, 
 /**
+ * Kein Bauen, Ausbauen oder Reparieren, solange ein Feind (Soldat, König) so nah ist (Felder, 0 = aus).
+ */
+enemy_radius: number, 
+/**
  * Mindestens eine Stufe.
  */
 levels: Array<BuildingLevel>, };

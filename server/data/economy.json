@@ -1678,7 +1678,6 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
-      "horse_capacity": 6,
       "max_span": 0,
       "horse_capacity": 5,
       "levels": [

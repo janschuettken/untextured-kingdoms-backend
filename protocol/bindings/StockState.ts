@@ -2,6 +2,7 @@
 import type { ArmyState } from "./ArmyState";
 import type { AutoTrade } from "./AutoTrade";
 import type { GoodAmount } from "./GoodAmount";
+import type { GoodLimit } from "./GoodLimit";
 import type { PeopleState } from "./PeopleState";
 import type { StoragePool } from "./StoragePool";
 
@@ -29,4 +30,8 @@ taler: number, army: ArmyState,
 /**
  * Automatischer Handel am Markt je Ware.
  */
-auto_trade: Array<AutoTrade>, };
+auto_trade: Array<AutoTrade>, 
+/**
+ * Grenzen je Ware aus dem Ressourcen-Fenster: Startwerte für neue Betriebe.
+ */
+limits: Array<GoodLimit>, };
