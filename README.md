@@ -333,6 +333,11 @@ als“ einen anderen Startplatz übernehmen (`/ws?game=..&token=..&as=<nr>`) ode
 - Soldaten greifen auch feindliche Zivilisten an (Arbeiter, Träger, Karren, Handelskarren; Lebenspunkte unter `units`),
   nicht aber, wer gerade drinnen ist. Fehlende Arbeiter, Träger und Karren eines Gebäudes kommen nach
   `army.civilian_respawn_seconds` wieder (0 = nie); neue Arbeiter kommen aus dem nächsten Wohnhaus.
+- Beute: Wer einen König tötet, bekommt die Hälfte aller Waren und Taler des Besiegten, je nach
+  Handelseinstellung sofort oder als Handelskarren, die dem Sieger gehören.
+- Handelskarren (Handel und Beute) kann ihr Besitzer selbst schicken (Rechtsklick, auch mit
+  Wegpunkten); danach fahren sie von allein weiter zum Lager. Wird einer zerstört, ist die Ladung weg.
+- Wegpunkte: `move_units` mit `append` (Strg+Rechtsklick) hängt ein Ziel an, ein Befehl ohne löscht alle.
 - Angriffsbefehl `attack` (Rechtsklick auf einen Feind): verfolgen und angreifen, bis das Ziel fällt. Nahkämpfer
   reißen so Gebäude, Mauern und Tore ein (`hp` des Gebäudes); Fernkämpfer schießen nur im Stand (`shots` für die
   Pfeile im Client) und laufen bei König oder Gebäude nur hin. Gefallene: `units_died`.

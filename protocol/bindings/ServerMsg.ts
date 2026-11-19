@@ -47,7 +47,11 @@ gone: Array<number>, } | { "type": "pong", client_time: number, } | { "type": "b
 /**
  * Wie viele Handelskarren fahren (0 = sofort angekommen).
  */
-carts: number, } | { "type": "player_defeated", player: number, 
+carts: number, 
+/**
+ * Beute: `from` ist ausgeschieden, `to` hat seinen König getötet.
+ */
+loot: boolean, } | { "type": "player_defeated", player: number, 
 /**
  * Wessen Einheit den letzten Schlag geführt hat.
  */

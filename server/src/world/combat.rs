@@ -497,6 +497,9 @@ impl World {
         if !self.eliminated.insert(player) {
             return;
         }
+        if let Some(winner) = by.filter(|&w| w != player && !self.eliminated.contains(&w)) {
+            self.send_loot(player, winner);
+        }
         for building_id in self.remove_player(player) {
             self.events.push(ServerMsg::BuildingRemoved { building_id });
         }
