@@ -7,6 +7,7 @@ mod admin;
 mod economy;
 mod game;
 mod lobby;
+mod mail;
 mod map;
 mod mapgen;
 mod maps_api;

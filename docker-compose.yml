@@ -18,6 +18,13 @@ services:
       RUST_LOG: info
       # Admin-Rechte hängen an Accounts. Diese Namen (Komma-getrennt) werden beim Start zu Admins.
       ADMIN_USERS: ${ADMIN_USERS:-}
+      # E-Mails ("Passwort vergessen"), siehe .env.example. Ohne SMTP_HOST stehen die Links nur im Log.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
       # Accounts: eigene DATABASE_URL oder der Dienst "db" unten.
       DATABASE_URL: ${DATABASE_URL:-postgres://uk:${DB_PASSWORD:?DB_PASSWORD in .env setzen}@db:5432/untextured_kingdoms}
     depends_on:

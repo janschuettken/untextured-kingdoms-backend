@@ -155,6 +155,29 @@ Das Skript holt in beiden Repos den neuesten Stand von `dev`, baut neu, startet 
 prüft am Ende, ob das Spiel antwortet. Laufende Spiele werden beim Stoppen gespeichert und laufen danach weiter;
 Spieler sehen kurz „verbinde neu“. Wartende Lobbys gehen beim Neustart verloren.
 
+## E-Mails für „Passwort vergessen“
+
+Wer bei seinem Profil eine E-Mail hinterlegt, kann ein vergessenes Passwort zurücksetzen
+(`/reset.html`, Link im Login der Lobby). Dafür braucht der Server einen Mailserver (SMTP).
+In `.env` eintragen (Vorlage in `.env.example`):
+
+```
+PUBLIC_URL=https://untexturedkingdoms.jan-schuettken.de
+SMTP_HOST=smtp.dein-anbieter.de
+SMTP_PORT=587
+SMTP_USER=spiel@jan-schuettken.de
+SMTP_PASSWORD=...
+SMTP_FROM=Untextured Kingdoms <spiel@jan-schuettken.de>
+```
+
+Die Zugangsdaten stehen beim Mail-Anbieter deiner Domain (oft „SMTP-Server“, Port 587 mit
+STARTTLS oder 465 mit SSL/TLS). Danach `docker compose up -d server`. Im Log steht dann
+`E-Mails über …`. Ohne `SMTP_HOST` werden keine Mails verschickt, der Link steht dann nur im Log:
+
+```bash
+docker compose logs server | grep reset.html
+```
+
 ## Balancing auf dem Server ändern und ins Repo bringen
 
 Was du im Balancing-Editor auf dem Server speicherst, gilt sofort für alle Spiele. Es liegt im Volume

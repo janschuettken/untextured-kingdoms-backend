@@ -14,6 +14,10 @@
 //!   Profil ändern (nur was mitkommt; `""` bei E-Mail/Bild löscht). Neues Passwort braucht
 //!   das alte. → wie `me`
 //!
+//! - `POST /api/account/forgot`    `{ login, lang? }` (Name oder E-Mail) → 204, immer (verrät nicht,
+//!   ob es den Account gibt). Hat er eine E-Mail, geht ein Link `…/reset.html?token=…` hin (1 Stunde gültig).
+//! - `POST /api/account/reset`     `{ token, password }` → `{ username, token }` (neues Passwort, gleich angemeldet)
+//!
 //! Fehler kommen als `{ "error": "account.…" }` (Schlüssel, der Client übersetzt).
 //! Passwörter werden mit Argon2 gehasht. Die Tabellen legt der Server beim
 //! Start selbst an (`server/migrations/`).
@@ -38,7 +42,13 @@ use tracing::{info, warn};
 #[derive(Clone)]
 pub struct Accounts {
     db: Option<PgPool>,
+    mailer: crate::mail::Mailer,
 }
+
+/// So lange gilt ein Link zum Zurücksetzen.
+const RESET_MINUTES: i64 = 60;
+/// Frühestens nach so vielen Sekunden geht ein neuer Link an denselben Account.
+const RESET_COOLDOWN_SECONDS: i64 = 120;
 
 impl Accounts {
     /// Mit der Datenbank aus `DATABASE_URL` verbinden und Tabellen anlegen.
@@ -46,21 +56,21 @@ impl Accounts {
     pub async fn from_env() -> Accounts {
         let Ok(url) = std::env::var("DATABASE_URL") else {
             info!("Keine DATABASE_URL: Accounts sind aus, gespielt wird mit Browser-Id");
-            return Accounts { db: None };
+            return Accounts { db: None, mailer: crate::mail::Mailer::from_env() };
         };
         let pool = match PgPoolOptions::new().max_connections(5).acquire_timeout(std::time::Duration::from_secs(5)).connect(&url).await {
             Ok(p) => p,
             Err(e) => {
                 warn!("Datenbank nicht erreichbar ({e}): Accounts sind aus");
-                return Accounts { db: None };
+                return Accounts { db: None, mailer: crate::mail::Mailer::from_env() };
             }
         };
         if let Err(e) = sqlx::migrate!("./migrations").run(&pool).await {
             warn!("Datenbank-Tabellen nicht angelegt ({e}): Accounts sind aus");
-            return Accounts { db: None };
+            return Accounts { db: None, mailer: crate::mail::Mailer::from_env() };
         }
         info!("Datenbank verbunden, Accounts sind an");
-        Accounts { db: Some(pool) }
+        Accounts { db: Some(pool), mailer: crate::mail::Mailer::from_env() }
     }
 }
 
@@ -78,6 +88,8 @@ pub fn router(accounts: Accounts) -> Router {
         .route("/api/account/login", post(login))
         .route("/api/account/me", post(me))
         .route("/api/account/profile", post(profile))
+        .route("/api/account/forgot", post(forgot))
+        .route("/api/account/reset", post(reset))
         .with_state(Arc::new(accounts))
 }
 
@@ -95,7 +107,118 @@ fn valid_token(token: &str) -> bool {
 }
 
 async fn status(State(acc): State<Arc<Accounts>>) -> Response {
-    Json(serde_json::json!({ "enabled": acc.db.is_some() })).into_response()
+    Json(serde_json::json!({ "enabled": acc.db.is_some(), "mail": acc.mailer.enabled() })).into_response()
+}
+
+fn sha256_hex(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Zufälliger Link-Schlüssel (32 Bytes, hex).
+fn new_reset_token() -> String {
+    use rand_core::RngCore;
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[derive(Deserialize)]
+struct ForgotBody {
+    login: String,
+    #[serde(default)]
+    lang: String,
+}
+
+async fn forgot(State(acc): State<Arc<Accounts>>, Json(b): Json<ForgotBody>) -> Response {
+    let Some(db) = &acc.db else { return fail(StatusCode::SERVICE_UNAVAILABLE, "account.disabled") };
+    let login = b.login.trim();
+    let row: Option<(i64, String, Option<String>, bool)> = sqlx::query_as(
+        "SELECT a.id, a.username, a.email, EXISTS (SELECT 1 FROM password_resets r WHERE r.account_id = a.id \
+           AND r.created_at > now() - make_interval(secs => $2)) \
+         FROM accounts a WHERE lower(a.username) = lower($1) OR lower(a.email) = lower($1)",
+    )
+    .bind(login)
+    .bind(RESET_COOLDOWN_SECONDS as f64)
+    .fetch_optional(db)
+    .await
+    .unwrap_or_else(|e| {
+        warn!("Passwort vergessen: {e}");
+        None
+    });
+    // Immer dieselbe Antwort: niemand soll so herausfinden, welche Namen oder Adressen es gibt.
+    let done = StatusCode::NO_CONTENT.into_response();
+    let Some((id, username, Some(email), recent)) = row else { return done };
+    if recent {
+        return done;
+    }
+    let token = new_reset_token();
+    let _ = sqlx::query("DELETE FROM password_resets WHERE account_id = $1 OR expires_at < now()").bind(id).execute(db).await;
+    let stored = sqlx::query("INSERT INTO password_resets (token_hash, account_id, expires_at) VALUES ($1, $2, now() + make_interval(mins => $3))")
+        .bind(sha256_hex(&token))
+        .bind(id)
+        .bind(RESET_MINUTES as i32)
+        .execute(db)
+        .await;
+    if let Err(e) = stored {
+        warn!("Passwort vergessen: {e}");
+        return done;
+    }
+    let link = format!("{}/reset.html?token={token}", acc.mailer.public_url);
+    let (subject, body) = if b.lang == "en" {
+        (
+            "Untextured Kingdoms: reset your password".to_string(),
+            format!("Hello {username},\n\nsomeone (hopefully you) asked to reset your password. Open this link within {RESET_MINUTES} minutes to choose a new one:\n\n{link}\n\nIf it wasn't you, just ignore this email. Your password stays the same.\n"),
+        )
+    } else {
+        (
+            "Untextured Kingdoms: Passwort zurücksetzen".to_string(),
+            format!("Hallo {username},\n\njemand (hoffentlich du) möchte dein Passwort zurücksetzen. Öffne innerhalb von {RESET_MINUTES} Minuten diesen Link und wähle ein neues:\n\n{link}\n\nWarst du das nicht, ignoriere diese Mail einfach. Dein Passwort bleibt dann, wie es ist.\n"),
+        )
+    };
+    let mailer = acc.mailer.clone();
+    // Im Hintergrund schicken: die Antwortzeit soll nicht verraten, ob es den Account gibt.
+    tokio::spawn(async move {
+        match mailer.send(&email, &subject, &body).await {
+            Ok(()) => info!("Link zum Zurücksetzen an {username} geschickt"),
+            Err(e) => warn!("Mail an {username} nicht verschickt: {e}"),
+        }
+    });
+    done
+}
+
+#[derive(Deserialize)]
+struct ResetBody {
+    token: String,
+    password: String,
+}
+
+async fn reset(State(acc): State<Arc<Accounts>>, Json(b): Json<ResetBody>) -> Response {
+    let Some(db) = &acc.db else { return fail(StatusCode::SERVICE_UNAVAILABLE, "account.disabled") };
+    if !password_ok(&b.password) {
+        return fail(StatusCode::BAD_REQUEST, "account.password_short");
+    }
+    let Some(hash) = hash_password(b.password).await else { return fail(StatusCode::INTERNAL_SERVER_ERROR, "account.error") };
+    // Link einlösen (gilt nur einmal) und Passwort setzen.
+    let row: Option<(String, String)> = match sqlx::query_as(
+        "WITH used AS (DELETE FROM password_resets WHERE token_hash = $1 AND expires_at > now() RETURNING account_id) \
+         UPDATE accounts SET password_hash = $2, last_login = now() WHERE id IN (SELECT account_id FROM used) \
+         RETURNING username, player_token",
+    )
+    .bind(sha256_hex(b.token.trim()))
+    .bind(&hash)
+    .fetch_optional(db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("Passwort zurücksetzen: {e}");
+            return fail(StatusCode::INTERNAL_SERVER_ERROR, "account.error");
+        }
+    };
+    let Some((username, token)) = row else { return fail(StatusCode::BAD_REQUEST, "account.reset_invalid") };
+    info!("Passwort von {username} zurückgesetzt");
+    Json(serde_json::json!({ "username": username, "token": token })).into_response()
 }
 
 #[derive(Deserialize)]
