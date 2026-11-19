@@ -49,7 +49,7 @@ impl World {
             if r.sell_above > 0 && have > r.sell_above {
                 let _ = self.trade(player, r.good, have - r.sell_above, true);
             } else if r.buy_below > 0 && have < r.buy_below {
-                let afford = if price.buy > 0 { stock.taler / price.buy } else { u32::MAX };
+                let afford = stock.taler.checked_div(price.buy).unwrap_or(u32::MAX);
                 let amount = (r.buy_below - have).min(afford).min(stock.room(r.good));
                 if amount > 0 {
                     let _ = self.trade(player, r.good, amount, false);
