@@ -356,7 +356,7 @@ impl World {
 
     /// Steht ein feindlicher Soldat oder König im Umkreis `army.enemy_block_radius`?
     /// Dann darf hier nicht gebaut, ausgebaut oder repariert werden.
-    pub(super) fn check_no_enemy(&self, player: u32, at: (f32, f32)) -> Result<(), protocol::Text> {
+    pub fn check_no_enemy(&self, player: u32, at: (f32, f32)) -> Result<(), protocol::Text> {
         let radius = self.economy.def.army.enemy_block_radius;
         if radius <= 0.0 {
             return Ok(());
