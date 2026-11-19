@@ -734,12 +734,13 @@ fn nearest_resource(world: &World, from: (i64, i64), want: &[ResourceKind], layo
                 if !want.contains(&map.resources[(y as u32 * map.width + x as u32) as usize]) {
                     continue;
                 }
-                // Nur Vorkommen, an die seine Leute herankommen.
-                if ![(-1, 0), (1, 0), (0, -1), (0, 1)].iter().any(|&(nx, ny)| reach.at(x + nx, y + ny)) {
+                // Nur Vorkommen, an die seine Leute herankommen; gemessen am Laufweg, nicht an
+                // der Luftlinie (ein Waldstreifen dazwischen ist ein Umweg).
+                let Some(walk) = [(-1, 0), (1, 0), (0, -1), (0, 1)].iter().filter_map(|&(nx, ny)| reach.walk(x + nx, y + ny)).min() else {
                     continue;
-                }
+                };
                 // Felder im Ring zählen weniger: dort baut er keine Abbaubetriebe hin.
-                let score = r + if layout.within(x, y, 2) { 12 } else { 0 };
+                let score = walk as i64 + if layout.within(x, y, 2) { 12 } else { 0 };
                 if best.is_none_or(|(_, s)| score < s) {
                     best = Some(((x, y), score));
                 }
@@ -802,7 +803,15 @@ pub fn find_site(
                 && r.y1 < mh
                 && (r.y0..=r.y1).all(|y| (r.x0..=r.x1).all(|x| free[(y * mw + x) as usize]))
         };
+        // Bester Platz: nah am Ziel, aber gemessen am Laufweg vom Bergfried. Was man nur über
+        // einen Umweg erreicht (etwa hinter einem Waldstreifen), zählt um den Umweg weiter weg.
+        let (sx, sy) = (start.0 as i64, start.1 as i64);
+        let mut best: Option<(i64, (u32, u32, u8))> = None;
         for r in 0..=SEARCH_RADIUS {
+            // Ein Platz im Ring r kostet mindestens r: weiter außen wird es nicht besser.
+            if best.is_some_and(|(score, _)| score <= r) {
+                break;
+            }
             for dy in -r..=r {
                 for dx in -r..=r {
                     if dx.abs().max(dy.abs()) != r {
@@ -819,16 +828,23 @@ pub fn find_site(
                         if !fits(&rect) {
                             continue;
                         }
+                        let (ex, ey) = entrance_of(&rect, rotation);
+                        let Some(walk) = reach.walk(ex as i64, ey as i64) else { continue };
+                        let straight = (ex as i64 - sx).abs().max((ey as i64 - sy).abs());
+                        let score = r + (walk as i64 - straight).max(0);
+                        if best.is_some_and(|(b, _)| score >= b) {
+                            continue;
+                        }
                         if world.check_placement(player, kind, (x as u32, y as u32), rotation, 1).is_err() {
                             continue;
                         }
-                        let (ex, ey) = entrance_of(&rect, rotation);
-                        if reach.at(ex as i64, ey as i64) {
-                            return Some((x as u32, y as u32, rotation));
-                        }
+                        best = Some((score, (x as u32, y as u32, rotation)));
                     }
                 }
             }
+        }
+        if let Some((_, site)) = best {
+            return Some(site);
         }
     }
     None
@@ -867,6 +883,8 @@ struct Reach {
     y0: i64,
     size: i64,
     seen: Vec<bool>,
+    /// Schritte vom Start (nur bei `flood`, sonst 0).
+    steps: Vec<u16>,
 }
 
 impl Reach {
@@ -897,7 +915,7 @@ impl Reach {
     fn flood(start: (i64, i64), start_open: bool, step: impl Fn(i64, i64, i64, i64) -> bool) -> Reach {
         let size = 2 * REACH_RADIUS + 1;
         let (x0, y0) = (start.0 - REACH_RADIUS, start.1 - REACH_RADIUS);
-        let mut reach = Reach { x0, y0, size, seen: vec![false; (size * size) as usize] };
+        let mut reach = Reach { x0, y0, size, seen: vec![false; (size * size) as usize], steps: vec![0; (size * size) as usize] };
         let mut queue = std::collections::VecDeque::new();
         if start_open {
             reach.mark(start.0, start.1);
@@ -910,7 +928,11 @@ impl Reach {
                     continue;
                 }
                 if step(x, y, dx, dy) {
+                    let d = reach.walk(x, y).unwrap_or(0).saturating_add(1);
                     reach.mark(nx, ny);
+                    if let Some(i) = reach.index(nx, ny) {
+                        reach.steps[i] = d;
+                    }
                     queue.push_back((nx, ny));
                 }
             }
@@ -923,7 +945,7 @@ impl Reach {
         let size = 2 * REACH_RADIUS + 1;
         let (x0, y0) = (center.0 - REACH_RADIUS, center.1 - REACH_RADIUS);
         let seen = (0..size * size).map(|i| inside(x0 + i % size, y0 + i / size)).collect();
-        Reach { x0, y0, size, seen }
+        Reach { x0, y0, size, seen, steps: vec![0; (size * size) as usize] }
     }
 
     fn index(&self, x: i64, y: i64) -> Option<usize> {
@@ -939,6 +961,11 @@ impl Reach {
 
     fn at(&self, x: i64, y: i64) -> bool {
         self.index(x, y).is_some_and(|i| self.seen[i])
+    }
+
+    /// Laufweg vom Start in Schritten, `None` = nicht erreichbar.
+    fn walk(&self, x: i64, y: i64) -> Option<u16> {
+        self.index(x, y).filter(|&i| self.seen[i]).map(|i| self.steps[i])
     }
 }
 
@@ -962,6 +989,29 @@ mod plan_tests {
 
     /// Jeden Grundriss auf jedem Startplatz ganz bauen (ohne Kosten): danach muss die Burg
     /// geschlossen sein. Prüft, dass die Linien wirklich dicht sind.
+    /// Hinter einem Waldstreifen liegt ein Platz zwar nah an der Luftlinie, aber der Weg
+    /// führt außen herum: dann lieber diesseits des Waldes bauen.
+    #[test]
+    fn baut_nach_laufweg_nicht_nach_luftlinie() {
+        let (w, h) = (100usize, 100usize);
+        let terrain: Vec<String> = (0..h).map(|_| "0".repeat(w)).collect();
+        // Wald in den Spalten 62..65, nur ganz unten offen.
+        let resources: Vec<String> = (0..h)
+            .map(|y| (0..w).map(|x| if (62..65).contains(&x) && y < 92 { 'W' } else { '.' }).collect())
+            .collect();
+        let text = format!("spawn 40 40\n[terrain]\n{}\n[resources]\n{}\n", terrain.join("\n"), resources.join("\n"));
+        let map = GameMap::parse(&text).unwrap();
+        let economy = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people().without_build_radius();
+        let mut world = World::new(map, economy);
+        world.spawn_player_at(1, (40, 40));
+        world.give_everything_for_tests(1);
+        let keep = world.buildings.iter().find(|b| b.owner == 1 && b.kind == BuildingKind::Keep).unwrap().clone();
+        let layout = Layout::new(&world, &keep, 12, BuildingKind::Gate, CastleLayout::Square);
+        // Gewünscht: gleich hinter dem Wald.
+        let (x, _, _) = find_site(&world, 1, BuildingKind::House, &layout, Some((67, 40))).unwrap();
+        assert!(x < 62, "Haus hinter dem Wald bei x = {x}");
+    }
+
     fn check_map(text: &str, players: usize) -> Vec<String> {
         let mut report = Vec::new();
         for style in [CastleLayout::Square, CastleLayout::Octagon, CastleLayout::Narrows] {
