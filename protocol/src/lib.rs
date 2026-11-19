@@ -250,6 +250,9 @@ pub enum ServerMsg {
         arrived: bool,
         /// Wie viele Handelskarren fahren (0 = sofort angekommen).
         carts: u32,
+        /// Beute: `from` ist ausgeschieden, `to` hat seinen König getötet.
+        #[serde(default)]
+        loot: bool,
     },
     /// Der König dieses Spielers ist tot: er scheidet aus, alles von ihm ist verschwunden.
     /// Geht an alle; ein ausgeschiedener Spieler bekommt es beim Verbinden noch einmal.

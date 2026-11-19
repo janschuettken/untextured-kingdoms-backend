@@ -1054,8 +1054,13 @@ impl World {
             target.1.clamp(0.0, self.map.height as f32 - 0.01),
         );
         let target_wall = self.is_walkway(player, target);
-        let chosen: Vec<usize> =
-            (0..self.units.len()).filter(|&k| self.units[k].owner == player && !self.units[k].is_civilian() && unit_ids.contains(&self.units[k].id)).collect();
+        // Soldaten, König und eigene Handelskarren (Handel oder Beute) lassen sich schicken.
+        let chosen: Vec<usize> = (0..self.units.len())
+            .filter(|&k| {
+                let u = &self.units[k];
+                u.owner == player && (!u.is_civilian() || u.trade.is_some()) && unit_ids.contains(&u.id)
+            })
+            .collect();
         let spots = self.formation(player, unit_ids, target, chosen.len(), target_wall);
         if append {
             // Wer noch unterwegs ist (oder schon Wegpunkte hat), merkt sich das Ziel für später.
@@ -1068,7 +1073,9 @@ impl World {
             let mut rest = Vec::new();
             for (&k, &spot) in chosen.iter().zip(&spots) {
                 let u = &mut self.units[k];
-                if u.path.is_empty() && u.waypoints.is_empty() && u.attack_order.is_none() {
+                // Ein Handelskarren auf seinem eigenen Weg zählt als frei: der erste Befehl ersetzt ihn.
+                let auto_cart = u.trade.as_ref().is_some_and(|d| !d.steered);
+                if auto_cart || (u.path.is_empty() && u.waypoints.is_empty() && u.attack_order.is_none()) {
                     rest.push(k);
                 } else {
                     u.waypoints.push(Waypoint { to: spot, wall: target_wall, cap });
@@ -1150,6 +1157,9 @@ impl World {
             u.layers = layers;
             u.target = Some(to);
             u.target_wall = wall;
+            if let Some(d) = &mut u.trade {
+                d.steered = true;
+            }
         }
         true
     }

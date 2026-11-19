@@ -306,6 +306,8 @@ impl World {
     pub(super) fn base_speed(&self, u: &Unit) -> f32 {
         if u.kind == UnitKind::King {
             self.economy.def.movement.king_speed
+        } else if u.kind == UnitKind::TradeCart {
+            self.economy.def.transport.cart_speed
         } else {
             self.soldier_speed(u.owner, u.kind)
         }
