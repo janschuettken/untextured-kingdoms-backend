@@ -17,6 +17,7 @@ pub use bridge::NEUTRAL;
 mod diplomacy;
 mod ballistics;
 mod combat;
+mod crowd;
 mod errand;
 mod enclosure;
 pub use enclosure::castle_closed;
@@ -193,6 +194,9 @@ impl Unit {
         self.is_transport() || matches!(self.kind, UnitKind::Worker | UnitKind::TradeCart)
     }
 }
+
+/// Abstand der Plätze in einer Formation (Felder).
+const FORMATION_GAP: f32 = 0.6;
 
 pub struct World {
     pub map: GameMap,
@@ -1308,7 +1312,6 @@ impl World {
     /// auf dem Wehrgang desselben Bauwerks; auf Türmen innerhalb der runden
     /// Plattform um die Turmmitte.
     fn formation(&self, player: u32, group: &[u32], target: (f32, f32), n: usize, wall: bool) -> Vec<(f32, f32)> {
-        const FORMATION_GAP: f32 = 0.6;
         let (w, h) = (self.map.width as i32, self.map.height as i32);
         let cell = |p: (f32, f32)| (p.0.floor() as i32, p.1.floor() as i32);
         let others: Vec<(f32, f32)> = self
@@ -1323,21 +1326,7 @@ impl World {
         let home = level(cx.clamp(0, w - 1), cy.clamp(0, h - 1));
         let on = self.occupied[(cy.clamp(0, h - 1) * w + cx.clamp(0, w - 1)) as usize];
         // Turm (Besatzung begrenzt): Mitte und Radius der runden Plattform.
-        let platform = if wall {
-            self.buildings
-                .iter()
-                .find(|b| b.id == on)
-                .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.at(b.level).garrison > 0))
-                .map(|b| {
-                    // Plattform groß genug für die Besatzung, aber innerhalb der Zinnen.
-                    let side = b.w.min(b.h) as f32;
-                    let crew = self.economy.building(b.kind).map_or(0, |d| d.at(b.level).garrison) as f32;
-                    let need = FORMATION_GAP * (crew / std::f32::consts::PI).sqrt() * 1.2;
-                    ((b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0), need.clamp(side * 0.3, side * 0.45))
-                })
-        } else {
-            None
-        };
+        let platform = if wall { self.platform(on) } else { None };
         let center = platform.map_or(target, |p| p.0);
         let fits = |p: (f32, f32)| {
             let (x, y) = cell(p);
@@ -1377,6 +1366,19 @@ impl World {
             spots.push(center);
         }
         spots
+    }
+
+    /// Turm (Besatzung begrenzt) mit dieser Nummer: Mitte und Radius seiner runden Plattform.
+    /// Groß genug für die Besatzung, aber innerhalb der Zinnen.
+    fn platform(&self, building: u32) -> Option<((f32, f32), f32)> {
+        let b = self.buildings.iter().find(|b| b.id == building)?;
+        let crew = self.economy.building(b.kind).map_or(0, |d| d.at(b.level).garrison);
+        if crew == 0 {
+            return None;
+        }
+        let side = b.w.min(b.h) as f32;
+        let need = FORMATION_GAP * (crew as f32 / std::f32::consts::PI).sqrt() * 1.2;
+        Some(((b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0), need.clamp(side * 0.3, side * 0.45)))
     }
 
     /// Gebäude mit `build_radius` nur im Umkreis des eigenen Bergfrieds:
@@ -1497,6 +1499,7 @@ impl World {
                 }
             }
         }
+        self.step_spread(dt);
         self.flush_buildings();
     }
 

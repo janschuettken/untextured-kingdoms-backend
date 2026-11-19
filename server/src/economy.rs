@@ -275,6 +275,10 @@ impl Economy {
         if !(def.movement.king_speed > 0.0 && def.movement.king_speed.is_finite()) {
             return Err("König: Geschwindigkeit muss größer als 0 sein".into());
         }
+        let mv = &def.movement;
+        if !(mv.spread_distance >= 0.0 && mv.spread_distance <= 3.0 && mv.spread_speed >= 0.0 && mv.spread_speed.is_finite()) {
+            return Err("Auseinanderrücken: Abstand 0 bis 3, Tempo nicht negativ".into());
+        }
         if def.base_capacity == 0 {
             return Err("base_capacity muss größer als 0 sein".into());
         }
