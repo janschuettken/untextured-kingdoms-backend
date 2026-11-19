@@ -35,6 +35,10 @@ range: number,
  */
 upkeep: number, 
 /**
+ * Essen je Zahltag (Einheiten aus `population.food`). Fehlt es, laufen die Soldaten langsamer.
+ */
+food: number, 
+/**
  * Fernkämpfer (Reichweite über `army.melee_range`) können diese Einheit nicht verletzen
  * (der König: nur Nahkämpfer können ihn töten).
  */

@@ -19,6 +19,9 @@ use std::{net::SocketAddr, sync::Arc};
 use axum::{routing::get, Router};
 use tracing::{info, warn};
 
+/// Version des Servers: Commit und Datum (siehe `build.rs`), für die Anzeige in der Lobby.
+pub const VERSION: &str = env!("UK_VERSION");
+
 #[tokio::main]
 async fn main() {
     // `server economy-canonical < datei`: economy.json im Format des Servers ausgeben

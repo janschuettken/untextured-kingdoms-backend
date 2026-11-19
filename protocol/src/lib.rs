@@ -23,7 +23,16 @@ pub enum ClientMsg {
     Ping { client_time: f64 },
     /// Bewegungsbefehl: Einheiten sollen zum Punkt (x, y) laufen.
     /// Der Server prüft Besitz und sucht selbst den Weg.
-    MoveUnits { unit_ids: Vec<u32>, x: f32, y: f32 },
+    /// Eine Gruppe läuft im Tempo ihrer langsamsten Einheit; `fast` (zweiter Befehl gleich
+    /// hinterher, wie ein Doppelklick) lässt jede so schnell laufen, wie sie kann.
+    MoveUnits {
+        unit_ids: Vec<u32>,
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        #[ts(optional)]
+        fast: Option<bool>,
+    },
     /// Angriffsbefehl (Rechtsklick auf einen Feind): die Einheiten laufen hin, verfolgen das
     /// Ziel und greifen an, bis es fällt. Wer dem Ziel nichts anhaben kann (Fernkämpfer gegen
     /// König oder Gebäude) oder ein Verbündeter ist, läuft nur hin.
@@ -281,6 +290,19 @@ pub enum TradeMode {
     Carts,
 }
 
+/// Wann Fernkämpfer treffen können (Einstellung des Spiels in der Lobby).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ShotMode {
+    /// Wurfbahn mit dem Tempo für die größte Reichweite (flach oder steil): stößt sie an
+    /// Gelände, Gebäude oder Mauer, wird nicht geschossen. Über Mauern hinweg geht es.
+    #[default]
+    Ballistic,
+    /// Der Schütze muss das Ziel sehen: eine gerade, freie Linie.
+    LineOfSight,
+}
+
 /// Nachrichten vom Client an die Lobby (WebSocket `/lobby`).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -295,8 +317,12 @@ pub enum LobbyClientMsg {
     CreateGame { map: String },
     /// Einem wartenden Spiel beitreten. Laufende Spiele nehmen niemanden auf.
     JoinGame { game_id: u32 },
-    /// Das eigene Spiel verlassen (wartend oder laufend).
-    LeaveGame,
+    /// Ein eigenes Spiel verlassen: das laufende mit dieser Id, ohne Id das wartende.
+    LeaveGame {
+        #[serde(default)]
+        #[ts(optional)]
+        game_id: Option<u32>,
+    },
     /// Startplatz wechseln (nur auf einen freien).
     TakeSlot { slot: u32 },
     /// Nur Gastgeber, nur vor dem Start: andere Karte.
@@ -331,6 +357,8 @@ pub enum LobbyClientMsg {
     },
     /// Nur Gastgeber, nur vor dem Start: wie Waren zwischen Verbündeten ankommen.
     SetTradeMode { mode: TradeMode },
+    /// Nur Gastgeber, nur vor dem Start: wann Fernkämpfer treffen (Wurfbahn oder Sichtlinie).
+    SetShotMode { mode: ShotMode },
 }
 
 /// Stärke eines Computergegners. Was jede Stufe tut, steht im Server (`server/src/ai/`).
@@ -353,9 +381,11 @@ pub enum AiLevel {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
 pub enum LobbyServerMsg {
-    /// Antwort auf `hello`: die eigene öffentliche Id und die Karten zur Auswahl.
-    Welcome { you: String, maps: Vec<String> },
-    /// Kompletter Stand, kommt bei jeder Änderung neu.
+    /// Antwort auf `hello`: die eigene öffentliche Id, die Karten zur Auswahl und
+    /// die Version des Servers (Commit und Datum).
+    Welcome { you: String, maps: Vec<String>, server_version: String },
+    /// Kompletter Stand, kommt bei jeder Änderung neu. `current` ist das wartende
+    /// Spiel, in dem man sitzt; laufende eigene Spiele stehen in `games` (`mine`).
     State { games: Vec<GameSummary>, current: Option<LobbyGame> },
     Pong { client_time: f64 },
     Rejected { text: Text },
@@ -381,6 +411,12 @@ pub struct GameSummary {
     pub host_name: String,
     pub players: u32,
     pub max_players: u32,
+    /// Man spielt selbst mit (laufende Spiele: man kann weiterspielen).
+    pub mine: bool,
+    /// Läuft, steht aber still: kein Mensch im Spiel (oder Tempo 0).
+    pub paused: bool,
+    /// Wer mitspielt (für den Admin: „Spielen als“ hinter jedem Spieler).
+    pub slots: Vec<LobbySlot>,
 }
 
 /// Das Spiel, in dem man selbst ist, mit allen Startplätzen.
@@ -399,6 +435,9 @@ pub struct LobbyGame {
     /// Handel unter Verbündeten: sofort oder mit Karren.
     #[serde(default)]
     pub trade_mode: TradeMode,
+    /// Fernkampf: Wurfbahn oder Sichtlinie.
+    #[serde(default)]
+    pub shot_mode: ShotMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -607,6 +646,11 @@ pub struct Shot {
     pub from_wall: bool,
     pub to_wall: bool,
     pub kind: UnitKind,
+    /// Höhe (Welt) am Start und am Ziel.
+    pub from_h: f32,
+    pub to_h: f32,
+    /// Wurfbahn: Steigung beim Abschuss (tan) und Reichweite des Schützen. `None` = gerade Linie.
+    pub arc: Option<(f32, f32)>,
 }
 
 /// Ziel eines Angriffsbefehls.
@@ -983,6 +1027,10 @@ pub struct BuildingDef {
     /// Grundfläche in Feldern.
     pub w: u32,
     pub h: u32,
+    /// Höhe über dem Boden (Welt, 1 = ein Feld) für Pfeile: was darunter fliegt, stößt an.
+    /// Je Ausbaustufe kommt ein Stockwerk dazu (nicht bei Befestigungen). 0 = Grundwert je Art.
+    #[serde(default)]
+    pub height: f32,
     /// Höchstens so viele pro Spieler.
     #[serde(default)]
     pub max_per_player: Option<u32>,
@@ -1149,6 +1197,9 @@ pub struct UnitDef {
     /// Sold in Talern je Zahltag (siehe `army.upkeep_seconds`).
     #[serde(default)]
     pub upkeep: u32,
+    /// Essen je Zahltag (Einheiten aus `population.food`). Fehlt es, laufen die Soldaten langsamer.
+    #[serde(default)]
+    pub food: u32,
     /// Fernkämpfer (Reichweite über `army.melee_range`) können diese Einheit nicht verletzen
     /// (der König: nur Nahkämpfer können ihn töten).
     #[serde(default)]
@@ -1194,6 +1245,12 @@ pub struct ArmyState {
     pub upkeep: u32,
     /// Am letzten Zahltag reichte das Geld nicht.
     pub unpaid: bool,
+    /// Essen aller Soldaten je Zahltag.
+    #[serde(default)]
+    pub food: u32,
+    /// Am letzten Zahltag reichte das Essen nicht.
+    #[serde(default)]
+    pub hungry: bool,
 }
 
 /// Lauftempo der Einheiten, die nicht transportieren (Felder pro Sekunde).

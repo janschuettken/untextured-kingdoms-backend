@@ -12,6 +12,7 @@ use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod army;
 mod diplomacy;
+mod ballistics;
 mod combat;
 mod errand;
 mod enclosure;
@@ -76,6 +77,9 @@ pub struct Unit {
     /// Sekunden bis zur nächsten Wegsuche beim Verfolgen.
     #[serde(default)]
     chase_timer: f32,
+    /// Gruppenmarsch: höchstens so schnell (Felder pro Sekunde), damit die Gruppe zusammenbleibt.
+    #[serde(default)]
+    speed_cap: Option<f32>,
 }
 
 impl Unit {
@@ -100,6 +104,7 @@ impl Unit {
             attack_cooldown: 0.0,
             attack_order: None,
             chase_timer: 0.0,
+            speed_cap: None,
         }
     }
 
@@ -164,6 +169,8 @@ pub struct World {
     pay_timer: HashMap<u32, f32>,
     /// Spieler, deren Sold am letzten Zahltag nicht gereicht hat.
     unpaid: HashSet<u32>,
+    /// Spieler, deren Soldaten am letzten Zahltag nicht satt wurden.
+    army_hungry: HashSet<u32>,
     /// Neue Betriebe: trägt der Arbeiter selbst? Im Spiel immer ja; Tests für Träger schalten es ab.
     pub(crate) worker_carries_default: bool,
     /// Zufall für Treffer im Fernkampf (Deckung), siehe `combat.rs`.
@@ -172,6 +179,8 @@ pub struct World {
     hub_goods: HashMap<u32, storage::HubGoods>,
     /// Wie Waren zwischen Verbündeten ankommen.
     trade_mode: protocol::TradeMode,
+    /// Fernkampf: Wurfbahn oder Sichtlinie (Lobby), siehe `ballistics.rs`.
+    shot_mode: protocol::ShotMode,
     /// Spieler, deren König gefallen ist (siehe `combat.rs`).
     eliminated: BTreeSet<u32>,
     /// Bündnis je Spieler; wer fehlt, kämpft allein (eigene Nummer). Siehe `diplomacy.rs`.
@@ -255,8 +264,10 @@ impl World {
             gather_status: HashMap::new(),
             pay_timer: HashMap::new(),
             unpaid: HashSet::new(),
+            army_hungry: HashSet::new(),
             hub_goods: HashMap::new(),
             trade_mode: protocol::TradeMode::default(),
+            shot_mode: protocol::ShotMode::default(),
             eliminated: BTreeSet::new(),
             teams: HashMap::new(),
             winners: None,
@@ -1005,6 +1016,12 @@ impl World {
     /// Liefert false, wenn keine der Einheiten das Ziel erreichen kann; dann
     /// läuft auch keine los. Wer nicht hinkommt, bleibt stehen.
     pub fn order_move(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32)) -> bool {
+        self.order_move_as(player, unit_ids, target, false)
+    }
+
+    /// Wie `order_move`. Eine Gruppe läuft im Tempo ihrer langsamsten Einheit; mit `fast`
+    /// (zweiter Befehl gleich hinterher) läuft jede so schnell sie kann.
+    pub fn order_move_as(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32), fast: bool) -> bool {
         if !target.0.is_finite() || !target.1.is_finite() {
             return false;
         }
@@ -1021,14 +1038,14 @@ impl World {
         for &(x, y) in &shut {
             self.map.nav.set_blocked(x, y, true);
         }
-        let ok = self.order_move_planned(player, unit_ids, target);
+        let ok = self.order_move_planned(player, unit_ids, target, fast);
         for &(x, y) in &shut {
             self.map.nav.set_blocked(x, y, false);
         }
         ok
     }
 
-    fn order_move_planned(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32)) -> bool {
+    fn order_move_planned(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32), fast: bool) -> bool {
         let target = (
             target.0.clamp(0.0, self.map.width as f32 - 0.01),
             target.1.clamp(0.0, self.map.height as f32 - 0.01),
@@ -1089,8 +1106,15 @@ impl World {
         if orders.is_empty() {
             return false;
         }
+        // Gruppe: alle im Tempo der langsamsten (bei nur einer oder `fast`: keine Bremse).
+        let cap = if fast || orders.len() < 2 {
+            None
+        } else {
+            orders.iter().map(|o| self.base_speed(&self.units[o.0])).min_by(f32::total_cmp)
+        };
         for (k, to, wall, (path, layers)) in orders {
             let u = &mut self.units[k];
+            u.speed_cap = cap;
             u.path = path;
             u.layers = layers;
             u.target = Some(to);
@@ -1255,13 +1279,17 @@ impl World {
         let soldier: Vec<f32> = self.units.iter().map(|u| if u.kind.is_soldier() { self.soldier_speed(u.owner, u.kind) } else { 0.0 }).collect();
         let nav = &self.map.nav;
         for (k, unit) in self.units.iter_mut().enumerate() {
-            let speed = match unit.kind {
+            let full = match unit.kind {
                 UnitKind::King => king,
                 UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Cart | UnitKind::TradeCart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
             };
+            let speed = unit.speed_cap.map_or(full, |c| full.min(c));
+            if unit.path.is_empty() {
+                unit.speed_cap = None;
+            }
             // Auf Wegen schneller (oben auf der Mauer zählt der Boden nicht).
             let road = if unit.on_wall { 1.0 } else { nav.speed_at(unit.pos) };
             let mut budget = speed * road * dt;

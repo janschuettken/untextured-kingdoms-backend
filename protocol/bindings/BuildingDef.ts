@@ -16,6 +16,11 @@ export type BuildingDef = { kind: BuildingKind, category: BuildingCategory,
  */
 w: number, h: number, 
 /**
+ * Höhe über dem Boden (Welt, 1 = ein Feld) für Pfeile: was darunter fliegt, stößt an.
+ * Je Ausbaustufe kommt ein Stockwerk dazu (nicht bei Befestigungen). 0 = Grundwert je Art.
+ */
+height: number, 
+/**
  * Höchstens so viele pro Spieler.
  */
 max_per_player: number | null, 

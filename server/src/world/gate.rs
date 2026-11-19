@@ -155,10 +155,16 @@ impl World {
         u.path = if u.target.is_some() { vec![u.pos] } else { Vec::new() };
     }
 
+    /// Darf dieser Spieler hinauf? Auf eigene und verbündete Bauwerke immer, auf einen
+    /// zerstörten Bergfried (Tür eingeschlagen) jeder.
+    pub(super) fn climbable(&self, b: &protocol::BuildingState, owner: u32) -> bool {
+        self.allied(b.owner, owner) || (b.kind == protocol::BuildingKind::Keep && b.hp == 0)
+    }
+
     /// Felder, auf denen Einheiten dieses Spielers oben laufen können (auch bei Verbündeten).
     fn walk_tiles(&self, owner: u32) -> HashSet<usize> {
         let mut set = HashSet::new();
-        for b in self.buildings.iter().filter(|b| self.allied(b.owner, owner)) {
+        for b in self.buildings.iter().filter(|b| self.climbable(b, owner)) {
             let Some(def) = self.economy.building(b.kind) else { continue };
             if !def.at(b.level).walkway {
                 continue;
@@ -178,7 +184,7 @@ impl World {
         let id = self.occupied[t];
         id != 0
             && self.buildings.iter().find(|b| b.id == id).is_some_and(|b| {
-                self.allied(b.owner, owner)
+                self.climbable(b, owner)
                     && self.economy.building(b.kind).is_some_and(|d| d.at(b.level).walkway)
             })
     }
@@ -190,7 +196,7 @@ impl World {
         let open = |&(x, y): &(i64, i64)| self.map.nav.is_open(x as i32, y as i32);
         self.buildings
             .iter()
-            .filter(|b| self.allied(b.owner, owner))
+            .filter(|b| self.climbable(b, owner))
             .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.at(b.level).stairs))
             .map(|b| {
                 let (cx, cy) = passage(b);
