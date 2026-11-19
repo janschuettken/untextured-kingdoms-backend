@@ -64,6 +64,25 @@ pub struct Profile {
     pub recipes: Vec<String>,
     /// Angriffe, `None` = greift nie an.
     pub attack: Option<Attack>,
+    /// Sobald er eins hiervon hat, baut er am Mauerring nebenher (sonst erst, wenn die
+    /// Bauliste durch ist). So ist die Burg früh zu.
+    pub walls_after: Option<BuildingKind>,
+    /// Mauer geht vor: das Material für das nächste Gebäude der Bauliste hält er dafür nicht zurück.
+    pub walls_first: bool,
+    /// Ist der Ring zu: Wehrgang mit Zinnen (Stufe 2) auf Mauern und Tore (dort die Treppe).
+    pub battlements: bool,
+    /// Zusätzliche Türme auf dem Ring, etwa alle so viele Mauerfelder (0 = nur die Ecktürme).
+    pub tower_spacing: u32,
+    /// Fernkämpfer auch auf die Wehrgänge der Mauer stellen (nicht nur Bergfried und Türme).
+    pub man_walls: bool,
+    /// Beschädigte Befestigungen reparieren, sobald kein Feind mehr in der Nähe ist.
+    pub repair: bool,
+    /// Fehlt eine Ware so viele Sekunden lang, baut er einen Betrieb mehr dafür (höchstens
+    /// `expand_max` mehr je Art als die Bauliste). `None` = nie.
+    pub expand_seconds: Option<f32>,
+    pub expand_max: u32,
+    /// Schnelle Mauer (Palisade), solange für die richtige das Material fehlt; wird später ersetzt.
+    pub quick_wall: Option<BuildingKind>,
 }
 
 /// Wann und wie er angreift.
@@ -103,57 +122,8 @@ pub struct Trade {
 impl Profile {
     pub fn for_level(level: AiLevel) -> Profile {
         match level {
+            // Leicht: die frühere mittlere Stufe, aber mit früherer Mauer.
             AiLevel::Easy => Profile {
-                think_seconds: 8.0,
-                build_order: vec![
-                    (Woodcutter, 1),
-                    (House, 1),
-                    (Woodcutter, 2),
-                    (Storehouse, 1),
-                    (Orchard, 1),
-                    (Granary, 1),
-                    (Sawmill, 1),
-                    (House, 2),
-                    (CartShed, 1),
-                    (Quarry, 1),
-                    (SpearMaker, 1),
-                    (Armory, 1),
-                    (Woodcutter, 4),
-                    (Barracks, 1),
-                    (Woodcutter, 5),
-                ],
-                upgrades: vec![(CartShed, 2)],
-                stock_targets: vec![(Good::Boards, 40), (Good::Stone, 80), (Good::Spear, 4)],
-                army_size: 8,
-                army_units: vec![UnitKind::Spearman],
-                queue_per_barracks: 1,
-                garrison_ranged: false,
-                wall_kind: Palisade,
-                main_gate: Gate,
-                corner_towers: false,
-                wall_gap: 11,
-                walls_per_think: 4,
-                wall_wood_reserve: 15,
-                road_kind: Some(WoodPath),
-                roads_all_sides: false,
-                roads_to_producers: false,
-                roads_first: false,
-                roads_per_think: 3,
-                trade: None,
-                walls: true,
-                castle: CastleLayout::Square,
-                recipes: Vec::new(),
-                attack: Some(Attack {
-                    first_minutes: 25.0,
-                    wave_min: 5,
-                    home_guard: 2,
-                    superiority: 1.6,
-                    cooldown_seconds: 360.0,
-                    siege_seconds: 120.0,
-                    retreat_below: 0.4,
-                }),
-            },
-            AiLevel::Normal => Profile {
                 think_seconds: 4.0,
                 build_order: vec![
                     (Woodcutter, 2),
@@ -209,13 +179,24 @@ impl Profile {
                     home_guard: 4,
                     superiority: 1.3,
                     cooldown_seconds: 240.0,
-                    siege_seconds: 150.0,
+                    siege_seconds: 90.0,
                     retreat_below: 0.35,
                 }),
+                walls_after: Some(Barracks),
+                walls_first: false,
+                battlements: false,
+                tower_spacing: 0,
+                man_walls: false,
+                repair: false,
+                expand_seconds: Some(180.0),
+                expand_max: 1,
+                quick_wall: Some(Palisade),
             },
-            AiLevel::Hard => Profile {
+            // Mittel: die frühere schwere Stufe, dazu Zinnen, Ecktürme und Besatzung auf der Mauer.
+            AiLevel::Normal => Profile {
                 think_seconds: 2.0,
                 build_order: vec![
+                    (Market, 1),
                     (Woodcutter, 3),
                     (House, 1),
                     (Storehouse, 1),
@@ -233,7 +214,6 @@ impl Profile {
                     (Bowyer, 1),
                     (House, 3),
                     (Stonemason, 1),
-                    (Market, 1),
                     (Quarry, 2),
                     (Sawmill, 2),
                     (Smithy, 1),
@@ -241,7 +221,7 @@ impl Profile {
                     (House, 4),
                     (Stonemason, 2),
                 ],
-                upgrades: vec![(CartShed, 3), (House, 2), (Barracks, 2), (HighWall, 2)],
+                upgrades: vec![(CartShed, 3), (House, 2), (Barracks, 2)],
                 stock_targets: vec![
                     (Good::Boards, 80),
                     (Good::Stone, 120),
@@ -254,7 +234,7 @@ impl Profile {
                 army_units: vec![UnitKind::Spearman, UnitKind::Archer, UnitKind::LightSwordsman, UnitKind::Archer],
                 queue_per_barracks: 3,
                 garrison_ranged: true,
-                wall_kind: HighWall,
+                wall_kind: Wall,
                 main_gate: Gatehouse,
                 corner_towers: true,
                 wall_gap: 12,
@@ -275,16 +255,130 @@ impl Profile {
                 walls: true,
                 castle: CastleLayout::Narrows,
                 recipes: Vec::new(),
-                // Große Wellen: wartet, bis viele beisammen sind, und greift dann an.
                 attack: Some(Attack {
                     first_minutes: 14.0,
                     wave_min: 12,
                     home_guard: 4,
                     superiority: 1.1,
                     cooldown_seconds: 180.0,
-                    siege_seconds: 180.0,
+                    siege_seconds: 120.0,
                     retreat_below: 0.3,
                 }),
+                walls_after: Some(Quarry),
+                walls_first: false,
+                battlements: true,
+                tower_spacing: 20,
+                man_walls: true,
+                repair: true,
+                expand_seconds: Some(120.0),
+                expand_max: 2,
+                quick_wall: Some(Palisade),
+            },
+            // Schwer: schließt die Burg sehr früh, Zinnen, viele Türme, Mauer voll besetzt
+            // (auch mit Armbrustschützen), kauft zu und baut aus, was fehlt; große Wellen,
+            // die Tore und Bergfried einreißen.
+            AiLevel::Hard => Profile {
+                think_seconds: 1.0,
+                // Der Markt kostet nichts: gleich zu Beginn, dann kann er von Anfang an zukaufen.
+                // Viele Holzfäller früh, Holz ist am Anfang knapp.
+                build_order: vec![
+                    (Market, 1),
+                    (Woodcutter, 4),
+                    (House, 1),
+                    (Woodcutter, 6),
+                    (Storehouse, 1),
+                    (Orchard, 1),
+                    (Granary, 1),
+                    (House, 2),
+                    (Quarry, 1),
+                    (Sawmill, 1),
+                    (Woodcutter, 8),
+                    (Quarry, 2),
+                    (CartShed, 1),
+                    (SpearMaker, 1),
+                    (Armory, 1),
+                    (Barracks, 1),
+                    (Stonemason, 1),
+                    (Bowyer, 1),
+                    (House, 3),
+                    (Quarry, 3),
+                    (Woodcutter, 10),
+                    (Sawmill, 2),
+                    (Smithy, 1),
+                    (Orchard, 2),
+                    (House, 4),
+                    (Stonemason, 2),
+                    (Barracks, 2),
+                    (Woodcutter, 12),
+                    (House, 5),
+                    (Orchard, 3),
+                ],
+                upgrades: vec![(CartShed, 3), (Barracks, 2), (Bowyer, 2), (House, 2)],
+                stock_targets: vec![
+                    (Good::Boards, 80),
+                    (Good::Stone, 150),
+                    (Good::Blocks, 100),
+                    (Good::Spear, 10),
+                    (Good::Longbow, 10),
+                    (Good::Crossbow, 8),
+                    (Good::Sword, 8),
+                ],
+                army_size: 40,
+                army_units: vec![
+                    UnitKind::Spearman,
+                    UnitKind::Archer,
+                    UnitKind::Crossbowman,
+                    UnitKind::LightSwordsman,
+                    UnitKind::Spearman,
+                    UnitKind::Crossbowman,
+                    UnitKind::Archer,
+                ],
+                queue_per_barracks: 4,
+                garrison_ranged: true,
+                wall_kind: Wall,
+                main_gate: Gatehouse,
+                corner_towers: true,
+                wall_gap: 12,
+                walls_per_think: 16,
+                wall_wood_reserve: 8,
+                road_kind: Some(StonePath),
+                roads_all_sides: true,
+                roads_to_producers: true,
+                roads_first: false,
+                roads_per_think: 10,
+                trade: Some(Trade {
+                    sell_above: vec![(Good::Fruit, 120), (Good::Stone, 250), (Good::Meat, 120)],
+                    // Eisen (Torhaus, Kaserne und Bogner Stufe 2, Armbrüste), Rüstung und Armbrüste
+                    // kauft er zu, statt lange Ketten aufzubauen.
+                    buy_up_to: vec![
+                        (Good::Iron, 12, Barracks),
+                        (Good::LightArmor, 4, Barracks),
+                        (Good::Crossbow, 2, Barracks),
+                    ],
+                    buy_missing: true,
+                    taler_reserve: 40,
+                }),
+                walls: true,
+                castle: CastleLayout::Narrows,
+                recipes: vec!["make_crossbow".into()],
+                attack: Some(Attack {
+                    first_minutes: 15.0,
+                    wave_min: 14,
+                    home_guard: 6,
+                    superiority: 1.0,
+                    cooldown_seconds: 150.0,
+                    siege_seconds: 120.0,
+                    retreat_below: 0.3,
+                }),
+                walls_after: Some(Quarry),
+                walls_first: true,
+                battlements: true,
+                tower_spacing: 12,
+                man_walls: true,
+                repair: true,
+                expand_seconds: Some(60.0),
+                expand_max: 3,
+                quick_wall: Some(Palisade),
             },
         }
     }
@@ -341,6 +435,12 @@ impl Profile {
             }
         }
         prof.upgrades.retain(|&(k, _)| bw(k) > 0);
+        // Mauer nebenher ab einem Gebäude, das der Charakter streicht: dann ab der Kaserne.
+        if let Some(k) = prof.walls_after {
+            if !prof.build_order.iter().any(|e| e.0 == k) {
+                prof.walls_after = prof.build_order.iter().any(|e| e.0 == Barracks).then_some(Barracks);
+            }
+        }
 
         // Mauer, Tor, Türme, Wege.
         match pick(p, &[Palisade, Wall, HighWall], prof.wall_kind) {
@@ -349,6 +449,9 @@ impl Profile {
         }
         if bw(Gate) == 0 {
             prof.walls = false;
+        }
+        if bw(Palisade) == 0 || prof.wall_kind == Palisade {
+            prof.quick_wall = None;
         }
         prof.main_gate = pick(p, &[Gate, Gatehouse], prof.main_gate).unwrap_or(Gate);
         prof.corner_towers = bw(Tower) > 0 && (prof.corner_towers || bw(Tower) >= 200);
@@ -493,8 +596,8 @@ mod tests {
 
     #[test]
     fn neutraler_charakter_aendert_nichts() {
-        let a = Profile::for_level(AiLevel::Normal);
-        let b = Profile::build(AiLevel::Normal, &personality::neutral(), &eco());
+        let a = Profile::for_level(AiLevel::Easy);
+        let b = Profile::build(AiLevel::Easy, &personality::neutral(), &eco());
         assert_eq!(a.build_order, b.build_order);
         assert_eq!(a.army_units, b.army_units);
         assert_eq!(a.army_size, b.army_size);
@@ -509,7 +612,7 @@ mod tests {
         p.units.insert(UnitKind::Spearman, 0);
         p.units.insert(UnitKind::Crossbowman, 100);
         p.aggression = 0;
-        let prof = Profile::build(AiLevel::Hard, &p, &eco());
+        let prof = Profile::build(AiLevel::Normal, &p, &eco());
         assert!(!prof.build_order.iter().any(|e| e.0 == Market));
         assert!(prof.trade.is_none());
         assert_eq!(prof.build_order.iter().filter(|e| e.0 == House).map(|e| e.1).max(), Some(8));

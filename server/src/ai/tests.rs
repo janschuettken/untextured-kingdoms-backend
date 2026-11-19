@@ -125,8 +125,11 @@ fn schwerer_computer_baut_torhaus_wege_und_grosse_armee() {
         *kinds.entry(format!("{:?}", b.kind)).or_insert(0) += 1;
     }
     assert!(roads >= 5, "nur {roads} Wegfelder: {kinds:?}");
-    // Schwer sperrt auf dieser Karte nur die Engstelle (Graben ringsum): wenige Mauern, aber dicht.
-    assert!(count(&world, BuildingKind::HighWall) >= 5, "{kinds:?}");
+    // Schwer sperrt auf dieser Karte nur die Engstelle (Graben ringsum): wenige Mauern, aber dicht,
+    // mit Zinnen (Stufe 2).
+    let walls: Vec<_> = world.buildings.iter().filter(|b| b.owner == 1 && b.kind == BuildingKind::Wall).collect();
+    assert!(walls.len() >= 5, "{kinds:?}");
+    assert!(walls.iter().filter(|b| b.level >= 2).count() >= 3, "keine Zinnen: {kinds:?}");
     assert!(world.castle_status(1).closed, "Burg offen: {:?} {kinds:?}", world.castle_status(1));
     assert!(count(&world, BuildingKind::Market) >= 1);
     assert!(count(&world, BuildingKind::Barracks) >= 2);
@@ -223,5 +226,67 @@ fn alle_charaktere_bauen_eine_burg() {
         let st = world.castle_status(p);
         println!("{id}: {n} Gebäude, {} Soldaten, Burg zu {} {kinds:?}", world.stock_state(p).army.soldiers, st.closed);
         assert!(n >= 12, "{id}: nur {n} Gebäude");
+    }
+}
+
+/// Verlauf zum Ansehen (nicht im normalen Testlauf): `cargo test -p server verlauf -- --ignored --nocapture`.
+/// Umgebungsvariablen: AI_MAP (Dateiname in maps/), AI_LEVELS (z. B. "hard,normal,easy,easy"), AI_MINUTES.
+#[test]
+#[ignore]
+fn verlauf() {
+    let map = std::env::var("AI_MAP").unwrap_or("4-player-zufall-256-682070261.txt".into());
+    let text = std::fs::read_to_string(format!("{}/maps/{map}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let levels: Vec<AiLevel> = std::env::var("AI_LEVELS")
+        .unwrap_or("hard,normal,easy".into())
+        .split(',')
+        .map(|s| match s {
+            "easy" => AiLevel::Easy,
+            "normal" => AiLevel::Normal,
+            _ => AiLevel::Hard,
+        })
+        .collect();
+    let minutes: u32 = std::env::var("AI_MINUTES").ok().and_then(|s| s.parse().ok()).unwrap_or(40);
+    let mut tick = 0;
+    let n = levels.len() as u32;
+    let world = play_watch(&text, &levels, minutes, |world, ais| {
+        tick += 1;
+        if tick % 12 != 1 {
+            return;
+        }
+        for p in 1..=n {
+            if world.is_eliminated(p) {
+                continue;
+            }
+            let kinds = |k: BuildingKind| world.buildings.iter().filter(|b| b.owner == p && b.kind == k).count();
+            let walls: Vec<_> = world.buildings.iter().filter(|b| b.owner == p && matches!(b.kind, BuildingKind::Palisade | BuildingKind::Wall | BuildingKind::HighWall)).collect();
+            let st = world.stock_state(p);
+            let g = |good: protocol::Good| st.goods.iter().find(|x| x.good == good).map_or(0, |x| x.amount);
+            let camp = ais[(p - 1) as usize].campaign.as_ref().map_or(String::new(), |c| format!(" WELLE {}→{}", c.units.len(), c.target));
+            println!(
+                "min {:>2} P{p}: geb {:>3} stbr {} pal {:>3} zu {} mauer {:>3} (L2 {:>3}) tore {}+{} türme {} sold {:>2} oben {:>2} armb {} | holz {} br {} st {} bl {} eisen {} taler {}{camp}",
+                ais[0].clock as u32 / 60,
+                world.buildings.iter().filter(|b| b.owner == p).count(),
+                kinds(BuildingKind::Quarry),
+                kinds(BuildingKind::Palisade),
+                if world.castle_status(p).closed { "J" } else { "n" },
+                walls.len(),
+                walls.iter().filter(|b| b.level >= 2).count(),
+                kinds(BuildingKind::Gate),
+                kinds(BuildingKind::Gatehouse),
+                kinds(BuildingKind::Tower) + kinds(BuildingKind::HighTower),
+                st.army.soldiers,
+                world.units.iter().filter(|u| u.owner == p && u.is_on_wall()).count(),
+                world.units.iter().filter(|u| u.owner == p && u.kind == protocol::UnitKind::Crossbowman).count(),
+                g(protocol::Good::Wood),
+                g(protocol::Good::Boards),
+                g(protocol::Good::Stone),
+                g(protocol::Good::Blocks),
+                g(protocol::Good::Iron),
+                st.taler,
+            );
+        }
+    });
+    for p in 1..=n {
+        println!("Spieler {p}: ausgeschieden {}", world.is_eliminated(p));
     }
 }

@@ -1,18 +1,20 @@
 //! Angriffe: Stärke der Gegner grob einschätzen, eine Welle sammeln, hinmarschieren.
 //!
 //! Die Welle läuft zur gegnerischen Burg (so weit sie kommt, vor geschlossenen Toren und
-//! Mauern), kämpft dort mit allem in Reichweite (Kampf-Grundgerüst in `world/combat.rs`),
-//! bleibt eine Weile und geht dann wieder heim. Verluste lassen sie früher umkehren
-//! (`retreat_below`). Mauern und Tore angreifen kann sie noch nicht.
+//! Mauern) und belagert sie dann (`siege`): Nahkämpfer schlagen erst die Verteidiger vor
+//! der Mauer, dann eine Bresche (das schwächste nahe Tor- oder Mauerstück), dann den
+//! Bergfried ein; fällt der, steht der König unten und wird erschlagen. Fernkämpfer
+//! schießen auf alles, was sie treffen können. Kommt die Welle eine Weile nicht weiter
+//! oder hat sie zu viel verloren (`retreat_below`), geht sie heim.
 //!
 //! Geschätzt wird aus dem, was jeder Spieler sieht: Soldaten auf der Karte (oben auf
 //! Mauern zählen mehr), Türme und eine geschlossene Mauer. Eine Höchstentfernung gibt
 //! es nicht: das Ziel ist der schwächste Gegner, bei Gleichstand der nächste. Verbündete
 //! greift er nie an.
 
-use protocol::{BuildingKind, UnitKind};
+use protocol::{AttackTarget, BuildingCategory, BuildingKind, ClientMsg, UnitKind};
 
-use crate::world::World;
+use crate::world::{Unit, World};
 
 /// Wert eines Soldaten: Leben mal Schaden, Fernkämpfer etwas mehr.
 pub fn unit_power(world: &World, kind: UnitKind) -> f32 {
@@ -60,6 +62,119 @@ pub struct Campaign {
     pub goal: (f32, f32),
     /// Seit wann alle angekommen sind bzw. nicht weiterkommen.
     pub arrived: Option<f32>,
+    /// Zuletzt hatte jemand aus der Welle ein Angriffsziel (dann kommt sie voran).
+    pub last_progress: f32,
+}
+
+/// So nah (Felder) muss ein Feind sein, damit ein Nahkämpfer der Welle sich ihm zuwendet,
+/// bevor er an Mauer oder Bergfried weiterschlägt.
+const ENGAGE: f32 = 12.0;
+
+/// Befehle für eine Welle vor (oder in) der gegnerischen Burg. Nur wer gerade kein
+/// Angriffsziel hat, bekommt ein neues; so laufen angefangene Angriffe weiter.
+pub fn siege(world: &World, me: u32, target: u32, wave: &[&Unit]) -> Vec<ClientMsg> {
+    let ranged = |u: &Unit| world.economy.unit(u.kind).is_some_and(|d| world.economy.is_ranged(d.range));
+    let free: Vec<&Unit> = wave.iter().copied().filter(|u| u.attack_order().is_none()).collect();
+    if free.is_empty() {
+        return Vec::new();
+    }
+    // Feinde (Soldaten, König), die man von hier aus treffen kann.
+    let foes: Vec<&Unit> = world
+        .units
+        .iter()
+        .filter(|u| (u.kind.is_soldier() || u.kind == UnitKind::King) && world.can_attack(me, u.owner))
+        .collect();
+    let mut orders: Vec<(AttackTarget, Vec<u32>)> = Vec::new();
+    let mut give = |t: AttackTarget, id: u32| match orders.iter_mut().find(|o| o.0 == t) {
+        Some(o) => o.1.push(id),
+        None => orders.push((t, vec![id])),
+    };
+    let mut breakers: Vec<&Unit> = Vec::new();
+    for &u in &free {
+        let reach = world.economy.unit(u.kind).map_or(0.0, |d| d.range);
+        let is_ranged = ranged(u);
+        let immune = |f: &Unit| is_ranged && world.economy.unit(f.kind).is_some_and(|d| d.ranged_immune);
+        // Fernkämpfer: alles in Reichweite (auch oben auf der Mauer). Nahkämpfer: wer am Boden nahe steht.
+        let near = foes
+            .iter()
+            .filter(|f| !immune(f))
+            .filter(|f| if is_ranged { true } else { f.is_on_wall() == u.is_on_wall() })
+            .map(|f| (f, (f.pos.0 - u.pos.0).hypot(f.pos.1 - u.pos.1)))
+            .filter(|&(_, d)| d <= if is_ranged { reach + 4.0 } else { ENGAGE })
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((f, _)) = near {
+            give(AttackTarget::Unit { id: f.id }, u.id);
+        } else if !is_ranged {
+            breakers.push(u);
+        }
+    }
+    if !breakers.is_empty() {
+        if let Some(t) = breach_target(world, me, target, &breakers) {
+            for u in &breakers {
+                give(t, u.id);
+            }
+        }
+    }
+    orders.into_iter().map(|(target, unit_ids)| ClientMsg::Attack { unit_ids, target }).collect()
+}
+
+/// Was die Nahkämpfer als Nächstes einreißen: steht der König unten und ist erreichbar, ihn;
+/// sonst den Bergfried, wenn man hinkommt; sonst das schwächste Tor- oder Mauerstück nahe
+/// der Stelle, an der der Weg zum Bergfried endet (die Bresche).
+fn breach_target(world: &World, me: u32, target: u32, group: &[&Unit]) -> Option<AttackTarget> {
+    let n = group.len() as f32;
+    let mid = group.iter().fold((0.0, 0.0), |a, u| (a.0 + u.pos.0 / n, a.1 + u.pos.1 / n));
+    let start = (mid.0 as i32, mid.1 as i32);
+    let gates: std::collections::HashSet<(i32, i32)> = world
+        .buildings
+        .iter()
+        .filter(|b| crate::world::is_gate(b.kind) && !world.allied(me, b.owner))
+        .flat_map(crate::world::passage_tiles)
+        .map(|(x, y)| (x as i32, y as i32))
+        .collect();
+    // Bis wohin kommt man zu Fuß in Richtung `goal`, ohne durch feindliche Tore?
+    let walk = |goal: (i32, i32)| -> (bool, (i32, i32)) {
+        let mut path = world.map.nav.find_path(start, goal);
+        if let Some(at) = path.iter().position(|p| gates.contains(p)) {
+            path.truncate(at);
+        }
+        let end = path.last().copied().unwrap_or(start);
+        let left = ((end.0 - goal.0) as f32).hypot((end.1 - goal.1) as f32);
+        (left <= 2.5, end)
+    };
+    if let Some(king) = world.units.iter().find(|u| u.owner == target && u.kind == UnitKind::King && !u.is_on_wall()) {
+        if walk((king.pos.0 as i32, king.pos.1 as i32)).0 {
+            return Some(AttackTarget::Unit { id: king.id });
+        }
+    }
+    let keep = world.buildings.iter().find(|b| b.owner == target && b.kind == BuildingKind::Keep)?;
+    let door = keep.entrance.map_or((keep.x as i32 + keep.w as i32 / 2, keep.y as i32 + keep.h as i32 + 1), |e| (e.0 as i32, e.1 as i32));
+    let (open, end) = walk(door);
+    if open {
+        return Some(AttackTarget::Building { id: keep.id });
+    }
+    // Bresche: Befestigung nahe am Wegende, schwache Stücke bevorzugt (Lebenspunkte zählen
+    // wie ein paar Felder mehr Weg).
+    let fort = |b: &&protocol::BuildingState| {
+        b.owner != me
+            && b.kind != BuildingKind::Keep
+            && world.can_attack(me, b.owner)
+            && world.economy.building(b.kind).is_some_and(|d| d.category == BuildingCategory::Fortification)
+    };
+    world
+        .buildings
+        .iter()
+        .filter(fort)
+        .map(|b| {
+            let dx = (b.x as f32 - end.0 as f32).max(end.0 as f32 - (b.x + b.w) as f32).max(0.0);
+            let dy = (b.y as f32 - end.1 as f32).max(end.1 as f32 - (b.y + b.h) as f32).max(0.0);
+            (b, dx.hypot(dy) + b.hp as f32 / 150.0)
+        })
+        .filter(|&(_, score)| score < 40.0)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(b, _)| AttackTarget::Building { id: b.id })
+        // Keine Befestigung in der Nähe (etwa Wald davor): dann eben den Bergfried versuchen.
+        .or(Some(AttackTarget::Building { id: keep.id }))
 }
 
 /// Ziel einer Welle: der Spieler mit der kleinsten geschätzten Stärke, dazu die Stelle,

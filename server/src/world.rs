@@ -113,6 +113,16 @@ impl Unit {
         !self.path.is_empty()
     }
 
+    /// Laufender Angriffsbefehl (für die Computergegner).
+    pub fn attack_order(&self) -> Option<protocol::AttackTarget> {
+        self.attack_order
+    }
+
+    /// Wohin sie zuletzt geschickt wurde und ob das oben auf dem Wehrgang liegt.
+    pub fn destination(&self) -> Option<((f32, f32), bool)> {
+        self.target.map(|t| (t, self.target_wall))
+    }
+
     /// Träger und Karren gehorchen keinen Befehlen, sie arbeiten von selbst.
     fn is_transport(&self) -> bool {
         matches!(self.kind, UnitKind::Carrier | UnitKind::Cart)

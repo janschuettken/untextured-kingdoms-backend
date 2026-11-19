@@ -310,6 +310,11 @@ impl World {
         }
     }
 
+    /// Darf hier gerade gebaut werden (kein Feind im Umkreis, siehe `check_no_enemy`)?
+    pub fn enemy_near(&self, player: u32, at: (f32, f32)) -> bool {
+        self.check_no_enemy(player, at).is_err()
+    }
+
     /// Steht ein feindlicher Soldat oder König im Umkreis `army.enemy_block_radius`?
     /// Dann darf hier nicht gebaut, ausgebaut oder repariert werden.
     pub(super) fn check_no_enemy(&self, player: u32, at: (f32, f32)) -> Result<(), protocol::Text> {

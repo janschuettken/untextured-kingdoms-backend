@@ -54,6 +54,10 @@ const ROAD_STONE_RESERVE: u32 = 25;
 const THREAT_RADIUS: f32 = 30.0;
 /// So oft prüft er, ob die fertige Mauer dicht ist.
 const SEAL_SECONDS: f32 = 30.0;
+/// Über so viel Taler (zur Reserve dazu) kauft er zu, was ihm zuletzt gefehlt hat ...
+const SPARE_TALER: u32 = 80;
+/// ... höchstens so viel je Ware und Überlegung.
+const SPARE_BATCH: u32 = 15;
 /// Soldaten, die weiter als so viele Felder vom Sammelpunkt stehen, holt er zurück.
 const RALLY_SLACK: f32 = 7.0;
 
@@ -83,6 +87,21 @@ pub struct Computer {
     layout: Option<Layout>,
     /// Frühestens dann die nächste Welle.
     next_attack: f32,
+    /// Was der Mauer gerade fehlt (zum Zukaufen).
+    wall_need: Vec<GoodAmount>,
+    /// Waren, die in dieser Überlegung gefehlt haben.
+    short_now: std::collections::HashSet<Good>,
+    /// Seit wann eine Ware fehlt.
+    short_since: HashMap<Good, f32>,
+    /// Ausgebaute Produktion: so viele Betriebe dieser Art will er (über die Bauliste hinaus).
+    extra: HashMap<BuildingKind, u32>,
+    /// Türme auf dem Ring, die sich nicht bauen ließen (oben links), bis zu dieser Zeit.
+    tower_skip: HashMap<(i64, i64), f32>,
+    /// Hat der Mauerring noch offene Stücke, für die gerade Material fehlt oder die er gerade setzt?
+    ring_busy: bool,
+    /// Ist die eigene Burg zu (alle paar Sekunden neu geprüft)?
+    closed: bool,
+    next_closed_check: f32,
 }
 
 impl Computer {
@@ -104,6 +123,14 @@ impl Computer {
             next_attack,
             layout: None,
             next_seal: 0.0,
+            short_now: Default::default(),
+            wall_need: Vec::new(),
+            short_since: HashMap::new(),
+            extra: HashMap::new(),
+            tower_skip: HashMap::new(),
+            closed: false,
+            ring_busy: false,
+            next_closed_check: 0.0,
         }
     }
 
@@ -147,54 +174,95 @@ impl Computer {
     fn think_with(&mut self, world: &World, layout: &Layout) -> Vec<ClientMsg> {
         let stock = world.stock_state(self.player);
         let mut cmds = Vec::new();
-        // Erst die Bauliste; ist sie durch, der Mauerring, dann Wege, dann Ausbauten.
-        // (Mauer und Wege früher bremsen die Wirtschaft zu sehr, besonders bei wenig Holz.)
+        self.short_now.clear();
+        self.wall_need.clear();
+        if self.clock >= self.next_closed_check {
+            self.next_closed_check = self.clock + 5.0;
+            self.closed = crate::world::castle_closed(world, self.player);
+        }
+        // Erst die Bauliste. Der Mauerring kommt nebenher, sobald das Profil es will
+        // (`walls_after`), sonst erst, wenn die Bauliste durch ist; dann Wege, dann Ausbauten.
         let next = self.build_next(world, layout, &stock, &mut cmds);
-        if let Next::Idle = next {
+        let idle = matches!(next, Next::Idle);
+        let walls_on = idle || self.profile.walls_after.is_some_and(|k| self.count(world, k) > 0);
+        if walls_on {
             // Mauer und Wege teilen sich, was über der Reserve liegt.
             let mut budget = Budget::new(&stock, self.profile.wall_wood_reserve);
+            match &next {
+                // Was eben gebaut wurde, ist schon ausgegeben.
+                Next::Placed(Some(kind)) => budget.pay(world, *kind),
+                // Das nächste Gebäude der Bauliste bekommt sein Material zuerst (geht die Mauer vor,
+                // wartet die Bauliste ohnehin bis auf das Nötigste, siehe `paused`).
+                Next::Waiting(kind, _) => budget.pay(world, *kind),
+                _ => {}
+            }
             let before = cmds.len();
             // Pflaster zuerst (wenn das Profil es will): kostet nur Stein, die Mauer braucht Blöcke.
             // Aber erst, wenn ein Tor steht: das braucht Holz und Stein, die Wege auch.
-            let roads_first = self.profile.roads_first && self.count(world, BuildingKind::Gate) + self.count(world, BuildingKind::Gatehouse) > 0;
-            if roads_first {
+            let roads_first = self.profile.roads_first && self.gates_built(world) > 0;
+            if roads_first && idle {
                 self.build_roads(world, layout, &mut budget, true, &mut cmds);
             }
             let walls_pending = self.build_walls(world, layout, &mut budget, &mut cmds);
+            if !self.ring_busy {
+                self.fortify(world, layout, &mut budget, &mut cmds);
+            }
             // Wartet die Mauer auf Material (meist Bretter fürs Tor), keine Wege: die
             // brauchen dasselbe Holz.
-            if !roads_first && !walls_pending {
+            if idle && !roads_first && !walls_pending {
                 self.build_roads(world, layout, &mut budget, true, &mut cmds);
             }
-            if cmds.len() == before && !walls_pending {
+            if idle && cmds.len() == before && !walls_pending {
                 self.upgrade(world, &stock, &mut cmds);
             }
         }
         self.configure(world, &stock, &mut cmds);
-        let missing = match next {
-            Next::Waiting(missing) => missing,
-            // Bauliste durch, aber noch kein Tor (etwa weil Stein fehlt) oder das Torhaus fehlt:
-            // dafür zukaufen.
-            Next::Idle if self.count(world, BuildingKind::Barracks) > 0 => {
-                if self.count(world, BuildingKind::Gate) + self.count(world, BuildingKind::Gatehouse) == 0 {
-                    shortfall(world, &stock, BuildingKind::Gate)
-                } else if layout.gates().iter().any(|g| g.0 == BuildingKind::Gatehouse) && self.count(world, BuildingKind::Gatehouse) == 0 {
-                    shortfall(world, &stock, BuildingKind::Gatehouse)
-                } else {
-                    Vec::new()
-                }
-            }
+        let mut missing = match &next {
+            Next::Waiting(_, missing) => missing.clone(),
             _ => Vec::new(),
         };
+        // Mauer dran, aber noch kein Tor (etwa weil Stein fehlt) oder das Torhaus fehlt:
+        // dafür zukaufen.
+        if walls_on && self.profile.walls {
+            if self.gates_built(world) == 0 {
+                missing.extend(shortfall(world, &stock, layout.gates().first().map_or(BuildingKind::Gate, |g| g.0)));
+            } else if layout.gates().iter().any(|g| g.0 == BuildingKind::Gatehouse) && self.count(world, BuildingKind::Gatehouse) == 0 {
+                missing.extend(shortfall(world, &stock, BuildingKind::Gatehouse));
+            }
+        }
+        for m in &missing {
+            self.short_now.insert(m.good);
+        }
+        missing.extend(std::mem::take(&mut self.wall_need));
+        self.repair(world, &stock, &mut cmds);
         self.trade(world, &stock, &missing, &mut cmds);
         self.train(world, &stock, &mut cmds);
         self.guard_king(world, &mut cmds);
-        let defending = self.defend(world, &mut cmds);
+        let defending = self.defend(world, layout, &mut cmds);
         if !defending {
             self.attack(world, layout, &mut cmds);
         }
         self.rally(world, layout, &mut cmds);
+        self.track_shortage(world);
+        // Mit Feinden in der Nähe darf man dort nicht bauen, ausbauen oder reparieren.
+        cmds.retain(|m| self.build_spot(world, m).is_none_or(|at| !world.enemy_near(self.player, at)));
         cmds
+    }
+
+    /// Wo ein Bau-, Ausbau- oder Reparaturbefehl wirkt (Mitte), sonst `None`.
+    fn build_spot(&self, world: &World, msg: &ClientMsg) -> Option<(f32, f32)> {
+        let center = |b: &protocol::BuildingState| (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
+        match msg {
+            ClientMsg::PlaceBuilding { kind, x, y, rotation, .. } => {
+                let d = world.economy.building(*kind)?;
+                let (w, h) = if rotation % 2 == 1 { (d.h, d.w) } else { (d.w, d.h) };
+                Some((*x as f32 + w as f32 / 2.0, *y as f32 + h as f32 / 2.0))
+            }
+            ClientMsg::UpgradeBuilding { building_id } | ClientMsg::RepairBuilding { building_id } => {
+                world.buildings.iter().find(|b| b.id == *building_id).map(center)
+            }
+            _ => None,
+        }
     }
 
     /// Ein Befehl wurde abgelehnt (sollte selten sein, er prüft vorher).
@@ -221,13 +289,16 @@ impl Computer {
         // Fehlt etwas, das er (noch) nicht herstellen und nicht kaufen kann, nimmt er das
         // nächste Gebäude der Liste, statt ewig zu warten.
         let (kind, near) = loop {
-            let Some((kind, near)) = self.next_goal(world, stock) else { return Next::Idle };
+            let Some((kind, near)) = self.next_goal(world, stock) else {
+                // Bauliste wartet auf die Mauer: nicht als „fertig“ zählen (keine Wege, Ausbauten).
+                return if self.paused(world, stock) { Next::Placed(None) } else { Next::Idle };
+            };
             if self.affordable(world, stock, kind) {
                 break (kind, near);
             }
             let missing = shortfall(world, stock, kind);
             if missing.iter().all(|g| self.can_get(world, g.good)) {
-                return Next::Waiting(missing);
+                return Next::Waiting(kind, missing);
             }
             debug!("Computer {}: {kind:?} braucht {missing:?}, kann er nicht herstellen", self.player);
             self.skip_until.insert(kind, self.clock + RETRY_SECONDS);
@@ -236,13 +307,14 @@ impl Computer {
             Some((x, y, rotation)) => {
                 debug!("Computer {}: baut {kind:?} bei {x},{y}", self.player);
                 cmds.push(ClientMsg::PlaceBuilding { kind, x, y, rotation, level: 1 });
+                Next::Placed(Some(kind))
             }
             None => {
                 debug!("Computer {}: kein Platz für {kind:?}", self.player);
                 self.skip_until.insert(kind, self.clock + RETRY_SECONDS);
+                Next::Placed(None)
             }
         }
-        Next::Placed
     }
 
     /// Kann er an diese Ware kommen: ein eigener Betrieb stellt sie her (auf seiner
@@ -297,11 +369,31 @@ impl Computer {
         if full && self.count(world, BuildingKind::Storehouse) < 4 && ready(BuildingKind::Storehouse) {
             return Some((BuildingKind::Storehouse, None));
         }
+        // Mauer geht vor (`walls_first`): solange die Burg offen ist, wartet die Bauliste;
+        // nur bei reichlich Holz geht es nebenher weiter.
+        // Ausgebaute Produktion (eine Ware fehlte lange).
+        if let Some((&k, _)) = self.extra.iter().find(|&(&k, &n)| self.count(world, k) < n && ready(k)) {
+            return Some((k, None));
+        }
+        // Wartet die Bauliste auf die Mauer, kommen nur Abbaubetriebe (Holz, Stein) und das
+        // Nötigste fürs Heer (Kaserne, Waffen) dazwischen.
+        let paused = self.paused(world, stock);
+        let raw = |k: BuildingKind| {
+            world.economy.building(k).is_some_and(|d| matches!(d.category, BuildingCategory::Raw | BuildingCategory::Military))
+                || k == BuildingKind::Armory
+        };
         self.profile
             .build_order
             .iter()
+            .filter(|&&(k, _)| !paused || raw(k))
             .find(|&&(k, n)| self.count(world, k) < n && ready(k))
             .map(|&(k, _)| (k, None))
+    }
+
+    /// Wartet die Bauliste, bis die Burg zu ist (`walls_first`)?
+    fn paused(&self, world: &World, stock: &StockState) -> bool {
+        let started = self.profile.walls && self.profile.walls_after.is_some_and(|k| self.count(world, k) > 0);
+        self.profile.walls_first && started && self.ring_busy && !self.closed && have(stock, Good::Wood) < 60
     }
 
     /// Werkstatt (Sägewerk, Steinmetz), die schon einmal steht, noch einmal neben ein Lager weit
@@ -399,7 +491,7 @@ impl Computer {
     /// Steht die Mauer, kommen (je nach Profil) Ecktürme dazu.
     /// `true`, solange am Ring noch etwas zu tun ist (dann wartet er mit Ausbauten).
     fn build_walls(&mut self, world: &World, layout: &Layout, budget: &mut Budget, cmds: &mut Vec<ClientMsg>) -> bool {
-        if !self.profile.walls || self.count(world, BuildingKind::Barracks) == 0 {
+        if !self.profile.walls {
             return false;
         }
         let p = self.player;
@@ -416,11 +508,17 @@ impl Computer {
                 continue;
             }
             if !budget.can_pay(world, kind) {
+                self.short_now.extend(budget.short(world, kind));
+                // Das Material dafür hält er zurück, sonst frisst die Mauer es weg.
+                budget.pay(world, kind);
                 waiting = true;
                 continue;
             }
-            if world.check_placement(p, kind, (x, y), rotation, 1).is_err() {
-                self.gate_skip.insert(i, self.clock + RETRY_SECONDS);
+            if let Err(e) = world.check_placement(p, kind, (x, y), rotation, 1) {
+                // Feinde in der Nähe (etwa nachdem sie das Tor eingerissen haben): bald wieder
+                // versuchen, sonst bleibt die Lücke lange offen.
+                let wait = if e.key == "error.enemy_near" { 10.0 } else { RETRY_SECONDS };
+                self.gate_skip.insert(i, self.clock + wait);
                 continue;
             }
             budget.pay(world, kind);
@@ -433,6 +531,7 @@ impl Computer {
         }
         let kind = self.profile.wall_kind;
         let mut placed = 0;
+        self.ring_busy = true;
         for (x, y) in layout.ring_tiles() {
             if x < 0 || y < 0 || layout.is_gate_tile(world, x, y) {
                 continue;
@@ -445,9 +544,12 @@ impl Computer {
             if taken {
                 continue;
             }
-            if placed >= self.profile.walls_per_think || !budget.can_pay(world, kind) {
+            if placed >= self.profile.walls_per_think {
                 return true;
             }
+            // Reicht es nicht für die richtige Mauer, erst eine schnelle (Palisade): Hauptsache zu.
+            // Später ersetzt `fortify` sie durch die richtige.
+            let Some(kind) = self.wall_piece(world, budget) else { return true };
             if world.check_placement(p, kind, (x, y), 0, 1).is_err() {
                 continue;
             }
@@ -455,6 +557,7 @@ impl Computer {
             cmds.push(ClientMsg::PlaceBuilding { kind, x, y, rotation: 0, level: 1 });
             placed += 1;
         }
+        self.ring_busy = placed > 0;
         if placed > 0 {
             return true;
         }
@@ -463,6 +566,7 @@ impl Computer {
         if self.clock >= self.next_seal {
             self.next_seal = self.clock + SEAL_SECONDS;
             let st = world.castle_status(p);
+            let kind = self.wall_piece(world, budget).unwrap_or(kind);
             if let (false, Some((x, y))) = (st.closed, st.gap) {
                 if !layout.is_gate_tile(world, x as i64, y as i64) && budget.can_pay(world, kind) && world.check_placement(p, kind, (x, y), 0, 1).is_ok() {
                     budget.pay(world, kind);
@@ -497,12 +601,211 @@ impl Computer {
         waiting
     }
 
+    /// Welches Mauerstück er jetzt setzen kann: das richtige, sonst das schnelle. Fehlt für
+    /// das richtige etwas, merkt er es sich (fehlt lange: ausbauen; mit Markt: zukaufen).
+    fn wall_piece(&mut self, world: &World, budget: &Budget) -> Option<BuildingKind> {
+        let kind = self.profile.wall_kind;
+        if budget.can_pay(world, kind) {
+            return Some(kind);
+        }
+        let short = budget.short(world, kind);
+        self.short_now.extend(short.iter().copied());
+        if let Some(cost) = world.economy.building(kind).map(|d| level_cost(d, 1)) {
+            for c in cost.into_iter().filter(|c| short.contains(&c.good)) {
+                if !self.wall_need.iter().any(|w| w.good == c.good) {
+                    self.wall_need.push(GoodAmount { good: c.good, amount: c.amount * 4 });
+                }
+            }
+        }
+        self.profile.quick_wall.filter(|&q| budget.can_pay(world, q))
+    }
+
+    /// Wie viele Tore (einfach oder Torhaus) er hat.
+    fn gates_built(&self, world: &World) -> u32 {
+        self.count(world, BuildingKind::Gate) + self.count(world, BuildingKind::Gatehouse)
+    }
+
+    /// Ring steht: mehr Türme auf der Mauer (`tower_spacing`), dann Zinnen (`battlements`):
+    /// Stufe 2 erst für die Tore (Treppe hinauf), dann Türme, dann die Mauerstücke.
+    fn fortify(&mut self, world: &World, layout: &Layout, budget: &mut Budget, cmds: &mut Vec<ClientMsg>) {
+        if !self.profile.walls || self.gates_built(world) == 0 {
+            return;
+        }
+        let p = self.player;
+        // Schnelle Mauer (Palisade) durch die richtige ersetzen: abreißen und im selben Zug
+        // neu setzen, so ist die Lücke nie offen.
+        if let Some(quick) = self.profile.quick_wall.filter(|&q| q != self.profile.wall_kind) {
+            let kind = self.profile.wall_kind;
+            let mut swapped = 0;
+            for b in world.buildings.iter().filter(|b| b.owner == p && b.kind == quick) {
+                if swapped >= self.profile.walls_per_think / 2 || !budget.can_pay(world, kind) {
+                    break;
+                }
+                if world.enemy_near(p, (b.x as f32 + 0.5, b.y as f32 + 0.5)) {
+                    continue;
+                }
+                budget.pay(world, kind);
+                cmds.push(ClientMsg::DemolishBuilding { building_id: b.id });
+                cmds.push(ClientMsg::PlaceBuilding { kind, x: b.x, y: b.y, rotation: 0, level: 1 });
+                swapped += 1;
+            }
+        }
+        if self.profile.tower_spacing > 0 && self.profile.corner_towers {
+            if let Some((x, y)) = self.next_ring_tower(world, layout) {
+                if budget.can_pay(world, BuildingKind::Tower) {
+                    budget.pay(world, BuildingKind::Tower);
+                    cmds.push(ClientMsg::PlaceBuilding { kind: BuildingKind::Tower, x, y, rotation: 0, level: 1 });
+                } else {
+                    self.short_now.extend(budget.short(world, BuildingKind::Tower));
+                }
+            }
+        }
+        if !self.profile.battlements {
+            return;
+        }
+        let rank = |k: BuildingKind| match k {
+            BuildingKind::Gate => Some(0),
+            BuildingKind::Tower | BuildingKind::HighTower => Some(1),
+            BuildingKind::Palisade | BuildingKind::Wall | BuildingKind::HighWall => Some(2),
+            _ => None,
+        };
+        let mut todo: Vec<&protocol::BuildingState> =
+            world.buildings.iter().filter(|b| b.owner == p && b.level < 2 && rank(b.kind).is_some()).collect();
+        // Erst die Tore, dann Türme, dann Mauern; die Mauer zuerst am Haupttor.
+        let main = layout.gates().first().map_or(layout.mid, |g| (g.1 as i64, g.2 as i64));
+        todo.sort_by_key(|b| (rank(b.kind), (b.x as i64 - main.0).abs() + (b.y as i64 - main.1).abs()));
+        let mut done = 0;
+        for b in todo {
+            if done >= self.profile.walls_per_think {
+                break;
+            }
+            let Some(cost) = world.economy.building(b.kind).and_then(|d| d.levels.get(b.level as usize)).map(|l| l.cost.clone()) else {
+                continue;
+            };
+            if !budget.take(&cost) {
+                self.short_now.extend(budget.short_cost(&cost));
+                break;
+            }
+            cmds.push(ClientMsg::UpgradeBuilding { building_id: b.id });
+            done += 1;
+        }
+    }
+
+    /// Nächster zusätzlicher Turm auf dem Ring: ein Mauerfeld, das von allen Türmen und
+    /// Toren mindestens `tower_spacing` Felder weg ist. Liefert die Ecke oben links (3x3).
+    fn next_ring_tower(&mut self, world: &World, layout: &Layout) -> Option<(u32, u32)> {
+        let p = self.player;
+        let spacing = self.profile.tower_spacing as i64;
+        let mut centers: Vec<(i64, i64)> = world
+            .buildings
+            .iter()
+            .filter(|b| b.owner == p && matches!(b.kind, BuildingKind::Tower | BuildingKind::HighTower))
+            .map(|b| (b.x as i64 + b.w as i64 / 2, b.y as i64 + b.h as i64 / 2))
+            .collect();
+        // Ecktürme, die noch gehen (nicht am Hang), zählen, als stünden sie schon.
+        centers.extend(
+            layout
+                .corner_towers()
+                .into_iter()
+                .filter(|&(x, y)| x >= 0 && y >= 0 && world.check_placement(p, BuildingKind::Tower, (x as u32, y as u32), 0, 1).is_ok())
+                .map(|(x, y)| (x + 1, y + 1)),
+        );
+        let gates = layout.gates();
+        let gate_rects: Vec<(i64, i64, i64, i64)> = world
+            .buildings
+            .iter()
+            .filter(|b| b.owner == p && is_gate(b.kind))
+            .map(|b| (b.x as i64, b.y as i64, (b.x + b.w) as i64 - 1, (b.y + b.h) as i64 - 1))
+            .collect();
+        let _ = gates;
+        let own_wall = |x: i64, y: i64| {
+            x >= 0
+                && y >= 0
+                && world.buildings.iter().any(|b| {
+                    b.owner == p && matches!(b.kind, BuildingKind::Palisade | BuildingKind::Wall | BuildingKind::HighWall) && b.x as i64 == x && b.y as i64 == y
+                })
+        };
+        for (x, y) in layout.ring_tiles() {
+            if self.tower_skip.get(&(x, y)).is_some_and(|&t| self.clock < t) || !own_wall(x, y) {
+                continue;
+            }
+            let far = centers.iter().all(|c| (c.0 - x).abs().max((c.1 - y).abs()) >= spacing);
+            let off_gate = gate_rects.iter().all(|&(x0, y0, x1, y1)| {
+                let dx = (x0 - x).max(x - x1).max(0);
+                let dy = (y0 - y).max(y - y1).max(0);
+                dx.max(dy) >= 3
+            });
+            if !far || !off_gate {
+                continue;
+            }
+            let corner = ((x - 1).max(0) as u32, (y - 1).max(0) as u32);
+            // Auf Probe mit dem jetzigen Lager; reicht es nicht, später noch einmal.
+            match world.check_placement(p, BuildingKind::Tower, corner, 0, 1) {
+                Ok(()) => return Some(corner),
+                Err(e) if e.key == "error.not_enough" => return None,
+                Err(_) => {
+                    self.tower_skip.insert((x, y), self.clock + RETRY_SECONDS * 4.0);
+                }
+            }
+        }
+        None
+    }
+
+    /// Beschädigte Befestigungen (und den Bergfried) ausbessern, eine je Überlegung.
+    fn repair(&self, world: &World, stock: &StockState, cmds: &mut Vec<ClientMsg>) {
+        if !self.profile.repair {
+            return;
+        }
+        let p = self.player;
+        let damaged = world
+            .buildings
+            .iter()
+            .filter(|b| b.owner == p)
+            .filter(|b| world.economy.building(b.kind).is_some_and(|d| d.category == BuildingCategory::Fortification && b.hp < d.max_hp * 3 / 4))
+            .min_by_key(|b| b.hp);
+        if let Some(b) = damaged {
+            if world.repair_cost(b).iter().all(|c| have(stock, c.good) >= c.amount) {
+                cmds.push(ClientMsg::RepairBuilding { building_id: b.id });
+            }
+        }
+    }
+
+    /// Welche Waren fehlen schon lange? Dafür einen Betrieb mehr (`expand_seconds`).
+    fn track_shortage(&mut self, world: &World) {
+        let now = std::mem::take(&mut self.short_now);
+        self.short_since.retain(|g, _| now.contains(g));
+        for &g in &now {
+            self.short_since.entry(g).or_insert(self.clock);
+        }
+        let Some(wait) = self.profile.expand_seconds else { return };
+        let long: Vec<Good> = self.short_since.iter().filter(|&(_, &t)| self.clock - t >= wait).map(|(&g, _)| g).collect();
+        for good in long {
+            self.short_since.insert(good, self.clock);
+            let Some(kind) = producer(world, good) else { continue };
+            let have = self.count(world, kind);
+            // Erst wenn er schon einen hat (sonst kommt der mit der Bauliste).
+            if have == 0 {
+                continue;
+            }
+            let planned = self.profile.build_order.iter().filter(|e| e.0 == kind).map(|e| e.1).max().unwrap_or(0);
+            let want = self.extra.get(&kind).copied().unwrap_or(planned).max(have) + 1;
+            if want <= planned.max(1) + self.profile.expand_max {
+                debug!("Computer {}: {good:?} fehlt lange, baut noch ein {kind:?} ({want})", self.player);
+                self.extra.insert(kind, want);
+            }
+        }
+    }
+
     /// Wege: erst die Straßen vom Bergfried zu den Toren, dann (je nach Profil) vom Tor hinaus
     /// zu den Abbaubetrieben, so weit der Bauradius reicht. Läuft neben allem anderen her,
     /// sobald ein Sägewerk steht, und nur mit dem, was über der Holzreserve liegt.
     /// `wood_ok`: Holzweg als Ersatz für Pflaster erlaubt (nicht, solange die Mauer Holz braucht).
     fn build_roads(&mut self, world: &World, layout: &Layout, budget: &mut Budget, wood_ok: bool, cmds: &mut Vec<ClientMsg>) {
         let Some(preferred) = self.profile.road_kind else { return };
+        // Erst die Burg zumachen: Wege brauchen dasselbe Holz und denselben Stein.
+        if self.profile.walls && !self.closed {
+            return;
+        }
         // Erst wenn die Wirtschaft läuft (Kaserne steht), vorher braucht er alles für Betriebe.
         if self.count(world, BuildingKind::Barracks) == 0 {
             return;
@@ -622,6 +925,21 @@ impl Computer {
                 taler -= n * pr.buy;
             }
         }
+        // Viel Geld übrig: was zuletzt fehlte (Holz, Stein, Bretter ...), in kleinen Mengen zukaufen.
+        let spare = trade.taler_reserve + SPARE_TALER;
+        let mut short: Vec<Good> = self.short_since.keys().copied().collect();
+        short.sort();
+        for good in short {
+            let Some(pr) = price(good) else { continue };
+            if taler <= spare {
+                break;
+            }
+            let n = ((taler - spare) / pr.buy.max(1)).min(SPARE_BATCH);
+            if n > 0 {
+                cmds.push(ClientMsg::Trade { good, amount: n, sell: false });
+                taler -= n * pr.buy;
+            }
+        }
     }
 
     /// Soldaten in Auftrag geben, bis die Armee groß genug ist. Jede Kaserne bekommt bis zu
@@ -675,13 +993,19 @@ impl Computer {
             let alive: Vec<&crate::world::Unit> = world.units.iter().filter(|u| u.owner == p && c.units.contains(&u.id)).collect();
             c.units = alive.iter().map(|u| u.id).collect();
             let power: f32 = alive.iter().map(|u| attack::unit_power(world, u.kind)).sum();
-            let target_gone = !world.buildings.iter().any(|b| b.owner == c.target && b.kind == BuildingKind::Keep);
-            let all_stopped = alive.iter().all(|u| !u.is_moving());
-            if all_stopped && c.arrived.is_none() {
+            let target_gone = world.is_eliminated(c.target) || !world.units.iter().any(|u| u.owner == c.target && u.kind == UnitKind::King);
+            // Angekommen: alle stehen (oder kämpfen), oder die meisten sind am Ziel.
+            let near_goal = alive.iter().filter(|u| (u.pos.0 - c.goal.0).hypot(u.pos.1 - c.goal.1) < 12.0).count();
+            let all_stopped = alive.iter().all(|u| !u.is_moving() || u.attack_order().is_some());
+            if c.arrived.is_none() && (all_stopped || near_goal * 3 >= alive.len() * 2) {
                 c.arrived = Some(self.clock);
+                c.last_progress = self.clock;
             }
-            let siege_over = c.arrived.is_some_and(|t| self.clock - t > a.siege_seconds);
-            if alive.is_empty() || target_gone || siege_over || power < c.start_power * a.retreat_below {
+            if alive.iter().any(|u| u.attack_order().is_some()) {
+                c.last_progress = self.clock;
+            }
+            let stalled = c.arrived.is_some() && self.clock - c.last_progress > a.siege_seconds;
+            if alive.is_empty() || target_gone || stalled || power < c.start_power * a.retreat_below {
                 debug!("Computer {p}: Welle gegen {} kehrt um", c.target);
                 if let Some(home) = rally_point(world, p, layout) {
                     if !c.units.is_empty() {
@@ -692,11 +1016,27 @@ impl Computer {
                 self.next_attack = self.clock + a.cooldown_seconds;
                 return;
             }
-            // Wer unterwegs hängen geblieben ist (weit vom Ziel, steht), läuft weiter.
+            // Belagern: wer angekommen ist (oder unterwegs auf Feinde trifft), greift an.
+            let busy: Vec<&crate::world::Unit> = alive
+                .iter()
+                .copied()
+                .filter(|u| c.arrived.is_some() || (u.pos.0 - c.goal.0).hypot(u.pos.1 - c.goal.1) < 12.0 || !u.is_moving())
+                .collect();
+            cmds.extend(attack::siege(world, p, c.target, &busy));
+            // Wer unterwegs hängen geblieben ist (weit vom Ziel, steht, ohne Angriff), läuft weiter.
             if c.arrived.is_none() {
+                let ordered: std::collections::HashSet<u32> = cmds
+                    .iter()
+                    .filter_map(|m| match m {
+                        ClientMsg::Attack { unit_ids, .. } => Some(unit_ids.clone()),
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect();
                 let stuck: Vec<u32> = alive
                     .iter()
-                    .filter(|u| !u.is_moving() && (u.pos.0 - c.goal.0).hypot(u.pos.1 - c.goal.1) > 8.0)
+                    .filter(|u| !u.is_moving() && u.attack_order().is_none() && !ordered.contains(&u.id))
+                    .filter(|u| (u.pos.0 - c.goal.0).hypot(u.pos.1 - c.goal.1) > 8.0)
                     .map(|u| u.id)
                     .collect();
                 if !stuck.is_empty() {
@@ -731,7 +1071,7 @@ impl Computer {
         debug!("Computer {p}: greift Spieler {target} an ({} Soldaten, {power:.0} gegen {enemy:.0})", wave.len());
         let units: Vec<u32> = wave.iter().map(|u| u.id).collect();
         cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: goal.0, y: goal.1 });
-        self.campaign = Some(Campaign { target, units, start_power: power, goal, arrived: None });
+        self.campaign = Some(Campaign { target, units, start_power: power, goal, arrived: None, last_progress: self.clock });
     }
 
     /// Der König steht oben auf dem Bergfried: dort kommt kein Nahkämpfer vom Boden an ihn
@@ -753,7 +1093,7 @@ impl Computer {
     /// Feinde nahe am Bergfried: alle Soldaten am Boden, die nicht mit einer Welle unterwegs
     /// sind, gehen auf den, der dem Bergfried am nächsten ist. `true`, solange er sich wehrt
     /// (dann schickt er keine neue Welle los).
-    fn defend(&self, world: &World, cmds: &mut Vec<ClientMsg>) -> bool {
+    fn defend(&self, world: &World, layout: &Layout, cmds: &mut Vec<ClientMsg>) -> bool {
         let p = self.player;
         let Some(keep) = world.buildings.iter().find(|b| b.owner == p && b.kind == BuildingKind::Keep) else { return false };
         let c = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
@@ -764,17 +1104,22 @@ impl Computer {
             .filter(|u| u.kind.is_soldier() && u.owner != p && world.can_attack(p, u.owner) && dist(u) < THREAT_RADIUS)
             .min_by(|a, b| dist(a).total_cmp(&dist(b)));
         let Some(threat) = threat else { return false };
+        // Steht der Feind draußen vor der geschlossenen Mauer, bleiben die Nahkämpfer
+        // drinnen hinter dem Tor (die Mauer hält ihn auf); nur Fernkämpfer schießen.
+        let outside = !layout.inside(threat.pos.0 as i64, threat.pos.1 as i64) && crate::world::castle_closed(world, p);
+        let ranged = |k: UnitKind| world.economy.unit(k).is_some_and(|d| world.economy.is_ranged(d.range));
         let defenders: Vec<u32> = world
             .units
             .iter()
             .filter(|u| u.owner == p && u.kind.is_soldier() && !u.is_on_wall() && !self.on_campaign(u.id))
-            // Wer schon nah dran ist, kämpft von selbst.
-            .filter(|u| (u.pos.0 - threat.pos.0).hypot(u.pos.1 - threat.pos.1) > 2.0)
+            .filter(|u| !outside || ranged(u.kind))
+            // Wer schon ein Ziel hat, bleibt dabei.
+            .filter(|u| u.attack_order().is_none())
             .map(|u| u.id)
             .collect();
         if !defenders.is_empty() {
             debug!("Computer {p}: verteidigt gegen Spieler {}", threat.owner);
-            cmds.push(ClientMsg::MoveUnits { unit_ids: defenders, x: threat.pos.0, y: threat.pos.1 });
+            cmds.push(ClientMsg::Attack { unit_ids: defenders, target: protocol::AttackTarget::Unit { id: threat.id } });
         }
         true
     }
@@ -792,26 +1137,41 @@ impl Computer {
         let ranged = |k: UnitKind| world.economy.unit(k).is_some_and(|d| d.range > 2.0);
         let mut posts: Vec<((f32, f32), usize)> = Vec::new();
         if self.profile.garrison_ranged {
+            // Wer oben steht oder auf dem Weg hinauf ist, an dieser Stelle.
+            let up: Vec<(f32, f32)> = world
+                .units
+                .iter()
+                .filter(|u| u.owner == p && u.kind.is_soldier())
+                .filter_map(|u| match u.destination() {
+                    Some((t, true)) => Some(t),
+                    _ if u.is_on_wall() => Some(u.pos),
+                    _ => None,
+                })
+                .collect();
+            let in_rect = |b: &protocol::BuildingState, q: &(f32, f32)| {
+                q.0 >= b.x as f32 && q.1 >= b.y as f32 && q.0 < (b.x + b.w) as f32 && q.1 < (b.y + b.h) as f32
+            };
+            let mut keep_post = None;
             for b in world.buildings.iter().filter(|b| b.owner == p) {
                 let room = world.economy.building(b.kind).map_or(0, |d| d.garrison as usize);
                 if room == 0 {
                     continue;
                 }
-                let inside = |u: &crate::world::Unit| {
-                    u.pos.0 >= b.x as f32 && u.pos.1 >= b.y as f32 && u.pos.0 < (b.x + b.w) as f32 && u.pos.1 < (b.y + b.h) as f32
-                };
-                let up = world.units.iter().filter(|u| u.owner == p && u.is_on_wall() && inside(u)).count();
-                if room > up {
+                let taken = up.iter().filter(|q| in_rect(b, q)).count();
+                if room > taken {
                     let c = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
-                    // Der Bergfried zuerst, dann die Türme.
-                    let entry = (c, room - up);
                     if b.kind == BuildingKind::Keep {
-                        posts.insert(0, entry);
+                        keep_post = Some((c, room - taken));
                     } else {
-                        posts.push(entry);
+                        posts.push((c, room - taken));
                     }
                 }
             }
+            // Türme zuerst, dann der Wehrgang der Mauer, zuletzt der Bergfried.
+            if self.profile.man_walls {
+                posts.extend(self.wall_posts(world, layout, &up).into_iter().map(|q| (q, 1)));
+            }
+            posts.extend(keep_post);
         }
         let idle: Vec<&crate::world::Unit> = world
             .units
@@ -837,12 +1197,49 @@ impl Computer {
     }
 }
 
+impl Computer {
+    /// Freie Plätze auf dem Wehrgang (eigene Mauern und Tore mit Zinnen), jedes zweite
+    /// Feld, nahe dem Haupttor zuerst. Nur wenn eine Treppe hinaufführt.
+    fn wall_posts(&self, world: &World, layout: &Layout, up: &[(f32, f32)]) -> Vec<(f32, f32)> {
+        let p = self.player;
+        let def = |k: BuildingKind| world.economy.building(k);
+        let stairs = world
+            .buildings
+            .iter()
+            .any(|b| b.owner == p && def(b.kind).is_some_and(|d| d.stairs_from_level > 0 && b.level >= d.stairs_from_level && b.kind != BuildingKind::Keep));
+        if !stairs {
+            return Vec::new();
+        }
+        let walkway = |b: &&protocol::BuildingState| {
+            b.owner == p
+                && matches!(b.kind, BuildingKind::Palisade | BuildingKind::Wall | BuildingKind::HighWall)
+                && def(b.kind).is_some_and(|d| d.walkway_from_level > 0 && b.level >= d.walkway_from_level)
+        };
+        let main = layout.gates().first().map_or(layout.mid, |g| (g.1 as i64, g.2 as i64));
+        let mut tiles: Vec<(i64, i64)> = world.buildings.iter().filter(walkway).map(|b| (b.x as i64, b.y as i64)).collect();
+        tiles.sort_by_key(|&(x, y)| ((x - main.0).abs() + (y - main.1).abs(), x, y));
+        let mut chosen: Vec<(i64, i64)> = Vec::new();
+        let mut out = Vec::new();
+        for (x, y) in tiles {
+            if chosen.iter().any(|c| (c.0 - x).abs().max((c.1 - y).abs()) < 2) {
+                continue;
+            }
+            chosen.push((x, y));
+            let q = (x as f32 + 0.5, y as f32 + 0.5);
+            if !up.iter().any(|u| (u.0 - q.0).hypot(u.1 - q.1) < 1.0) {
+                out.push(q);
+            }
+        }
+        out
+    }
+}
+
 /// Ergebnis von `build_next`.
 enum Next {
-    /// Hat gebaut (oder für diesmal keinen Platz gefunden).
-    Placed,
-    /// Wartet auf Material: so viel fehlt noch.
-    Waiting(Vec<GoodAmount>),
+    /// Hat das gebaut (oder für diesmal keinen Platz gefunden: `None`).
+    Placed(Option<BuildingKind>),
+    /// Wartet auf Material für dieses Gebäude: so viel fehlt noch.
+    Waiting(BuildingKind, Vec<GoodAmount>),
     /// Nichts mehr auf der Bauliste.
     Idle,
 }
@@ -871,9 +1268,41 @@ impl Budget {
         })
     }
 
+    /// Was für die erste Stufe fehlt (über die Reserven hinaus).
+    fn short(&self, world: &World, kind: BuildingKind) -> Vec<Good> {
+        self.short_cost(&world.economy.building(kind).map(|d| level_cost(d, 1)).unwrap_or_default())
+    }
+
+    fn short_cost(&self, cost: &[GoodAmount]) -> Vec<Good> {
+        cost.iter()
+            .filter(|c| self.left.get(&c.good).copied().unwrap_or(0) < c.amount + self.keep(c.good))
+            .map(|c| c.good)
+            .collect()
+    }
+
+    fn keep(&self, good: Good) -> u32 {
+        match good {
+            Good::Wood => self.wood_reserve,
+            Good::Stone => self.stone_reserve,
+            _ => 0,
+        }
+    }
+
+    /// Reicht es für diese Kosten (etwa einen Ausbau)? Dann gleich abziehen.
+    fn take(&mut self, cost: &[GoodAmount]) -> bool {
+        if !self.short_cost(cost).is_empty() {
+            return false;
+        }
+        for c in cost {
+            *self.left.entry(c.good).or_default() -= c.amount;
+        }
+        true
+    }
+
     fn pay(&mut self, world: &World, kind: BuildingKind) {
         for c in world.economy.building(kind).map(|d| level_cost(d, 1)).unwrap_or_default() {
-            *self.left.entry(c.good).or_default() -= c.amount;
+            let left = self.left.entry(c.good).or_default();
+            *left = left.saturating_sub(c.amount);
         }
     }
 }
@@ -918,6 +1347,18 @@ fn shortfall(world: &World, stock: &StockState, kind: BuildingKind) -> Vec<GoodA
             (short > 0).then_some(GoodAmount { good: c.good, amount: short })
         })
         .collect()
+}
+
+/// Betrieb, der diese Ware herstellt (erste Stufe, in der sie geht; erster in der Datei).
+fn producer(world: &World, good: Good) -> Option<BuildingKind> {
+    world.economy.def.buildings.iter().find_map(|b| {
+        let first = b.levels.first()?;
+        first
+            .recipes
+            .iter()
+            .any(|id| world.economy.recipe(id).is_some_and(|r| r.outputs.iter().any(|o| o.good == good)))
+            .then_some(b.kind)
+    })
 }
 
 fn have(stock: &StockState, good: Good) -> u32 {
