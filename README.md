@@ -375,6 +375,15 @@ Nachrichten werden nur in `protocol/src/lib.rs` definiert. Ablauf bei einer Änd
    generiert die TypeScript-Typen nach `protocol/bindings/` und kopiert sie ins Frontend nach `src/protocol/`.
 3. In beiden Repos committen (hier `protocol/bindings/` gleich mit).
 
+## Version
+
+Die Version des Servers steht in `Cargo.toml` (`[workspace.package]`) und unten in der Lobby
+(zusammen mit Commit und Datum, daneben die des Clients). Bei jedem Push auf `dev` zählt eine
+GitHub Action (`.github/workflows/version.yml`) die Patch-Stelle hoch (0.1.0 → 0.1.1, auch in
+`Cargo.lock`) und committet das zurück, von Hand ist nichts zu tun. Für einen größeren Schritt vor
+dem Merge `python3 deploy/bump-version.py minor` (oder `major`) ausführen und committen; dann zählt
+die Action in diesem Push nicht zusätzlich hoch.
+
 ## Deployment mit Docker
 
 Auf dem Server brauchst du **nur Docker und Git**, kein Rust und kein Node. Alles wird beim Bauen im

@@ -1,0 +1,55 @@
+# Zählt bei jedem Push auf dev die Patch-Version hoch (0.1.0 -> 0.1.1) und committet das zurück.
+# Die Version steht unten in der Lobby (Server und Client).
+# Wurde die Version in diesem Push schon von Hand geändert (z. B. minor für einen größeren Schritt),
+# gibt es keinen zusätzlichen Sprung. Der Bump-Commit selbst löst den Workflow nicht erneut aus.
+name: Version hochzählen
+
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: version-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Version schon von Hand geändert?
+        id: check
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
+             && [ "$(git show "$BEFORE:Cargo.toml" | grep -m1 '^version')" != "$(grep -m1 '^version' Cargo.toml)" ]; then
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            echo "Version wurde in diesem Push schon geändert, kein weiterer Sprung."
+          fi
+
+      - name: Hochzählen und pushen
+        if: steps.check.outputs.skip != '1'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for try in 1 2 3 4; do
+            git fetch --quiet origin dev
+            git reset --quiet --hard origin/dev
+            new="$(python3 deploy/bump-version.py patch)"
+            git commit --quiet -am "Version $new [skip ci]"
+            if git push --quiet origin HEAD:dev; then
+              echo "Server-Version jetzt $new"
+              exit 0
+            fi
+            sleep $((try * 5))
+          done
+          echo "Push fehlgeschlagen" >&2
+          exit 1
