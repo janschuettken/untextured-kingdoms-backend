@@ -166,6 +166,8 @@ pub struct World {
     unpaid: HashSet<u32>,
     /// Neue Betriebe: trägt der Arbeiter selbst? Im Spiel immer ja; Tests für Träger schalten es ab.
     pub(crate) worker_carries_default: bool,
+    /// Zufall für Treffer im Fernkampf (Deckung), siehe `combat.rs`.
+    combat_rng: u64,
     /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
     hub_goods: HashMap<u32, storage::HubGoods>,
     /// Wie Waren zwischen Verbündeten ankommen.
@@ -260,6 +262,7 @@ impl World {
             winners: None,
             respawn_clock: HashMap::new(),
             worker_carries_default: true,
+            combat_rng: 0x9E37_79B9_7F4A_7C15,
         }
     }
 
@@ -315,8 +318,8 @@ impl World {
     /// Eigenes Lager eines Betriebs je Ware, getrennt nach Eingängen (was ein
     /// Rezept dieser Gebäudeart verbraucht) und allem anderen (Ergebnisse).
     /// 0 im Balancing = `transport.building_capacity`.
-    fn inventory_limits(&self, kind: BuildingKind) -> (u32, BTreeMap<protocol::Good, u32>) {
-        let def = self.economy.building(kind);
+    fn inventory_limits(&self, kind: BuildingKind, level: u32) -> (u32, BTreeMap<protocol::Good, u32>) {
+        let def = self.economy.building(kind).map(|d| d.at(level));
         let or_default = |n: u32| if n > 0 { n } else { self.economy.def.transport.building_capacity.max(1) };
         let outputs = or_default(def.map_or(0, |d| d.storage_outputs));
         let inputs = or_default(def.map_or(0, |d| d.storage_inputs));
@@ -333,7 +336,7 @@ impl World {
 
     /// Lagergrößen aller Betriebe neu setzen (Balancing geändert, Spielstand geladen).
     pub(crate) fn update_inventory_capacities(&mut self) {
-        let caps: Vec<_> = self.buildings.iter().map(|b| (b.id, self.inventory_limits(b.kind))).collect();
+        let caps: Vec<_> = self.buildings.iter().map(|b| (b.id, self.inventory_limits(b.kind, b.level))).collect();
         for (id, (cap, limits)) in caps {
             if let Some(inv) = self.inventories.get_mut(&id) {
                 inv.capacity = cap;
@@ -489,7 +492,8 @@ impl World {
     /// None, wenn hier kein Tordurchgang liegt.
     fn road_through_gate(&mut self, player: u32, kind: BuildingKind, (x, y): (u32, u32)) -> Result<Option<BuildingState>, Refusal> {
         let Some(def) = self.economy.building(kind).cloned() else { return Ok(None) };
-        if def.road_speed_percent == 0 || x >= self.map.width || y >= self.map.height {
+        let speed = def.at(1).road_speed_percent;
+        if !def.is_road() || x >= self.map.width || y >= self.map.height {
             return Ok(None);
         }
         let id = self.occupied[(y * self.map.width + x) as usize];
@@ -498,13 +502,13 @@ impl World {
         if b.owner != player || !gate::is_gate(b.kind) || !gate::passage_tiles(b).contains(&(x, y)) {
             return Ok(None);
         }
-        if b.road_under >= def.road_speed_percent {
+        if b.road_under >= speed {
             return Err(Text::new("error.occupied"));
         }
         self.pay(player, &def.levels[0].cost)?;
         let old = self.buildings[bi].clone();
         self.set_footprint(&old, false);
-        self.buildings[bi].road_under = def.road_speed_percent;
+        self.buildings[bi].road_under = speed;
         let b = self.buildings[bi].clone();
         self.set_footprint(&b, true);
         self.dirty_buildings.insert(b.id);
@@ -555,7 +559,7 @@ impl World {
                 return Err(Text::new("error.limit_reached").arg("max", max));
             }
         }
-        self.check_build_radius(player, &def, (x, y), (w, h))?;
+        self.check_build_radius(player, def.at(level as u32).build_radius, (x, y), (w, h))?;
         if !free {
             self.check_no_enemy(player, (x as f32 + w as f32 / 2.0, y as f32 + h as f32 / 2.0))?;
         }
@@ -568,7 +572,7 @@ impl World {
             ux >= x as i64 && uy >= y as i64 && ux < (x + w) as i64 && uy < (y + h) as i64
         };
         // Träger weichen aus, alle anderen Einheiten stehen im Weg (nicht bei Wegen).
-        if def.road_speed_percent == 0 && self.units.iter().any(|u| !u.is_civilian() && covers(u.pos)) {
+        if !def.is_road() && self.units.iter().any(|u| !u.is_civilian() && covers(u.pos)) {
             return Err(Text::new("error.unit_in_way"));
         }
         Ok(PlacementPlan { def, rotation, level, w, h, cost, walls, entrance })
@@ -586,14 +590,14 @@ impl World {
     ) -> Result<BuildingState, Refusal> {
         let PlacementPlan { def, rotation, level, w, h, cost, walls, entrance } =
             self.placement_plan(player, kind, (x, y), rotation, level, free)?;
-        let max_hp = def.max_hp;
+        let max_hp = def.at(level as u32).max_hp;
         self.pay(player, &cost)?;
         // Tor auf einem Weg: der Durchgang bleibt so schnell wie der Weg.
         let road_under = if gate::is_gate(kind) {
             walls
                 .iter()
                 .filter_map(|id| self.buildings.iter().find(|b| b.id == *id))
-                .filter_map(|b| self.economy.building(b.kind).map(|d| d.road_speed_percent))
+                .filter_map(|b| self.economy.building(b.kind).map(|d| d.at(b.level).road_speed_percent))
                 .max()
                 .unwrap_or(0)
         } else {
@@ -608,12 +612,12 @@ impl World {
         let settings = BuildingSettings {
             recipe: def.levels[0].recipes.first().cloned(),
             paused: false,
-            accept_deliveries: true,
+            accept_deliveries: def.delivery.carriers,
             stores: None,
             keep_in_stock: Vec::new(),
             gate: GateMode::Auto,
-            worker_carries: self.worker_carries_default,
-            cart_deliveries: false,
+            worker_carries: def.delivery.worker && self.worker_carries_default,
+            cart_deliveries: def.delivery.carts,
             stop_at: Vec::new(),
         };
         let status = if settings.recipe.is_some() { BuildingStatus::Working } else { BuildingStatus::Idle };
@@ -647,7 +651,7 @@ impl World {
         self.set_footprint(&b, true);
         self.buildings.push(b.clone());
         if !def.hub {
-            let (cap, limits) = self.inventory_limits(b.kind);
+            let (cap, limits) = self.inventory_limits(b.kind, b.level);
             let mut inv = Stock::new(cap);
             inv.limits = limits;
             self.inventories.insert(b.id, inv);
@@ -655,10 +659,10 @@ impl World {
         if def.hub {
             self.update_capacity(player);
         }
-        if def.road_speed_percent == 0 {
+        if !def.is_road() {
             self.make_room(&b);
         }
-        let spawns: Vec<_> = def.spawns.iter().chain(def.levels.iter().take(level as usize).flat_map(|l| &l.spawns)).copied().collect();
+        let spawns: Vec<_> = def.levels.iter().take(level as usize).flat_map(|l| &l.spawns).copied().collect();
         for s in spawns {
             for n in 0..s.count {
                 self.spawn_transport(&b, s.kind, n);
@@ -679,7 +683,7 @@ impl World {
     /// Eigene Gebäude in dieser Fläche, die ein neues Gebäude dieser Art ersetzt:
     /// Mauerstücke (Mauer, hohe Mauer, Palisade), wenn es auf Mauern darf, und Wege.
     fn removable_under(&self, player: u32, def: &protocol::BuildingDef, (x, y): (u32, u32), (w, h): (u32, u32)) -> Vec<u32> {
-        let replaces_roads = def.road_speed_percent == 0;
+        let replaces_roads = !def.is_road();
         let mut ids: Vec<u32> = Vec::new();
         for ty in y..(y + h).min(self.map.height) {
             for tx in x..(x + w).min(self.map.width) {
@@ -689,7 +693,7 @@ impl World {
                 }
                 let wall = self.buildings.iter().find(|b| b.id == id).is_some_and(|b| {
                     let wall = matches!(b.kind, BuildingKind::Wall | BuildingKind::HighWall | BuildingKind::Palisade);
-                    let road = self.economy.building(b.kind).is_some_and(|d| d.road_speed_percent > 0);
+                    let road = self.economy.building(b.kind).is_some_and(|d| d.is_road());
                     b.owner == player && ((def.on_walls && wall) || (replaces_roads && road))
                 });
                 if wall {
@@ -744,7 +748,7 @@ impl World {
                     return Err(Text::new("error.occupied"));
                 }
                 // Wege dürfen vor Türen liegen, sie bleiben ja begehbar.
-                if def.road_speed_percent == 0 && self.entrances.get(&i).is_some_and(|b| !ignore.contains(b)) {
+                if !def.is_road() && self.entrances.get(&i).is_some_and(|b| !ignore.contains(b)) {
                     return Err(Text::new("error.blocks_entrance"));
                 }
                 let r = self.map.resources[i];
@@ -760,7 +764,8 @@ impl World {
                 .filter(|&(tx, ty)| p.resources.contains(&self.map.resources[(ty * self.map.width + tx) as usize]))
                 .count() as u32;
             // Abbaubetriebe mit Reichweite (Steinbruch, Mine): Rohstoff im Umkreis genügt.
-            let near = !def.gathers.is_empty() && def.gather_radius > 0 && self.resource_near(&p.resources, (x, y), (w, h), def.gather_radius);
+            let r = def.at(1).gather_radius;
+            let near = !def.gathers.is_empty() && r > 0 && self.resource_near(&p.resources, (x, y), (w, h), r);
             if !near && on * 100 < p.min_share_percent * w * h {
                 let names: Vec<String> = p.resources.iter().map(|r| resource_key(*r)).collect();
                 return Err(Text::new("error.needs_resource").arg("resources", names.join(",")));
@@ -841,7 +846,7 @@ impl World {
     /// Felder eines Gebäudes belegen (`true`) oder freigeben. Wege blockieren
     /// nicht, sondern machen das Feld schneller.
     pub(super) fn set_footprint(&mut self, b: &BuildingState, on: bool) {
-        let road = self.economy.building(b.kind).map_or(0, |d| d.road_speed_percent);
+        let road = self.economy.building(b.kind).filter(|d| d.is_road()).map_or(0, |d| d.at(b.level).road_speed_percent.max(1));
         for ty in b.y..b.y + b.h {
             for tx in b.x..b.x + b.w {
                 self.occupied[(ty * self.map.width + tx) as usize] = if on { b.id } else { 0 };
@@ -887,12 +892,29 @@ impl World {
         };
         let cost = next.cost.clone();
         let spawns = next.spawns.clone();
+        let (old_hp, new_hp, radius, road) = (def.at(b.level).max_hp, next.max_hp, next.build_radius, def.is_road());
         let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
+        let old = b.clone();
+        self.check_build_radius(player, radius, (old.x, old.y), (old.w, old.h))?;
         self.check_no_enemy(player, center)?;
         self.pay(player, &cost)?;
+        if road {
+            self.set_footprint(&old, false);
+        }
         let b = self.buildings.iter_mut().find(|b| b.id == id).expect("eben gefunden");
         b.level += 1;
+        // Mehr (oder weniger) Lebenspunkte auf der neuen Stufe: der Schaden bleibt.
+        b.hp = (b.hp + new_hp).saturating_sub(old_hp).clamp(1, new_hp.max(1));
         let b = b.clone();
+        if road {
+            self.set_footprint(&b, true);
+        }
+        let (cap, limits) = self.inventory_limits(b.kind, b.level);
+        if let Some(inv) = self.inventories.get_mut(&b.id) {
+            inv.capacity = cap;
+            inv.limits = limits;
+        }
+        self.dirty_buildings.insert(b.id);
         for s in spawns {
             for n in 0..s.count {
                 self.spawn_transport(&b, s.kind, n);
@@ -1100,11 +1122,11 @@ impl World {
             self.buildings
                 .iter()
                 .find(|b| b.id == on)
-                .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.garrison > 0))
+                .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.at(b.level).garrison > 0))
                 .map(|b| {
                     // Plattform groß genug für die Besatzung, aber innerhalb der Zinnen.
                     let side = b.w.min(b.h) as f32;
-                    let crew = self.economy.building(b.kind).map_or(0, |d| d.garrison) as f32;
+                    let crew = self.economy.building(b.kind).map_or(0, |d| d.at(b.level).garrison) as f32;
                     let need = FORMATION_GAP * (crew / std::f32::consts::PI).sqrt() * 1.2;
                     ((b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0), need.clamp(side * 0.3, side * 0.45))
                 })
@@ -1154,8 +1176,7 @@ impl World {
 
     /// Gebäude mit `build_radius` nur im Umkreis des eigenen Bergfrieds:
     /// die ganze Fläche muss drinliegen.
-    fn check_build_radius(&self, player: u32, def: &BuildingDef, at: (u32, u32), size: (u32, u32)) -> Result<(), Refusal> {
-        let r = def.build_radius;
+    fn check_build_radius(&self, player: u32, r: u32, at: (u32, u32), size: (u32, u32)) -> Result<(), Refusal> {
         if r == 0 {
             return Ok(());
         }
@@ -1176,7 +1197,7 @@ impl World {
     fn garrison_room(&self, player: u32, ordered: &[u32], target: (f32, f32)) -> Option<usize> {
         let i = (target.1 as u32 * self.map.width + target.0 as u32) as usize;
         let b = self.buildings.iter().find(|b| b.id == self.occupied[i])?;
-        let max = self.economy.building(b.kind)?.garrison as usize;
+        let max = self.economy.building(b.kind)?.at(b.level).garrison as usize;
         if max == 0 {
             return None;
         }
@@ -1625,13 +1646,13 @@ mod tests {
         w.admin_give(1, &[GoodAmount { good: protocol::Good::Stone, amount: 500 }, GoodAmount { good: protocol::Good::Wood, amount: 500 }], 0);
         assert_eq!(w.place_building(1, BuildingKind::Wall, 10, 10).unwrap_err().key, "error.outside_build_radius", "ohne Bergfried");
         w.place_building(1, BuildingKind::Keep, 4, 4).unwrap();
-        let r = w.economy.building(BuildingKind::Wall).unwrap().build_radius;
+        let r = w.economy.building(BuildingKind::Wall).unwrap().at(1).build_radius;
         assert!(r > 0);
         w.place_building(1, BuildingKind::Wall, 10, 10).unwrap();
         assert_eq!(w.place_building(1, BuildingKind::Wall, 7 + r, 7).unwrap_err().key, "error.outside_build_radius");
         w.place_building(1, BuildingKind::Wall, 5 + r, 7).unwrap();
         // Ohne eigenen Umkreis (0) dürfen Gebäude beliebig weit weg.
-        assert_eq!(w.economy.building(BuildingKind::House).unwrap().build_radius, 0);
+        assert_eq!(w.economy.building(BuildingKind::House).unwrap().at(1).build_radius, 0);
         w.place_building(1, BuildingKind::House, 10 + r, 2).unwrap();
     }
 
@@ -1664,7 +1685,7 @@ mod tests {
         w.spawn_player(1);
         let keep = w.buildings.iter().find(|b| b.owner == 1 && b.kind == BuildingKind::Keep).unwrap();
         let center = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
-        let max = w.economy.building(BuildingKind::Keep).unwrap().garrison as usize;
+        let max = w.economy.building(BuildingKind::Keep).unwrap().at(1).garrison as usize;
         assert!(max >= 40, "deutlich mehr Platz als früher (16)");
         let spots = w.formation(1, &[], center, max, true);
         for (i, p) in spots.iter().enumerate() {
@@ -1717,7 +1738,7 @@ mod tests {
         w.admin_give(1, &[GoodAmount { good: protocol::Good::Stone, amount: 50 }], 0);
         w.place_building(1, BuildingKind::StonePath, 5, 5).unwrap();
         assert!(w.map.nav.is_open(5, 5));
-        assert!(w.economy.building(BuildingKind::StonePath).unwrap().road_speed_percent > 0);
+        assert!(w.economy.building(BuildingKind::StonePath).unwrap().is_road());
     }
 
     #[test]

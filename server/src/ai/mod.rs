@@ -743,7 +743,7 @@ impl Computer {
             return;
         }
         let Some(keep) = world.buildings.iter().find(|b| b.owner == p && b.kind == BuildingKind::Keep) else { return };
-        if world.economy.building(BuildingKind::Keep).is_none_or(|d| d.garrison == 0) {
+        if world.economy.building(BuildingKind::Keep).is_none_or(|d| d.at(keep.level).garrison == 0) {
             return;
         }
         let c = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
@@ -793,7 +793,7 @@ impl Computer {
         let mut posts: Vec<((f32, f32), usize)> = Vec::new();
         if self.profile.garrison_ranged {
             for b in world.buildings.iter().filter(|b| b.owner == p) {
-                let room = world.economy.building(b.kind).map_or(0, |d| d.garrison as usize);
+                let room = world.economy.building(b.kind).map_or(0, |d| d.at(b.level).garrison as usize);
                 if room == 0 {
                     continue;
                 }
@@ -892,7 +892,7 @@ fn in_passage(b: &protocol::BuildingState, x: u32, y: u32) -> bool {
 }
 
 fn is_road(world: &World, kind: BuildingKind) -> bool {
-    world.economy.building(kind).is_some_and(|d| d.road_speed_percent > 0)
+    world.economy.building(kind).is_some_and(|d| d.is_road())
 }
 
 /// Sammelpunkt: ein paar Felder vor dem Eingang des Bergfrieds, auf der Straße.

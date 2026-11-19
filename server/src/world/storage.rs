@@ -131,7 +131,7 @@ impl World {
     pub(super) fn hub_capacity(&self, hub: u32) -> u32 {
         let e = &self.economy.def;
         let Some(b) = self.buildings.iter().find(|b| b.id == hub) else { return 0 };
-        match (self.economy.building(b.kind).map_or(0, |d| d.hub_capacity), b.kind) {
+        match (self.economy.building(b.kind).map_or(0, |d| d.at(b.level).hub_capacity), b.kind) {
             (n, _) if n > 0 => n,
             (_, BuildingKind::Storehouse) => e.storehouse_capacity,
             _ => e.base_capacity,
@@ -266,7 +266,7 @@ mod tests {
         let store = w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap().id;
         let granary = w.place_building(1, BuildingKind::Granary, 20, 2).unwrap().id;
         let def = w.economy.building(BuildingKind::Granary).unwrap();
-        let (cap, extra) = (w.economy.def.storehouse_capacity, def.hub_capacity);
+        let (cap, extra) = (w.economy.def.storehouse_capacity, def.at(1).hub_capacity);
         let food_in_store = takes(&w, BuildingKind::Storehouse, Good::Bread);
         let st = w.stocks[&1].state();
         assert_eq!(st.capacity, cap + extra, "Gesamtplatz beider Lager");

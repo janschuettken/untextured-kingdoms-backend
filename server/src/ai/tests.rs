@@ -150,7 +150,7 @@ fn vier_computer_auf_zufallskarte_mit_fluessen() {
     const RANDOM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/maps/4-player-zufall-256-682070261.txt"));
     let world = play_on(RANDOM, &[AiLevel::Easy, AiLevel::Normal, AiLevel::Hard, AiLevel::Hard], 45);
     for p in 1..=4 {
-        let n = world.buildings.iter().filter(|b| b.owner == p && world.economy.building(b.kind).is_some_and(|d| d.road_speed_percent == 0)).count();
+        let n = world.buildings.iter().filter(|b| b.owner == p && world.economy.building(b.kind).is_some_and(|d| !d.is_road())).count();
         let kinds = |k: BuildingKind| world.buildings.iter().filter(|b| b.owner == p && b.kind == k).count();
         println!(
             "Spieler {p}: {n} Gebäude, {} Soldaten, Wege {}, Tore {}+{}, Mauer {}, Türme {}, oben {}",
@@ -215,7 +215,7 @@ fn alle_charaktere_bauen_eine_burg() {
     let world = play_seats(RANDOM, &seats, 45, Some(&all), |_, _| {});
     for (i, id) in ids.iter().enumerate() {
         let p = i as u32 + 1;
-        let n = world.buildings.iter().filter(|b| b.owner == p && world.economy.building(b.kind).is_some_and(|d| d.road_speed_percent == 0)).count();
+        let n = world.buildings.iter().filter(|b| b.owner == p && world.economy.building(b.kind).is_some_and(|d| !d.is_road())).count();
         let mut kinds = std::collections::BTreeMap::new();
         for b in world.buildings.iter().filter(|b| b.owner == p) {
             *kinds.entry(format!("{:?}", b.kind)).or_insert(0) += 1;

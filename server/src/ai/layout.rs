@@ -375,7 +375,7 @@ impl Layout {
         }
         for b in &world.buildings {
             // Wege: nur das Feld selbst ist belegt, daneben darf direkt gebaut werden.
-            let road = world.economy.building(b.kind).is_some_and(|d| d.road_speed_percent > 0);
+            let road = world.economy.building(b.kind).is_some_and(|d| d.is_road());
             clear(Rect::of(b).grow(if road { 0 } else { 1 }));
         }
         free

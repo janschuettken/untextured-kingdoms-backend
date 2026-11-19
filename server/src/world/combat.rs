@@ -10,7 +10,11 @@
 //! Fällt ein König, scheidet sein Spieler aus: alles, was ihm gehört, verschwindet.
 //! Bleibt nur noch ein Spieler oder ein Bündnis übrig, ist das Spiel entschieden.
 //!
-//! Noch nicht da: Trefferchance, Höhenvorteil, Deckung.
+//! Deckung: wer oben auf einem Gebäude steht (Mauer, Turm, Tor …), wird von Fernkämpfern
+//! seltener getroffen – `cover_percent` der Gebäudestufe sagt, wie viel Prozent der Schüsse
+//! danebengehen. Der Schuss fliegt trotzdem (Pfeil sichtbar), richtet aber nichts an.
+//!
+//! Noch nicht da: Höhenvorteil.
 
 use std::collections::HashMap;
 
@@ -116,8 +120,36 @@ impl World {
         }
     }
 
+    /// Deckung (Prozent) für eine Einheit: oben auf einem Gebäude dessen `cover_percent`, sonst 0.
+    fn cover_of(&self, t: &Unit) -> u32 {
+        if !t.on_wall {
+            return 0;
+        }
+        let Some(tile) = self.tile_of(t.pos) else { return 0 };
+        let id = self.occupied[tile];
+        self.buildings
+            .iter()
+            .find(|b| b.id == id)
+            .and_then(|b| self.economy.building(b.kind).map(|d| d.at(b.level).cover_percent))
+            .unwrap_or(0)
+            .min(100)
+    }
+
+    /// Geht ein Schuss wegen Deckung daneben? (`percent` von 100)
+    fn misses(&mut self, percent: u32) -> bool {
+        if percent == 0 {
+            return false;
+        }
+        // xorshift64*: schnell, für Treffer genügt das.
+        let mut x = self.combat_rng;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.combat_rng = x;
+        (x.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) % 100 < percent as u64
+    }
+
     pub(super) fn step_combat(&mut self, dt: f32) {
-        let attack_seconds = self.economy.def.army.attack_seconds;
         // Wer kämpfen kann (hat Werte) und wer von selbst angreift (hat Schaden und Reichweite).
         let mut fighters = Vec::new();
         let mut ordered = Vec::new();
@@ -145,7 +177,8 @@ impl World {
         if teams.len() < 2 && ordered.is_empty() {
             return;
         }
-        let mut hits: Vec<(usize, u32, u32)> = Vec::new();
+        // (Ziel, Schaden, Angreifer, Fernkampf)
+        let mut hits: Vec<(usize, u32, u32, bool)> = Vec::new();
         let mut building_hits: Vec<(u32, u32)> = Vec::new();
         let mut shots: Vec<Shot> = Vec::new();
         // Angriffsbefehle: hingehen, verfolgen, zuschlagen.
@@ -190,10 +223,10 @@ impl World {
                     continue;
                 }
                 if u.attack_cooldown <= 0.0 {
-                    u.attack_cooldown = attack_seconds;
+                    u.attack_cooldown = def.attack_seconds;
                     match (order, j) {
                         (AttackTarget::Unit { .. }, Some(j)) => {
-                            hits.push((j, attack, by));
+                            hits.push((j, attack, by, ranged));
                             if ranged {
                                 let (s, t) = (&self.units[k], &self.units[j]);
                                 shots.push(Shot { from: s.pos, to: t.pos, from_wall: s.on_wall, to_wall: t.on_wall, kind: s.kind });
@@ -254,12 +287,12 @@ impl World {
                 }
             }
             if let Some((_, j)) = best {
-                hits.push((j, def.attack, u.owner));
+                hits.push((j, def.attack, u.owner, ranged));
                 if ranged {
                     let t = &self.units[j];
                     shots.push(Shot { from: u.pos, to: t.pos, from_wall: u.on_wall, to_wall: t.on_wall, kind: u.kind });
                 }
-                self.units[k].attack_cooldown = attack_seconds;
+                self.units[k].attack_cooldown = def.attack_seconds;
             }
         }
         if !shots.is_empty() {
@@ -275,11 +308,19 @@ impl World {
                 self.dirty_buildings.insert(id);
             }
         }
-        if hits.is_empty() {
+        // Deckung: Schüsse auf Einheiten oben auf Gebäuden gehen teils daneben.
+        let mut landed = Vec::with_capacity(hits.len());
+        for (j, attack, by, ranged) in hits {
+            let cover = if ranged { self.cover_of(&self.units[j]) } else { 0 };
+            if !self.misses(cover) {
+                landed.push((j, attack, by));
+            }
+        }
+        if landed.is_empty() {
             return;
         }
         let mut killed_by: HashMap<usize, u32> = HashMap::new();
-        for (j, attack, by) in hits {
+        for (j, attack, by) in landed {
             let max = self.economy.unit(self.units[j].kind).map_or(0, |d| d.hp);
             let u = &mut self.units[j];
             u.damage = u.damage.saturating_add(attack);
@@ -336,7 +377,7 @@ impl World {
             return Err(protocol::Text::new("error.not_yours"));
         }
         let def = self.economy.building(b.kind).ok_or_else(|| protocol::Text::new("error.unknown_building"))?;
-        let max = def.max_hp.max(1);
+        let max = def.at(b.level).max_hp.max(1);
         if b.hp >= max {
             return Err(protocol::Text::new("error.not_damaged"));
         }
@@ -352,7 +393,7 @@ impl World {
     /// Was die Reparatur kostet (fehlender Anteil der Kosten bis zur jetzigen Stufe).
     pub fn repair_cost(&self, b: &protocol::BuildingState) -> Vec<protocol::GoodAmount> {
         let Some(def) = self.economy.building(b.kind) else { return Vec::new() };
-        let max = def.max_hp.max(1);
+        let max = def.at(b.level).max_hp.max(1);
         let missing = max.saturating_sub(b.hp.min(max));
         super::level_cost(def, b.level.min(255) as u8)
             .into_iter()
@@ -574,6 +615,46 @@ mod tests {
         assert!(w.take_events().iter().any(|e| matches!(e, ServerMsg::Shots { .. })), "Pfeile fliegen");
     }
 
+    /// Schaden, den ein Speerträger oben auf dem Bergfried in `seconds` von einem Bogenschützen
+    /// bekommt, wenn der Bergfried `cover` Prozent Deckung gibt und der Bogenschütze `rate`-mal
+    /// so schnell schießt wie laut Daten. Der Speerträger hält dabei beliebig viel aus.
+    fn damage_on_keep(cover: u32, rate: f32, seconds: f32) -> u32 {
+        let mut w = world();
+        let mut eco = w.economy.clone();
+        for l in &mut eco.def.buildings.iter_mut().find(|d| d.kind == BuildingKind::Keep).unwrap().levels {
+            l.cover_percent = cover;
+        }
+        eco.def.units.iter_mut().find(|u| u.kind == UnitKind::Spearman).unwrap().hp = u32::MAX;
+        eco.def.units.iter_mut().find(|u| u.kind == UnitKind::Archer).unwrap().attack_seconds /= rate;
+        w.set_economy(eco);
+        w.units.retain(|u| u.kind != UnitKind::King);
+        let keep = w.buildings.iter().find(|b| b.owner == 2 && b.kind == BuildingKind::Keep).unwrap().clone();
+        let top = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
+        let mut s = Unit::new(40_000, 2, UnitKind::Spearman, top);
+        s.on_wall = true;
+        w.units.push(s);
+        let range = w.economy.unit(UnitKind::Archer).unwrap().range;
+        w.units.push(Unit::new(40_001, 1, UnitKind::Archer, (top.0, top.1 + range.min(keep.h as f32 / 2.0 + 2.0))));
+        run(&mut w, seconds);
+        w.units.iter().find(|u| u.id == 40_000).expect("Speerträger lebt").damage
+    }
+
+    #[test]
+    fn deckung_auf_gebaeuden_laesst_schuesse_danebengehen() {
+        let open = damage_on_keep(0, 1.0, 60.0);
+        assert!(open > 0, "ohne Deckung trifft der Bogenschütze");
+        assert_eq!(damage_on_keep(100, 1.0, 60.0), 0, "volle Deckung: alles daneben");
+        let half = damage_on_keep(50, 1.0, 60.0);
+        assert!(half > open / 4 && half < open * 3 / 4, "halbe Deckung: etwa halber Schaden ({half} von {open})");
+    }
+
+    #[test]
+    fn angriffstakt_je_einheit() {
+        let slow = damage_on_keep(0, 1.0, 30.0);
+        let fast = damage_on_keep(0, 2.0, 30.0);
+        assert!(slow > 0 && fast > slow * 3 / 2, "doppelter Takt: etwa doppelter Schaden ({fast} gegen {slow})");
+    }
+
     #[test]
     fn nahkaempfer_reissen_gebaeude_ein_fernkaempfer_nicht() {
         let mut w = world();
@@ -594,7 +675,7 @@ mod tests {
     fn reparieren_kostet_anteilig_und_nicht_bei_feinden() {
         let mut w = world();
         let keep = w.buildings.iter().find(|b| b.owner == 2 && b.kind == BuildingKind::Keep).unwrap().id;
-        let max = w.economy.building(BuildingKind::Keep).unwrap().max_hp;
+        let max = w.economy.building(BuildingKind::Keep).unwrap().at(1).max_hp;
         w.buildings.iter_mut().find(|b| b.id == keep).unwrap().hp = max / 2;
         let cost = w.repair_cost(w.buildings.iter().find(|b| b.id == keep).unwrap());
         let s = next_to_king(&mut w, 1, UnitKind::Spearman, 2, 20.0);
