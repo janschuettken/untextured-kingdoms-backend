@@ -69,6 +69,10 @@ delivery: DeliveryDefaults,
  */
 horse_capacity: number, 
 /**
+ * Brücke: höchstens so viele Wasserfelder lang (0 = 15).
+ */
+max_span: number, 
+/**
  * Mindestens eine Stufe.
  */
 levels: Array<BuildingLevel>, };

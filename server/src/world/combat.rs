@@ -68,7 +68,14 @@ impl World {
 
     /// Angriffsbefehl: wer dem Ziel schaden kann, verfolgt und greift es an; die
     /// anderen (Fernkämpfer gegen König oder Gebäude, Verbündete) laufen nur hin.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn order_attack(&mut self, player: u32, unit_ids: &[u32], target: AttackTarget) -> bool {
+        self.order_attack_full(player, unit_ids, target, false)
+    }
+
+    /// Wie `order_attack`; `force` (Knopf „Alles angreifen“) erlaubt auch eigene,
+    /// verbündete und neutrale Ziele. Niemand greift sich selbst an.
+    pub fn order_attack_full(&mut self, player: u32, unit_ids: &[u32], target: AttackTarget, force: bool) -> bool {
         let Some((owner, pos)) = self.attack_target_info(target) else { return false };
         let mut movers = Vec::new();
         for k in 0..self.units.len() {
@@ -76,9 +83,11 @@ impl World {
             if u.owner != player || u.is_civilian() || !unit_ids.contains(&u.id) {
                 continue;
             }
-            if self.can_attack(player, owner) && self.can_hurt(u, target) {
+            let itself = target == AttackTarget::Unit { id: u.id };
+            if (force || self.can_attack(player, owner)) && !itself && self.can_hurt(u, target) {
                 let u = &mut self.units[k];
                 u.attack_order = Some(target);
+                u.attack_force = force;
                 u.waypoints.clear();
                 u.chase_timer = 0.0;
                 u.speed_cap = None;
@@ -228,7 +237,7 @@ impl World {
                     (b.owner, self.foot_of(center, u.pos), false, dx.hypot(dy), true, None)
                 }),
             };
-            let Some((owner, pos, on_wall, dist, level_ok, j)) = found.filter(|f| self.can_attack(u.owner, f.0) && self.can_hurt(u, order)) else {
+            let Some((owner, pos, on_wall, dist, level_ok, j)) = found.filter(|f| (u.attack_force || self.can_attack(u.owner, f.0)) && self.can_hurt(u, order)) else {
                 // Ziel gefallen, abgerissen oder nicht (mehr) angreifbar: stehen bleiben.
                 let u = &mut self.units[k];
                 u.attack_order = None;
@@ -498,7 +507,7 @@ impl World {
     }
 
     /// Spieler scheidet aus, ohne schon den Sieg zu prüfen.
-    fn knock_out(&mut self, player: u32, by: Option<u32>) {
+    pub(super) fn knock_out(&mut self, player: u32, by: Option<u32>) {
         if !self.eliminated.insert(player) {
             return;
         }
@@ -516,7 +525,7 @@ impl World {
     }
 
     /// Nur noch ein Bündnis (oder ein Spieler) übrig: Spiel entschieden.
-    fn check_victory(&mut self) {
+    pub(super) fn check_victory(&mut self) {
         if self.winners.is_some() {
             return;
         }

@@ -11,6 +11,8 @@ use protocol::{
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod army;
+mod bridge;
+pub use bridge::NEUTRAL;
 mod diplomacy;
 mod ballistics;
 mod combat;
@@ -76,6 +78,9 @@ pub struct Unit {
     /// Angriffsbefehl: dieses Ziel verfolgen und angreifen, bis es fällt.
     #[serde(default)]
     attack_order: Option<protocol::AttackTarget>,
+    /// Angriff mit „Alles angreifen“: das Ziel darf auch eigen, verbündet oder neutral sein.
+    #[serde(default)]
+    attack_force: bool,
     /// Sekunden bis zur nächsten Wegsuche beim Verfolgen.
     #[serde(default)]
     chase_timer: f32,
@@ -143,6 +148,7 @@ impl Unit {
             damage: 0,
             attack_cooldown: 0.0,
             attack_order: None,
+            attack_force: false,
             chase_timer: 0.0,
             mounted: false,
             horse_damage: 0,
@@ -307,7 +313,7 @@ impl World {
         map.nav.set_slope_percent(economy.def.movement.slope_speed_percent);
         let n = (map.width * map.height) as usize;
         let resource_left = map.resources.iter().map(|&r| economy.resource_amount(r)).collect();
-        World {
+        let mut world = World {
             map,
             units: Vec::new(),
             buildings: Vec::new(),
@@ -345,7 +351,9 @@ impl World {
             worker_carries_default: true,
             self_carry: HashSet::new(),
             combat_rng: 0x9E37_79B9_7F4A_7C15,
-        }
+        };
+        world.add_map_bridges();
+        world
     }
 
     /// Änderungen seit dem letzten Aufruf, zum Verteilen an alle Clients.
@@ -890,6 +898,9 @@ impl World {
     pub fn move_building(&mut self, player: u32, id: u32, x: u32, y: u32, rotation: u8) -> Result<BuildingState, Refusal> {
         let bi = self.buildings.iter().position(|b| b.id == id).ok_or_else(|| Text::new("error.no_building"))?;
         let old = self.buildings[bi].clone();
+        if old.kind == BuildingKind::Bridge {
+            return Err(Text::new("error.bridge_fixed"));
+        }
         if old.owner != player {
             return Err(Text::new("error.not_yours"));
         }
@@ -939,6 +950,10 @@ impl World {
     /// Felder eines Gebäudes belegen (`true`) oder freigeben. Wege blockieren
     /// nicht, sondern machen das Feld schneller.
     pub(super) fn set_footprint(&mut self, b: &BuildingState, on: bool) {
+        if b.kind == BuildingKind::Bridge {
+            self.set_bridge_footprint(b, on);
+            return;
+        }
         let road = self.economy.building(b.kind).filter(|d| d.is_road()).map_or(0, |d| d.at(b.level).road_speed_percent.max(1));
         for ty in b.y..b.y + b.h {
             for tx in b.x..b.x + b.w {
@@ -1032,8 +1047,10 @@ impl World {
         let pct = if last_free { 0 } else { self.economy.def.demolish_refund_percent };
         let mut refund: Vec<GoodAmount> = Vec::new();
         if let Some(def) = self.economy.building(b.kind) {
+            // Brücken kosten je Feld.
+            let cells = if b.kind == BuildingKind::Bridge { bridge::bridge_len(&b) } else { 1 };
             for level in def.levels.iter().take(b.level as usize) {
-                refund.extend(level.cost.iter().map(|c| GoodAmount { good: c.good, amount: c.amount * pct / 100 }));
+                refund.extend(level.cost.iter().map(|c| GoodAmount { good: c.good, amount: c.amount * cells * pct / 100 }));
             }
         }
         self.remove_building(id);
@@ -1068,6 +1085,9 @@ impl World {
                 stock.add(g.good, g.amount);
             }
             self.dirty_stocks.insert(b.owner);
+        }
+        if b.kind == BuildingKind::Bridge {
+            self.drown_on_bridge(&b);
         }
         self.set_footprint(&b, false);
         self.drop_from_walls();

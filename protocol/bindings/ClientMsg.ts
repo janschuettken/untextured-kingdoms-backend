@@ -14,11 +14,11 @@ export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", c
  * Strg+Rechtsklick: als weiteren Wegpunkt hinten anhängen, statt den Weg zu ersetzen.
  * Ein Befehl ohne `append` löscht alle alten Wegpunkte.
  */
-append?: boolean, } | { "type": "attack", unit_ids: Array<number>, target: AttackTarget, } | { "type": "mount", unit_ids: Array<number>, } | { "type": "dismount", unit_ids: Array<number>, } | { "type": "place_building", kind: BuildingKind, x: number, y: number, rotation: number, 
+append?: boolean, } | { "type": "attack", unit_ids: Array<number>, target: AttackTarget, force?: boolean, } | { "type": "mount", unit_ids: Array<number>, } | { "type": "dismount", unit_ids: Array<number>, } | { "type": "place_building", kind: BuildingKind, x: number, y: number, rotation: number, 
 /**
  * Gleich auf dieser Stufe bauen (0 oder 1 = erste Stufe). Kostet alle Stufen bis dahin.
  */
-level: number, } | { "type": "demolish_building", building_id: number, } | { "type": "upgrade_building", building_id: number, } | { "type": "repair_building", building_id: number, } | { "type": "configure_building", building_id: number, settings: BuildingSettings, } | { "type": "release_trees", building_id: number, } | { "type": "watch_unit", unit_id: number | null, } | { "type": "request_nav_costs" } | { "type": "train_units", building_id: number, kind: UnitKind, count: number, 
+level: number, } | { "type": "place_bridge", x: number, y: number, w: number, h: number, } | { "type": "demolish_building", building_id: number, } | { "type": "upgrade_building", building_id: number, } | { "type": "repair_building", building_id: number, } | { "type": "configure_building", building_id: number, settings: BuildingSettings, } | { "type": "release_trees", building_id: number, } | { "type": "watch_unit", unit_id: number | null, } | { "type": "request_nav_costs" } | { "type": "train_units", building_id: number, kind: UnitKind, count: number, 
 /**
  * Auf alle eigenen Kasernen verteilen, die diese Einheit ausbilden können.
  */

@@ -88,6 +88,10 @@ impl World {
             return Err("Spielstand passt nicht zur Karte".into());
         }
         let mut w = World::new(map, economy);
+        // Die Brücken der Karte stehen im Spielstand (vielleicht schon eingerissen).
+        for b in std::mem::take(&mut w.buildings) {
+            w.set_footprint(&b, false);
+        }
         for (t, &r) in save.resources.iter().enumerate() {
             w.set_resource(t, r);
         }
