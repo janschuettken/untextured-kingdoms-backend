@@ -346,6 +346,12 @@ impl Economy {
         if !(army.fall_seconds >= 0.0 && army.fall_seconds.is_finite()) {
             return Err("Heer: fall_seconds darf nicht negativ sein".into());
         }
+        if !(army.alert_radius >= 0.0 && army.alert_radius.is_finite()) {
+            return Err("Heer: alert_radius darf nicht negativ sein (0 = aus)".into());
+        }
+        if !(army.alert_seconds >= 0.0 && army.alert_seconds.is_finite()) {
+            return Err("Heer: alert_seconds darf nicht negativ sein".into());
+        }
         if !(army.enemy_block_radius >= 0.0 && army.enemy_block_radius.is_finite()) {
             return Err("Heer: enemy_block_radius darf nicht negativ sein (0 = aus)".into());
         }

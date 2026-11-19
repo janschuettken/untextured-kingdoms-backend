@@ -49,4 +49,12 @@ fall_seconds: number,
 /**
  * Sekunden zwischen zwei Behandlungen eines Heilers.
  */
-heal_seconds: number, };
+heal_seconds: number, 
+/**
+ * Warnung, sobald ein feindlicher Soldat oder König so nah (Felder) am eigenen Bergfried ist. 0 = aus.
+ */
+alert_radius: number, 
+/**
+ * Nach einer Warnung kommt dieselbe Art frühestens nach so vielen Sekunden wieder.
+ */
+alert_seconds: number, };
