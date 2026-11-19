@@ -544,12 +544,12 @@ async fn handle_msg(
             }
         }
         // Nicht über `apply_command`: nur der Mensch bekommt das rote X bei unerreichbarem Ziel.
-        ClientMsg::MoveUnits { unit_ids, x, y } => {
+        ClientMsg::MoveUnits { unit_ids, x, y, fast } => {
             let reachable = state
                 .world
                 .lock()
                 .unwrap()
-                .order_move(player_id, &unit_ids, (x, y));
+                .order_move_as(player_id, &unit_ids, (x, y), fast.unwrap_or(false));
             if !reachable {
                 drop(out_tx.try_send(ServerMsg::MoveUnreachable { x, y }));
             }
@@ -639,8 +639,8 @@ pub fn apply_command(
         return Err(protocol::Text::new("defeat.eliminated"));
     }
     match msg {
-        ClientMsg::MoveUnits { unit_ids, x, y } => {
-            world.order_move(player_id, &unit_ids, (x, y));
+        ClientMsg::MoveUnits { unit_ids, x, y, fast } => {
+            world.order_move_as(player_id, &unit_ids, (x, y), fast.unwrap_or(false));
         }
         ClientMsg::Attack { unit_ids, target } => {
             world.order_attack(player_id, &unit_ids, target);

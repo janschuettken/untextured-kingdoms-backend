@@ -23,7 +23,16 @@ pub enum ClientMsg {
     Ping { client_time: f64 },
     /// Bewegungsbefehl: Einheiten sollen zum Punkt (x, y) laufen.
     /// Der Server prüft Besitz und sucht selbst den Weg.
-    MoveUnits { unit_ids: Vec<u32>, x: f32, y: f32 },
+    /// Eine Gruppe läuft im Tempo ihrer langsamsten Einheit; `fast` (zweiter Befehl gleich
+    /// hinterher, wie ein Doppelklick) lässt jede so schnell laufen, wie sie kann.
+    MoveUnits {
+        unit_ids: Vec<u32>,
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        #[ts(optional)]
+        fast: Option<bool>,
+    },
     /// Angriffsbefehl (Rechtsklick auf einen Feind): die Einheiten laufen hin, verfolgen das
     /// Ziel und greifen an, bis es fällt. Wer dem Ziel nichts anhaben kann (Fernkämpfer gegen
     /// König oder Gebäude) oder ein Verbündeter ist, läuft nur hin.
@@ -1070,6 +1079,9 @@ pub struct UnitDef {
     /// Sold in Talern je Zahltag (siehe `army.upkeep_seconds`).
     #[serde(default)]
     pub upkeep: u32,
+    /// Essen je Zahltag (Einheiten aus `population.food`). Fehlt es, laufen die Soldaten langsamer.
+    #[serde(default)]
+    pub food: u32,
     /// Fernkämpfer (Reichweite über `army.melee_range`) können diese Einheit nicht verletzen
     /// (der König: nur Nahkämpfer können ihn töten).
     #[serde(default)]
@@ -1114,6 +1126,12 @@ pub struct ArmyState {
     pub upkeep: u32,
     /// Am letzten Zahltag reichte das Geld nicht.
     pub unpaid: bool,
+    /// Essen aller Soldaten je Zahltag.
+    #[serde(default)]
+    pub food: u32,
+    /// Am letzten Zahltag reichte das Essen nicht.
+    #[serde(default)]
+    pub hungry: bool,
 }
 
 /// Lauftempo der Einheiten, die nicht transportieren (Felder pro Sekunde).

@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use protocol::{AttackTarget, ServerMsg, Shot, UnitKind};
+use protocol::{AttackTarget, BuildingKind, ServerMsg, Shot, UnitKind};
 
 use super::{Unit, World};
 
@@ -76,6 +76,7 @@ impl World {
                 let u = &mut self.units[k];
                 u.attack_order = Some(target);
                 u.chase_timer = 0.0;
+                u.speed_cap = None;
             } else {
                 movers.push(u.id);
             }
@@ -91,7 +92,7 @@ impl World {
         match target {
             AttackTarget::Unit { id } => self.units.iter().find(|u| u.id == id).map(|u| (u.owner, u.pos)),
             AttackTarget::Building { id } => {
-                let b = self.buildings.iter().find(|b| b.id == id)?;
+                let b = self.buildings.iter().find(|b| b.id == id && b.hp > 0)?;
                 Some((b.owner, (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0)))
             }
         }
@@ -155,6 +156,23 @@ impl World {
             let Some(def) = self.economy.unit(u.kind) else { continue };
             let ranged = self.economy.is_ranged(def.range);
             let reach = def.range + REACH;
+            // Unterwegs zu einem Gebäude: feindliche Kämpfer in Reichweite gehen vor. Erst die
+            // abwehren, dann weiter zum Gebäude.
+            if matches!(order, AttackTarget::Building { .. }) {
+                if let Some(j) = self.nearest_foe(k, &grid, true) {
+                    let (attack, by) = (def.attack, u.owner);
+                    let u = &mut self.units[k];
+                    u.path.clear();
+                    u.layers.clear();
+                    u.target = Some(u.pos);
+                    u.chase_timer = 0.0;
+                    if u.attack_cooldown <= 0.0 {
+                        u.attack_cooldown = attack_seconds;
+                        hits.push((j, attack, by));
+                    }
+                    continue;
+                }
+            }
             // Wo steht das Ziel, wie weit ist es, und kann man es von hier treffen?
             let found = match order {
                 AttackTarget::Unit { id } => index.get(&id).map(|&j| {
@@ -162,7 +180,7 @@ impl World {
                     let d = (t.pos.0 - u.pos.0).hypot(t.pos.1 - u.pos.1);
                     (t.owner, t.pos, t.on_wall, d, ranged || t.on_wall == u.on_wall, Some(j))
                 }),
-                AttackTarget::Building { id } => self.buildings.iter().find(|b| b.id == id).map(|b| {
+                AttackTarget::Building { id } => self.buildings.iter().find(|b| b.id == id && b.hp > 0).map(|b| {
                     let dx = (b.x as f32 - u.pos.0).max(u.pos.0 - (b.x + b.w) as f32).max(0.0);
                     let dy = (b.y as f32 - u.pos.1).max(u.pos.1 - (b.y + b.h) as f32).max(0.0);
                     let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
@@ -221,39 +239,12 @@ impl World {
             u.target = Some(pos);
             u.target_wall = on_wall;
         }
-        // Von selbst: die nächste feindliche Einheit in Reichweite.
+        // Von selbst: die nächste feindliche Einheit in Reichweite, Kämpfer vor Zivilisten.
         for &k in &fighters {
             let u = &self.units[k];
             let def = self.economy.unit(u.kind).expect("oben geprüft");
             let ranged = self.economy.is_ranged(def.range);
-            let reach = def.range + REACH;
-            let team = self.team(u.owner);
-            let (cx, cy) = ((u.pos.0 / CELL) as i32, (u.pos.1 / CELL) as i32);
-            let r = (reach / CELL).ceil() as i32;
-            let mut best: Option<(f32, usize)> = None;
-            for gy in cy - r..=cy + r {
-                for gx in cx - r..=cx + r {
-                    for &j in grid.get(&(gx, gy)).map_or(&[][..], |v| v.as_slice()) {
-                        let t = &self.units[j];
-                        if self.team(t.owner) == team {
-                            continue;
-                        }
-                        let Some(tdef) = self.economy.unit(t.kind) else { continue };
-                        // Wer drinnen arbeitet oder wartet, ist nicht zu erreichen.
-                        if t.kind.is_civilian() && self.inside(t) {
-                            continue;
-                        }
-                        if (ranged && tdef.ranged_immune) || (!ranged && t.on_wall != u.on_wall) {
-                            continue;
-                        }
-                        let d = ((t.pos.0 - u.pos.0).powi(2) + (t.pos.1 - u.pos.1).powi(2)).sqrt();
-                        if d <= reach && best.is_none_or(|(bd, _)| d < bd) {
-                            best = Some((d, j));
-                        }
-                    }
-                }
-            }
-            if let Some((_, j)) = best {
+            if let Some(j) = self.nearest_foe(k, &grid, false) {
                 hits.push((j, def.attack, u.owner));
                 if ranged {
                     let t = &self.units[j];
@@ -269,7 +260,11 @@ impl World {
         for (id, attack) in building_hits {
             let Some(b) = self.buildings.iter_mut().find(|b| b.id == id) else { continue };
             b.hp = b.hp.saturating_sub(attack);
-            if b.hp == 0 {
+            // Der Bergfried bleibt als Ruine stehen: nur die Tür ist weg, jeder kann hinauf.
+            if b.hp == 0 && b.kind == BuildingKind::Keep {
+                self.dirty_buildings.insert(id);
+                self.replan_all();
+            } else if b.hp == 0 {
                 self.destroy_building(id);
             } else {
                 self.dirty_buildings.insert(id);
@@ -310,6 +305,48 @@ impl World {
         }
     }
 
+    /// Nächste feindliche Einheit, die Einheit `k` von hier treffen kann. Kämpfer (Soldaten,
+    /// König) gehen vor Zivilisten; `only_fighters`: nur Kämpfer.
+    fn nearest_foe(&self, k: usize, grid: &HashMap<(i32, i32), Vec<usize>>, only_fighters: bool) -> Option<usize> {
+        let u = &self.units[k];
+        let def = self.economy.unit(u.kind)?;
+        let ranged = self.economy.is_ranged(def.range);
+        let reach = def.range + REACH;
+        let team = self.team(u.owner);
+        let (cx, cy) = ((u.pos.0 / CELL) as i32, (u.pos.1 / CELL) as i32);
+        let r = (reach / CELL).ceil() as i32;
+        // (Zivilist?, Abstand): kleinster gewinnt.
+        let mut best: Option<((bool, f32), usize)> = None;
+        for gy in cy - r..=cy + r {
+            for gx in cx - r..=cx + r {
+                for &j in grid.get(&(gx, gy)).map_or(&[][..], |v| v.as_slice()) {
+                    let t = &self.units[j];
+                    if self.team(t.owner) == team {
+                        continue;
+                    }
+                    let Some(tdef) = self.economy.unit(t.kind) else { continue };
+                    let civilian = t.kind.is_civilian() || tdef.attack == 0;
+                    if civilian && only_fighters {
+                        continue;
+                    }
+                    // Wer drinnen arbeitet oder wartet, ist nicht zu erreichen.
+                    if t.kind.is_civilian() && self.inside(t) {
+                        continue;
+                    }
+                    if (ranged && tdef.ranged_immune) || (!ranged && t.on_wall != u.on_wall) {
+                        continue;
+                    }
+                    let d = (t.pos.0 - u.pos.0).hypot(t.pos.1 - u.pos.1);
+                    let key = (civilian, d);
+                    if d <= reach && best.is_none_or(|(bk, _)| key.0 < bk.0 || (key.0 == bk.0 && key.1 < bk.1)) {
+                        best = Some((key, j));
+                    }
+                }
+            }
+        }
+        best.map(|(_, j)| j)
+    }
+
     /// Steht ein feindlicher Soldat oder König im Umkreis `army.enemy_block_radius`?
     /// Dann darf hier nicht gebaut, ausgebaut oder repariert werden.
     pub(super) fn check_no_enemy(&self, player: u32, at: (f32, f32)) -> Result<(), protocol::Text> {
@@ -345,8 +382,14 @@ impl World {
         self.check_no_enemy(player, center)?;
         self.pay(player, &cost)?;
         let b = self.buildings.iter_mut().find(|b| b.id == id).expect("eben gefunden");
+        let was_ruin = b.hp == 0;
         b.hp = max;
-        Ok(b.clone())
+        let b = b.clone();
+        if was_ruin {
+            // Tür wieder drin: Feinde kommen nicht mehr hinauf.
+            self.replan_all();
+        }
+        Ok(b)
     }
 
     /// Was die Reparatur kostet (fehlender Anteil der Kosten bis zur jetzigen Stufe).
@@ -389,6 +432,7 @@ impl World {
         }
         self.pay_timer.remove(&player);
         self.unpaid.remove(&player);
+        self.army_hungry.remove(&player);
         self.replan_all();
         self.events.push(ServerMsg::PlayerDefeated { player, by });
     }
@@ -520,6 +564,8 @@ mod tests {
         let pos = king(&w, 2).unwrap().pos;
         w.units.push(Unit::new(20_001, 2, UnitKind::Carrier, (pos.0 + 4.0, pos.1)));
         w.units.push(Unit::new(20_002, 1, UnitKind::Archer, (pos.0 + 8.0, pos.1)));
+        // Ohne König daneben (Kämpfer gehen vor).
+        w.units.retain(|u| u.kind != UnitKind::King);
         run(&mut w, 30.0);
         assert!(!w.units.iter().any(|u| u.id == 20_001), "feindlicher Träger ist gefallen");
 
@@ -575,19 +621,53 @@ mod tests {
     }
 
     #[test]
-    fn nahkaempfer_reissen_gebaeude_ein_fernkaempfer_nicht() {
+    fn zerstoerter_bergfried_bleibt_stehen_und_ist_offen() {
         let mut w = world();
         let keep = w.buildings.iter().find(|b| b.owner == 2 && b.kind == BuildingKind::Keep).unwrap().clone();
         let a = next_to_king(&mut w, 1, UnitKind::Archer, 2, 6.0);
         w.order_attack(1, &[a], protocol::AttackTarget::Building { id: keep.id });
-        assert!(w.units.iter().find(|u| u.id == a).unwrap().attack_order.is_none());
+        assert!(w.units.iter().find(|u| u.id == a).unwrap().attack_order.is_none(), "Fernkämpfer nicht gegen Gebäude");
         let ids: Vec<u32> = (0..6).map(|i| next_to_king(&mut w, 1, UnitKind::Swordsman, 2, 3.0 + i as f32 * 0.7)).collect();
         // König 2 weg, damit er die Schwertkämpfer nicht aufhält.
         w.units.retain(|u| !(u.owner == 2 && u.kind == UnitKind::King));
+        let center = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
+        assert!(!w.is_walkway(1, center), "vorher kommt der Feind nicht hinauf");
         w.order_attack(1, &ids, protocol::AttackTarget::Building { id: keep.id });
         steps(&mut w, 300.0);
-        assert!(!w.buildings.iter().any(|b| b.id == keep.id), "Bergfried eingerissen");
-        assert!(w.take_events().iter().any(|e| matches!(e, ServerMsg::BuildingRemoved { building_id } if *building_id == keep.id)));
+        let b = w.buildings.iter().find(|b| b.id == keep.id).expect("Bergfried steht noch");
+        assert_eq!(b.hp, 0);
+        assert!(!w.take_events().iter().any(|e| matches!(e, ServerMsg::BuildingRemoved { building_id } if *building_id == keep.id)));
+        assert!(w.units.iter().filter(|u| ids.contains(&u.id)).all(|u| u.attack_order.is_none()), "Ruine ist kein Ziel mehr");
+        assert!(w.is_walkway(1, center), "Tür weg: der Feind kann hinauf");
+    }
+
+    #[test]
+    fn auf_dem_weg_zum_gebaeude_gehen_feinde_vor() {
+        let mut w = world();
+        let keep = w.buildings.iter().find(|b| b.owner == 2 && b.kind == BuildingKind::Keep).unwrap().clone();
+        w.units.retain(|u| !(u.owner == 2 && u.kind == UnitKind::King));
+        let pos = (keep.x as f32 + keep.w as f32 / 2.0, (keep.y + keep.h) as f32 + 6.0);
+        w.units.push(Unit::new(40_001, 1, UnitKind::Swordsman, pos));
+        w.units.push(Unit::new(40_002, 2, UnitKind::Spearman, (pos.0 + 1.0, pos.1)));
+        w.order_attack(1, &[40_001], protocol::AttackTarget::Building { id: keep.id });
+        steps(&mut w, 2.0);
+        let s = w.units.iter().find(|u| u.id == 40_002);
+        assert!(s.is_none_or(|s| s.damage > 0), "erst den Speerträger");
+        assert_eq!(w.buildings.iter().find(|b| b.id == keep.id).unwrap().hp, w.economy.building(BuildingKind::Keep).unwrap().max_hp);
+        assert!(w.units.iter().find(|u| u.id == 40_001).unwrap().attack_order.is_some(), "Befehl bleibt");
+    }
+
+    #[test]
+    fn soldaten_bevorzugen_kaempfer_vor_zivilisten() {
+        let mut w = world();
+        w.units.retain(|u| u.kind != UnitKind::King);
+        let pos = (20.0, 20.0);
+        w.units.push(Unit::new(41_001, 2, UnitKind::Carrier, (pos.0 + 0.8, pos.1)));
+        w.units.push(Unit::new(41_002, 2, UnitKind::Spearman, (pos.0 - 1.2, pos.1)));
+        w.units.push(Unit::new(41_003, 1, UnitKind::Swordsman, pos));
+        run(&mut w, 1.0);
+        assert_eq!(w.units.iter().find(|u| u.id == 41_001).unwrap().damage, 0, "Träger noch heil");
+        assert!(w.units.iter().find(|u| u.id == 41_002).is_none_or(|u| u.damage > 0));
     }
 
     #[test]
