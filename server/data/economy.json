@@ -1733,7 +1733,7 @@
           "cover_percent": 0,
           "build_radius": 0,
           "road_speed_percent": 0,
-          "hub_capacity": 0,
+          "hub_capacity": 5,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -2079,7 +2079,9 @@
   "movement": {
     "king_speed": 1.5,
     "worker_speed": 1.2,
-    "slope_speed_percent": 80
+    "slope_speed_percent": 80,
+    "spread_distance": 0.5,
+    "spread_speed": 1
   },
   "population": {
     "food": ["bread", "meat", "fruit"],
@@ -2248,7 +2250,7 @@
       "speed": 1.4,
       "hp": 20,
       "attack": 3,
-      "range": 18,
+      "range": 22,
       "upkeep": 0,
       "food": 0,
       "ranged_immune": false,
@@ -2269,7 +2271,7 @@
       "speed": 1.2,
       "hp": 50,
       "attack": 6,
-      "range": 17,
+      "range": 22,
       "upkeep": 0,
       "food": 1,
       "ranged_immune": false,
@@ -2378,12 +2380,12 @@
     "melee_range": 2,
     "civilian_respawn_seconds": 30,
     "enemy_block_radius": 50,
-    "alert_radius": 80,
-    "alert_seconds": 30,
     "horse_hp": 40,
     "horse_speed": 2.4,
     "fall_damage": 15,
     "fall_seconds": 8,
-    "heal_seconds": 2
+    "heal_seconds": 2,
+    "alert_radius": 80,
+    "alert_seconds": 30
   }
 }
