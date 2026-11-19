@@ -743,6 +743,12 @@ impl AddMissing for EconomyDef {
                 self.recipes.push(r.clone());
             }
         }
+        // Ältere Dateien kennen das Startgebäude noch nicht (oder der Balance-Editor hat das
+        // fehlende Feld als null zurückgeschrieben): dann gilt das eingebaute (der Bergfried).
+        if self.start_building.is_none() && builtin.start_building.is_some() {
+            self.start_building = builtin.start_building;
+            added.push("start_building".into());
+        }
         for u in &builtin.units {
             if !self.units.iter().any(|o| o.kind == u.kind) {
                 self.units.push(u.clone());
@@ -785,5 +791,16 @@ mod builtin_tests {
         assert_eq!(kinds, builtin, "Reihenfolge wie eingebaut");
         let first = merged.def.buildings.iter().find(|b| b.kind == old.buildings[0].kind).unwrap();
         assert!(first.levels[0].cost.is_empty(), "eigene Werte bleiben");
+    }
+
+    #[test]
+    fn alte_datei_ohne_startgebaeude_bekommt_bergfried() {
+        let mut value: serde_json::Value = serde_json::from_str(ECONOMY_JSON).unwrap();
+        value.as_object_mut().unwrap().remove("start_building");
+        let merged = Economy::parse_with_builtin(&value.to_string()).unwrap();
+        assert_eq!(merged.def.start_building, Some(BuildingKind::Keep));
+        value.as_object_mut().unwrap().insert("start_building".into(), serde_json::Value::Null);
+        let merged = Economy::parse_with_builtin(&value.to_string()).unwrap();
+        assert_eq!(merged.def.start_building, Some(BuildingKind::Keep));
     }
 }
