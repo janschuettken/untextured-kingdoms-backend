@@ -9,7 +9,12 @@ import type { UnitKind } from "./UnitKind";
 /**
  * Nachrichten vom Client an den Server.
  */
-export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", client_time: number, } | { "type": "move_units", unit_ids: Array<number>, x: number, y: number, fast?: boolean, } | { "type": "attack", unit_ids: Array<number>, target: AttackTarget, } | { "type": "place_building", kind: BuildingKind, x: number, y: number, rotation: number, 
+export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", client_time: number, } | { "type": "move_units", unit_ids: Array<number>, x: number, y: number, fast?: boolean, 
+/**
+ * Strg+Rechtsklick: als weiteren Wegpunkt hinten anhängen, statt den Weg zu ersetzen.
+ * Ein Befehl ohne `append` löscht alle alten Wegpunkte.
+ */
+append?: boolean, } | { "type": "attack", unit_ids: Array<number>, target: AttackTarget, } | { "type": "place_building", kind: BuildingKind, x: number, y: number, rotation: number, 
 /**
  * Gleich auf dieser Stufe bauen (0 oder 1 = erste Stufe). Kostet alle Stufen bis dahin.
  */

@@ -32,6 +32,11 @@ pub enum ClientMsg {
         #[serde(default)]
         #[ts(optional)]
         fast: Option<bool>,
+        /// Strg+Rechtsklick: als weiteren Wegpunkt hinten anhängen, statt den Weg zu ersetzen.
+        /// Ein Befehl ohne `append` löscht alle alten Wegpunkte.
+        #[serde(default)]
+        #[ts(optional)]
+        append: Option<bool>,
     },
     /// Angriffsbefehl (Rechtsklick auf einen Feind): die Einheiten laufen hin, verfolgen das
     /// Ziel und greifen an, bis es fällt. Wer dem Ziel nichts anhaben kann (Fernkämpfer gegen

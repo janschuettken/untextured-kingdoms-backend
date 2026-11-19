@@ -75,6 +75,7 @@ impl World {
             if self.can_attack(player, owner) && self.can_hurt(u, target) {
                 let u = &mut self.units[k];
                 u.attack_order = Some(target);
+                u.waypoints.clear();
                 u.chase_timer = 0.0;
                 u.speed_cap = None;
             } else {
