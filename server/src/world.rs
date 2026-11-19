@@ -12,6 +12,7 @@ use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod army;
 mod diplomacy;
+mod ballistics;
 mod combat;
 mod errand;
 mod enclosure;
@@ -176,6 +177,8 @@ pub struct World {
     hub_goods: HashMap<u32, storage::HubGoods>,
     /// Wie Waren zwischen Verbündeten ankommen.
     trade_mode: protocol::TradeMode,
+    /// Fernkampf: Wurfbahn oder Sichtlinie (Lobby), siehe `ballistics.rs`.
+    shot_mode: protocol::ShotMode,
     /// Spieler, deren König gefallen ist (siehe `combat.rs`).
     eliminated: BTreeSet<u32>,
     /// Bündnis je Spieler; wer fehlt, kämpft allein (eigene Nummer). Siehe `diplomacy.rs`.
@@ -262,6 +265,7 @@ impl World {
             army_hungry: HashSet::new(),
             hub_goods: HashMap::new(),
             trade_mode: protocol::TradeMode::default(),
+            shot_mode: protocol::ShotMode::default(),
             eliminated: BTreeSet::new(),
             teams: HashMap::new(),
             winners: None,

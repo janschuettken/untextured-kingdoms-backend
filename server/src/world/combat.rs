@@ -159,7 +159,7 @@ impl World {
             // Unterwegs zu einem Gebäude: feindliche Kämpfer in Reichweite gehen vor. Erst die
             // abwehren, dann weiter zum Gebäude.
             if matches!(order, AttackTarget::Building { .. }) {
-                if let Some(j) = self.nearest_foe(k, &grid, true) {
+                if let Some((j, _)) = self.nearest_foe(k, &grid, true) {
                     let (attack, by) = (def.attack, u.owner);
                     let u = &mut self.units[k];
                     u.path.clear();
@@ -178,7 +178,10 @@ impl World {
                 AttackTarget::Unit { id } => index.get(&id).map(|&j| {
                     let t = &self.units[j];
                     let d = (t.pos.0 - u.pos.0).hypot(t.pos.1 - u.pos.1);
-                    (t.owner, t.pos, t.on_wall, d, ranged || t.on_wall == u.on_wall, Some(j))
+                    // Fernkampf: nur wenn Wurfbahn bzw. Sichtlinie frei ist, sonst näher heran.
+                    let flight = if ranged && d <= reach { self.flight(u, t, def.range) } else { None };
+                    let ok = if ranged { flight.is_some() } else { t.on_wall == u.on_wall };
+                    (t.owner, t.pos, t.on_wall, d, ok, Some((j, flight)))
                 }),
                 AttackTarget::Building { id } => self.buildings.iter().find(|b| b.id == id && b.hp > 0).map(|b| {
                     let dx = (b.x as f32 - u.pos.0).max(u.pos.0 - (b.x + b.w) as f32).max(0.0);
@@ -210,11 +213,10 @@ impl World {
                 if u.attack_cooldown <= 0.0 {
                     u.attack_cooldown = attack_seconds;
                     match (order, j) {
-                        (AttackTarget::Unit { .. }, Some(j)) => {
+                        (AttackTarget::Unit { .. }, Some((j, flight))) => {
                             hits.push((j, attack, by));
-                            if ranged {
-                                let (s, t) = (&self.units[k], &self.units[j]);
-                                shots.push(Shot { from: s.pos, to: t.pos, from_wall: s.on_wall, to_wall: t.on_wall, kind: s.kind });
+                            if let Some(f) = flight {
+                                shots.push(self.make_shot(&self.units[k], &self.units[j], f, def.range));
                             }
                         }
                         (AttackTarget::Building { id }, _) => building_hits.push((id, attack)),
@@ -243,12 +245,10 @@ impl World {
         for &k in &fighters {
             let u = &self.units[k];
             let def = self.economy.unit(u.kind).expect("oben geprüft");
-            let ranged = self.economy.is_ranged(def.range);
-            if let Some(j) = self.nearest_foe(k, &grid, false) {
+            if let Some((j, flight)) = self.nearest_foe(k, &grid, false) {
                 hits.push((j, def.attack, u.owner));
-                if ranged {
-                    let t = &self.units[j];
-                    shots.push(Shot { from: u.pos, to: t.pos, from_wall: u.on_wall, to_wall: t.on_wall, kind: u.kind });
+                if let Some(f) = flight {
+                    shots.push(self.make_shot(u, &self.units[j], f, def.range));
                 }
                 self.units[k].attack_cooldown = attack_seconds;
             }
@@ -307,7 +307,8 @@ impl World {
 
     /// Nächste feindliche Einheit, die Einheit `k` von hier treffen kann. Kämpfer (Soldaten,
     /// König) gehen vor Zivilisten; `only_fighters`: nur Kämpfer.
-    fn nearest_foe(&self, k: usize, grid: &HashMap<(i32, i32), Vec<usize>>, only_fighters: bool) -> Option<usize> {
+    /// Fernkämpfer: nur wen Wurfbahn bzw. Sichtlinie erreicht (mit der Bahn dazu).
+    fn nearest_foe(&self, k: usize, grid: &HashMap<(i32, i32), Vec<usize>>, only_fighters: bool) -> Option<(usize, Option<super::ballistics::Flight>)> {
         let u = &self.units[k];
         let def = self.economy.unit(u.kind)?;
         let ranged = self.economy.is_ranged(def.range);
@@ -316,7 +317,7 @@ impl World {
         let (cx, cy) = ((u.pos.0 / CELL) as i32, (u.pos.1 / CELL) as i32);
         let r = (reach / CELL).ceil() as i32;
         // (Zivilist?, Abstand): kleinster gewinnt.
-        let mut best: Option<((bool, f32), usize)> = None;
+        let mut near: Vec<((bool, f32), usize)> = Vec::new();
         for gy in cy - r..=cy + r {
             for gx in cx - r..=cx + r {
                 for &j in grid.get(&(gx, gy)).map_or(&[][..], |v| v.as_slice()) {
@@ -338,13 +339,19 @@ impl World {
                     }
                     let d = (t.pos.0 - u.pos.0).hypot(t.pos.1 - u.pos.1);
                     let key = (civilian, d);
-                    if d <= reach && best.is_none_or(|(bk, _)| (key.0, key.1) < (bk.0, bk.1)) {
-                        best = Some((key, j));
+                    if d <= reach {
+                        near.push((key, j));
                     }
                 }
             }
         }
-        best.map(|(_, j)| j)
+        near.sort_by(|a, b| a.0.0.cmp(&b.0.0).then(a.0.1.total_cmp(&b.0.1)));
+        near.into_iter().find_map(|(_, j)| {
+            if !ranged {
+                return Some((j, None));
+            }
+            self.flight(u, &self.units[j], def.range).map(|f| (j, Some(f)))
+        })
     }
 
     /// Steht ein feindlicher Soldat oder König im Umkreis `army.enemy_block_radius`?
@@ -402,6 +409,23 @@ impl World {
             .map(|c| protocol::GoodAmount { good: c.good, amount: (c.amount * missing).div_ceil(max) })
             .filter(|c| c.amount > 0)
             .collect()
+    }
+
+    /// Schuss für den Client: gleiche Bahn wie auf dem Server gerechnet.
+    fn make_shot(&self, s: &Unit, t: &Unit, flight: super::ballistics::Flight, range: f32) -> Shot {
+        Shot {
+            from: s.pos,
+            to: t.pos,
+            from_wall: s.on_wall,
+            to_wall: t.on_wall,
+            kind: s.kind,
+            from_h: self.feet_h(s) + 0.7,
+            to_h: self.feet_h(t) + 0.7,
+            arc: match flight {
+                super::ballistics::Flight::Arc(tan) => Some((tan, range)),
+                super::ballistics::Flight::Straight => None,
+            },
+        }
     }
 
     /// Gebäude im Kampf eingerissen: verschwindet wie beim Abriss, nur ohne Erstattung.
@@ -464,7 +488,21 @@ mod tests {
     /// Zwei Spieler mit Bergfried; ohne Bewohner, damit nichts Anderes dazwischenfunkt.
     fn world() -> World {
         let map = GameMap::parse(crate::map::DEFAULT_MAP).unwrap();
-        let mut w = World::new(map, Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people());
+        let mut eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people();
+        // Feste Kampfwerte, damit die Tests nicht vom Balancing abhängen.
+        for u in &mut eco.def.units {
+            let (hp, attack, range, immune) = match u.kind {
+                UnitKind::King => (300, 14, 1.2, true),
+                UnitKind::Spearman => (60, 8, 1.5, false),
+                UnitKind::Archer => (40, 6, 18.0, false),
+                UnitKind::Swordsman => (110, 12, 1.0, false),
+                UnitKind::Knight => (140, 16, 1.0, false),
+                _ => continue,
+            };
+            (u.hp, u.attack, u.range, u.ranged_immune) = (hp, attack, range, immune);
+        }
+        eco.def.army.attack_seconds = 1.5;
+        let mut w = World::new(map, eco);
         w.spawn_player(1);
         w.spawn_player(2);
         w.take_events();

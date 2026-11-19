@@ -26,6 +26,23 @@ fn default_king(speed: f32) -> UnitDef {
     }
 }
 
+/// Grundhöhe eines Gebäudes (Welt) bis Oberkante samt Zinnen bzw. Dach.
+fn default_height(kind: protocol::BuildingKind) -> f32 {
+    use protocol::BuildingKind as K;
+    match kind {
+        K::Wall | K::Palisade | K::Staircase => 1.5,
+        K::HighWall => 2.4,
+        K::Gate => 2.6,
+        K::Gatehouse => 3.6,
+        K::Tower => 3.7,
+        K::HighTower => 6.6,
+        K::Keep => 5.2,
+        K::WoodPath | K::StonePath => 0.0,
+        K::Farm | K::Orchard | K::PigFarm | K::CattleFarm => 1.0,
+        _ => 1.8,
+    }
+}
+
 pub const ECONOMY_JSON: &str = include_str!("../data/economy.json");
 
 #[derive(Clone)]
@@ -67,6 +84,12 @@ impl Economy {
         // Ältere Balancing-Dateien kennen den König noch nicht: Grundwerte einsetzen.
         if !def.units.iter().any(|u| u.kind == UnitKind::King) {
             def.units.insert(0, default_king(def.movement.king_speed));
+        }
+        // Höhe für Pfeile: fehlt sie, Grundwert je Art (passend zu den Modellen im Client).
+        for b in &mut def.buildings {
+            if b.height <= 0.0 && b.road_speed_percent == 0 {
+                b.height = default_height(b.kind);
+            }
         }
         // Zivilisten ohne Werte: Grundwerte (nur Lebenspunkte).
         for (kind, hp) in [(UnitKind::Worker, 30), (UnitKind::Carrier, 30), (UnitKind::Cart, 60), (UnitKind::TradeCart, 60)] {

@@ -107,6 +107,8 @@ pub struct Meta {
     pub slots: Vec<Option<Member>>,
     /// Handel unter Verbündeten: sofort oder mit Karren.
     pub trade_mode: TradeMode,
+    /// Fernkampf: Wurfbahn oder Sichtlinie.
+    pub shot_mode: protocol::ShotMode,
 }
 
 impl Meta {
@@ -375,6 +377,7 @@ impl Hub {
                         host: file.host,
                         slots: file.slots,
                         trade_mode: world.trade_mode(),
+                        shot_mode: world.shot_mode(),
                     };
                     let computers = meta.computers();
                     let game = Arc::new(Game {
@@ -482,6 +485,7 @@ impl Hub {
                 host: public_id(&meta.host),
                 slots,
                 trade_mode: meta.trade_mode,
+                shot_mode: meta.shot_mode,
             };
             details.push((detail, meta.members().map(|m| m.token.clone()).collect()));
         }
@@ -546,6 +550,7 @@ impl Hub {
             host: token.into(),
             slots,
             trade_mode: TradeMode::default(),
+            shot_mode: protocol::ShotMode::default(),
         };
         let game = Arc::new(Game {
             id,
@@ -785,6 +790,22 @@ impl Hub {
         Ok(())
     }
 
+    /// Gastgeber: wann Fernkämpfer treffen (Wurfbahn oder Sichtlinie).
+    fn set_shot_mode(&self, token: &str, mode: protocol::ShotMode) -> Reply {
+        let Some(game) = self.game_of(token) else {
+            return err("lobby.not_in_game");
+        };
+        let mut meta = game.meta.lock().unwrap();
+        if meta.host != token {
+            return err("lobby.not_host");
+        }
+        if meta.phase != GamePhase::Waiting {
+            return err("lobby.game_running");
+        }
+        meta.shot_mode = mode;
+        Ok(())
+    }
+
     fn start(self: &Arc<Hub>, token: &str) -> Reply {
         let Some(game) = self.waiting_game_of(token) else {
             return err("lobby.not_in_game");
@@ -807,6 +828,7 @@ impl Hub {
                 }
             }
             world.set_trade_mode(meta.trade_mode);
+            world.set_shot_mode(meta.shot_mode);
             meta.phase = GamePhase::Running;
             let mut m = Match::new(world, meta.map_name.clone(), meta.map_text.clone(), 100);
             m.set_computers(&meta.computers(), &self.personalities.lock().unwrap());
@@ -840,6 +862,7 @@ impl Hub {
             LobbyClientMsg::SetTeam { slot, team } => self.set_team(token, slot, team),
             LobbyClientMsg::SetComputerTraits { slot, daring, helpfulness } => self.set_computer_traits(token, slot, daring, helpfulness),
             LobbyClientMsg::SetTradeMode { mode } => self.set_trade_mode(token, mode),
+            LobbyClientMsg::SetShotMode { mode } => self.set_shot_mode(token, mode),
         }
     }
 }

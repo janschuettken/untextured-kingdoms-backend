@@ -290,6 +290,19 @@ pub enum TradeMode {
     Carts,
 }
 
+/// Wann Fernkämpfer treffen können (Einstellung des Spiels in der Lobby).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ShotMode {
+    /// Wurfbahn mit dem Tempo für die größte Reichweite (flach oder steil): stößt sie an
+    /// Gelände, Gebäude oder Mauer, wird nicht geschossen. Über Mauern hinweg geht es.
+    #[default]
+    Ballistic,
+    /// Der Schütze muss das Ziel sehen: eine gerade, freie Linie.
+    LineOfSight,
+}
+
 /// Nachrichten vom Client an die Lobby (WebSocket `/lobby`).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -344,6 +357,8 @@ pub enum LobbyClientMsg {
     },
     /// Nur Gastgeber, nur vor dem Start: wie Waren zwischen Verbündeten ankommen.
     SetTradeMode { mode: TradeMode },
+    /// Nur Gastgeber, nur vor dem Start: wann Fernkämpfer treffen (Wurfbahn oder Sichtlinie).
+    SetShotMode { mode: ShotMode },
 }
 
 /// Stärke eines Computergegners. Was jede Stufe tut, steht im Server (`server/src/ai/`).
@@ -420,6 +435,9 @@ pub struct LobbyGame {
     /// Handel unter Verbündeten: sofort oder mit Karren.
     #[serde(default)]
     pub trade_mode: TradeMode,
+    /// Fernkampf: Wurfbahn oder Sichtlinie.
+    #[serde(default)]
+    pub shot_mode: ShotMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -628,6 +646,11 @@ pub struct Shot {
     pub from_wall: bool,
     pub to_wall: bool,
     pub kind: UnitKind,
+    /// Höhe (Welt) am Start und am Ziel.
+    pub from_h: f32,
+    pub to_h: f32,
+    /// Wurfbahn: Steigung beim Abschuss (tan) und Reichweite des Schützen. `None` = gerade Linie.
+    pub arc: Option<(f32, f32)>,
 }
 
 /// Ziel eines Angriffsbefehls.
@@ -959,6 +982,10 @@ pub struct BuildingDef {
     pub w: u32,
     pub h: u32,
     pub max_hp: u32,
+    /// Höhe über dem Boden (Welt, 1 = ein Feld) für Pfeile: was darunter fliegt, stößt an.
+    /// Je Ausbaustufe kommt ein Stockwerk dazu (nicht bei Befestigungen). 0 = Grundwert je Art.
+    #[serde(default)]
+    pub height: f32,
     /// Höchstens so viele pro Spieler.
     #[serde(default)]
     pub max_per_player: Option<u32>,
