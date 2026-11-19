@@ -133,6 +133,9 @@ fn schwerer_computer_baut_torhaus_wege_und_grosse_armee() {
     assert!(stock.army.soldiers >= 15, "{:?}", stock.army);
     let on_keep = world.units.iter().filter(|u| u.owner == 1 && u.is_on_wall()).count();
     assert!(on_keep >= 1, "keine Bogenschützen oben");
+    assert!(count(&world, BuildingKind::Apothecary) >= 1, "{kinds:?}");
+    let healers = world.units.iter().filter(|u| u.owner == 1 && u.kind == protocol::UnitKind::Healer).count();
+    assert!(healers >= 1, "keine Heiler");
 }
 
 #[test]

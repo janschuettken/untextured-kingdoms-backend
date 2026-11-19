@@ -79,6 +79,7 @@ impl World {
             if self.can_attack(player, owner) && self.can_hurt(u, target) {
                 let u = &mut self.units[k];
                 u.attack_order = Some(target);
+                u.waypoints.clear();
                 u.chase_timer = 0.0;
                 u.speed_cap = None;
             } else {
@@ -397,7 +398,7 @@ impl World {
 
     /// Steht ein feindlicher Soldat oder König im Umkreis `army.enemy_block_radius`?
     /// Dann darf hier nicht gebaut, ausgebaut oder repariert werden.
-    pub(super) fn check_no_enemy(&self, player: u32, at: (f32, f32)) -> Result<(), protocol::Text> {
+    pub fn check_no_enemy(&self, player: u32, at: (f32, f32)) -> Result<(), protocol::Text> {
         let radius = self.economy.def.army.enemy_block_radius;
         if radius <= 0.0 {
             return Ok(());

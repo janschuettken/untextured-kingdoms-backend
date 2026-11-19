@@ -19,6 +19,7 @@ mod enclosure;
 pub use enclosure::castle_closed;
 pub use gate::{is_gate, passage_tiles};
 mod gate;
+mod heal;
 mod market;
 mod gather;
 mod save;
@@ -80,6 +81,21 @@ pub struct Unit {
     /// Gruppenmarsch: höchstens so schnell (Felder pro Sekunde), damit die Gruppe zusammenbleibt.
     #[serde(default)]
     speed_cap: Option<f32>,
+    /// Heiler: Sekunden bis zur nächsten Behandlung.
+    #[serde(default)]
+    heal_cooldown: f32,
+    /// Weitere Ziele nach dem aktuellen (Strg+Rechtsklick), das nächste zuerst.
+    #[serde(default)]
+    waypoints: Vec<Waypoint>,
+}
+
+/// Ein späteres Ziel eines Laufbefehls (siehe `Unit::waypoints`).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Waypoint {
+    to: (f32, f32),
+    wall: bool,
+    /// Gruppentempo für dieses Stück.
+    cap: Option<f32>,
 }
 
 impl Unit {
@@ -105,6 +121,8 @@ impl Unit {
             attack_order: None,
             chase_timer: 0.0,
             speed_cap: None,
+            waypoints: Vec::new(),
+            heal_cooldown: 0.0,
         }
     }
 
@@ -1022,6 +1040,13 @@ impl World {
     /// Wie `order_move`. Eine Gruppe läuft im Tempo ihrer langsamsten Einheit; mit `fast`
     /// (zweiter Befehl gleich hinterher) läuft jede so schnell sie kann.
     pub fn order_move_as(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32), fast: bool) -> bool {
+        self.order_move_full(player, unit_ids, target, fast, false)
+    }
+
+    /// Wie `order_move_as`. Mit `append` (Strg+Rechtsklick) wird das Ziel hinten an die
+    /// Wegpunkte gehängt: wer gerade läuft, geht erst zu Ende und dann weiter. Ohne `append`
+    /// verfallen alle alten Wegpunkte.
+    pub fn order_move_full(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32), fast: bool, append: bool) -> bool {
         if !target.0.is_finite() || !target.1.is_finite() {
             return false;
         }
@@ -1038,14 +1063,14 @@ impl World {
         for &(x, y) in &shut {
             self.map.nav.set_blocked(x, y, true);
         }
-        let ok = self.order_move_planned(player, unit_ids, target, fast);
+        let ok = self.order_move_planned(player, unit_ids, target, fast, append);
         for &(x, y) in &shut {
             self.map.nav.set_blocked(x, y, false);
         }
         ok
     }
 
-    fn order_move_planned(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32), fast: bool) -> bool {
+    fn order_move_planned(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32), fast: bool, append: bool) -> bool {
         let target = (
             target.0.clamp(0.0, self.map.width as f32 - 0.01),
             target.1.clamp(0.0, self.map.height as f32 - 0.01),
@@ -1054,6 +1079,34 @@ impl World {
         let chosen: Vec<usize> =
             (0..self.units.len()).filter(|&k| self.units[k].owner == player && !self.units[k].is_civilian() && unit_ids.contains(&self.units[k].id)).collect();
         let spots = self.formation(player, unit_ids, target, chosen.len(), target_wall);
+        if append {
+            // Wer noch unterwegs ist (oder schon Wegpunkte hat), merkt sich das Ziel für später.
+            let cap = if fast || chosen.len() < 2 {
+                None
+            } else {
+                chosen.iter().map(|&k| self.base_speed(&self.units[k])).min_by(f32::total_cmp)
+            };
+            let mut queued = false;
+            let mut rest = Vec::new();
+            for (&k, &spot) in chosen.iter().zip(&spots) {
+                let u = &mut self.units[k];
+                if u.path.is_empty() && u.waypoints.is_empty() && u.attack_order.is_none() {
+                    rest.push(k);
+                } else {
+                    u.waypoints.push(Waypoint { to: spot, wall: target_wall, cap });
+                    queued = true;
+                }
+            }
+            if rest.is_empty() {
+                return queued;
+            }
+            let ids: Vec<u32> = rest.iter().map(|&k| self.units[k].id).collect();
+            return self.order_move_planned(player, &ids, target, fast, false) || queued;
+        }
+        // Ein direkter Befehl löscht alle alten Wegpunkte.
+        for &k in &chosen {
+            self.units[k].waypoints.clear();
+        }
         let mut room = if target_wall { self.garrison_room(player, unit_ids, target) } else { None };
         // Turm voll: die übrigen stellen sich unten neben den Turm.
         let mut feet = match (room, chosen.first()) {
@@ -1121,6 +1174,25 @@ impl World {
             u.target_wall = wall;
         }
         true
+    }
+
+    /// Angekommen und noch Wegpunkte übrig? Dann zum nächsten. Unerreichbare werden übersprungen.
+    fn step_waypoints(&mut self) {
+        for k in 0..self.units.len() {
+            let u = &self.units[k];
+            if u.waypoints.is_empty() || !u.path.is_empty() || u.attack_order.is_some() {
+                continue;
+            }
+            let (owner, pos, on_wall) = (u.owner, u.pos, u.on_wall);
+            let next = self.units[k].waypoints.remove(0);
+            let (path, layers) = self.plan(owner, pos, on_wall, next.to, next.wall);
+            let u = &mut self.units[k];
+            u.speed_cap = next.cap;
+            u.path = path;
+            u.layers = layers;
+            u.target = Some(next.to);
+            u.target_wall = next.wall;
+        }
     }
 
     /// Ziele für eine Gruppe: ein enges Raster (`FORMATION_GAP`) um den
@@ -1270,6 +1342,8 @@ impl World {
         self.step_army(dt);
         self.step_trade(dt);
         self.step_combat(dt);
+        self.step_waypoints();
+        self.step_heal(dt);
         self.balance_hubs();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
@@ -1284,7 +1358,7 @@ impl World {
                 UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Cart | UnitKind::TradeCart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
-                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
+                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer => soldier[k],
             };
             let speed = unit.speed_cap.map_or(full, |c| full.min(c));
             if unit.path.is_empty() {
@@ -1334,7 +1408,7 @@ impl World {
 
     /// Restlicher Weg einer Einheit (Wegpunkte).
     pub fn unit_path(&self, id: u32) -> Option<Vec<(f32, f32)>> {
-        self.units.iter().find(|u| u.id == id).map(|u| u.path.clone())
+        self.units.iter().find(|u| u.id == id).map(|u| u.path.iter().copied().chain(u.waypoints.iter().map(|w| w.to)).collect())
     }
 
     pub fn snapshot(&self) -> Vec<UnitState> {
@@ -1485,6 +1559,33 @@ mod tests {
         let mut world = World::new(GameMap::parse(&text).unwrap(), eco());
         world.spawn_player(1);
         world
+    }
+
+    #[test]
+    fn strg_rechtsklick_haengt_wegpunkte_an() {
+        let mut w = flat_world();
+        let id = w.units.iter().find(|u| u.kind == UnitKind::King).unwrap().id;
+        assert!(w.order_move(1, &[id], (20.5, 2.5)));
+        assert!(w.order_move_full(1, &[id], (20.5, 20.5), false, true));
+        assert!(w.order_move_full(1, &[id], (2.5, 20.5), false, true));
+        assert_eq!(w.unit_path(id).unwrap().last().copied(), Some((2.5, 20.5)), "Weg zeigt alle Wegpunkte");
+        let mut seen = [false; 3];
+        for _ in 0..20 * 120 {
+            w.step(0.05);
+            let p = w.units.iter().find(|u| u.id == id).unwrap().pos;
+            for (k, q) in [(20.5, 2.5), (20.5, 20.5), (2.5, 20.5)].into_iter().enumerate() {
+                if (p.0 - q.0).hypot(p.1 - q.1) < 0.5 && (k == 0 || seen[k - 1]) {
+                    seen[k] = true;
+                }
+            }
+        }
+        assert_eq!(seen, [true; 3], "der Reihe nach abgelaufen");
+        // Ein normaler Befehl löscht die alten Wegpunkte.
+        w.order_move(1, &[id], (20.5, 20.5));
+        w.order_move_full(1, &[id], (20.5, 2.5), false, true);
+        w.order_move(1, &[id], (10.5, 10.5));
+        assert_eq!(w.unit_path(id).unwrap().last().copied(), Some((10.5, 10.5)));
+        assert!(w.units.iter().find(|u| u.id == id).unwrap().waypoints.is_empty());
     }
 
     #[test]

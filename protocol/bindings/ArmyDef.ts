@@ -29,4 +29,8 @@ civilian_respawn_seconds: number,
  * Bauen, Ausbauen und Reparieren nur, wenn in diesem Umkreis (Felder) kein feindlicher
  * Soldat oder König steht. 0 = immer erlaubt.
  */
-enemy_block_radius: number, };
+enemy_block_radius: number, 
+/**
+ * Sekunden zwischen zwei Behandlungen eines Heilers.
+ */
+heal_seconds: number, };

@@ -24,6 +24,8 @@ fn default_king(speed: f32) -> UnitDef {
         food: 0,
         ranged_immune: true,
         attack_seconds: 1.5,
+        heal: 0,
+        heal_range: 0.0,
     }
 }
 
@@ -183,6 +185,7 @@ impl Economy {
                 def.units.push(UnitDef { kind, hp, ranged_immune: false, attack: 0, range: 0.0, ..default_king(1.0) });
             }
         }
+        add_apothecary(&mut def);
         let mut buildings = HashMap::new();
         for (i, b) in def.buildings.iter().enumerate() {
             if buildings.insert(b.kind, i).is_some() {
@@ -307,6 +310,12 @@ impl Economy {
         if !(army.enemy_block_radius >= 0.0 && army.enemy_block_radius.is_finite()) {
             return Err("Heer: enemy_block_radius darf nicht negativ sein (0 = aus)".into());
         }
+        if !(army.heal_seconds > 0.0 && army.heal_seconds.is_finite()) {
+            return Err("Heer: heal_seconds muss größer als 0 sein".into());
+        }
+        if let Some(u) = def.units.iter().find(|u| !(u.heal_range >= 0.0 && u.heal_range.is_finite())) {
+            return Err(format!("Einheit {:?}: heal_range darf nicht negativ sein", u.kind));
+        }
         if !(army.civilian_respawn_seconds >= 0.0 && army.civilian_respawn_seconds.is_finite()) {
             return Err("Heer: civilian_respawn_seconds darf nicht negativ sein (0 = kein Ersatz)".into());
         }
@@ -378,6 +387,40 @@ impl Economy {
 
     pub fn recipe(&self, id: &str) -> Option<&RecipeDef> {
         self.def.recipes.iter().find(|r| r.id == id)
+    }
+}
+
+/// Ältere Balancing-Dateien kennen Apotheke, Heilsalbe und Heiler noch nicht: aus den
+/// eingebauten Werten übernehmen, was fehlt (Salbe kommt dann auch in die Waffenkammer).
+fn add_apothecary(def: &mut EconomyDef) {
+    use protocol::Good;
+    let missing_good = !def.goods.contains(&Good::Salve);
+    let missing_building = !def.buildings.iter().any(|b| b.kind == BuildingKind::Apothecary);
+    let missing_unit = !def.units.iter().any(|u| u.kind == UnitKind::Healer);
+    if !(missing_good || missing_building || missing_unit) {
+        return;
+    }
+    let Ok(base) = serde_json::from_str::<EconomyDef>(ECONOMY_JSON) else { return };
+    if missing_good {
+        def.goods.push(Good::Salve);
+        for b in def.buildings.iter_mut().filter(|b| b.kind == BuildingKind::Armory && !b.hub_goods.is_empty()) {
+            b.hub_goods.push(Good::Salve);
+        }
+    }
+    if missing_building {
+        if let Some(b) = base.buildings.iter().find(|b| b.kind == BuildingKind::Apothecary) {
+            def.buildings.push(b.clone());
+            for r in base.recipes.iter().filter(|r| r.building == BuildingKind::Apothecary) {
+                if !def.recipes.iter().any(|x| x.id == r.id) {
+                    def.recipes.push(r.clone());
+                }
+            }
+        }
+    }
+    if missing_unit {
+        if let Some(u) = base.units.iter().find(|u| u.kind == UnitKind::Healer) {
+            def.units.push(u.clone());
+        }
     }
 }
 
@@ -467,13 +510,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn alte_dateien_bekommen_die_apotheke() {
+        let mut v: serde_json::Value = serde_json::from_str(ECONOMY_JSON).unwrap();
+        v["goods"].as_array_mut().unwrap().retain(|g| g != "salve");
+        v["buildings"].as_array_mut().unwrap().retain(|b| b["kind"] != "apothecary");
+        for b in v["buildings"].as_array_mut().unwrap() {
+            b["hub_goods"].as_array_mut().unwrap().retain(|g| g != "salve");
+        }
+        v["recipes"].as_array_mut().unwrap().retain(|r| r["building"] != "apothecary");
+        v["units"].as_array_mut().unwrap().retain(|u| u["kind"] != "healer");
+        v["market"]["prices"].as_array_mut().unwrap().retain(|p| p["good"] != "salve");
+        let eco = Economy::parse(&v.to_string()).unwrap();
+        assert!(eco.building(BuildingKind::Apothecary).is_some());
+        assert!(eco.unit(UnitKind::Healer).is_some_and(|u| u.heal > 0));
+        assert!(eco.recipe("make_salve").is_some());
+        assert!(eco.building(BuildingKind::Armory).unwrap().hub_goods.contains(&protocol::Good::Salve));
+    }
+
+    #[test]
     fn wirtschaftsdaten_sind_gueltig() {
         let eco = Economy::parse(ECONOMY_JSON).unwrap();
         // Jede Gebäudeart aus dem Protokoll hat Daten (serde kennt alle Varianten).
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 34);
+        assert_eq!(eco.def.buildings.len(), 35);
         assert!(eco.def.buildings.iter().any(|b| b.hub), "ohne Lager kein Transport");
     }
 
