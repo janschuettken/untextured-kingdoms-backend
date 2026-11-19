@@ -64,6 +64,10 @@ pub struct Profile {
     pub recipes: Vec<String>,
     /// Angriffe, `None` = greift nie an.
     pub attack: Option<Attack>,
+    /// Angriff trotz Unterlegenheit, 0 bis 1 (1 = ständig, sobald eine Welle bereit ist).
+    pub daring: f32,
+    /// Hilfsbereitschaft gegenüber Verbündeten, 0 bis 1 (Anteil der freien Soldaten).
+    pub helpfulness: f32,
 }
 
 /// Wann und wie er angreift.
@@ -143,6 +147,8 @@ impl Profile {
                 walls: true,
                 castle: CastleLayout::Square,
                 recipes: Vec::new(),
+                daring: 0.3,
+                helpfulness: 0.5,
                 attack: Some(Attack {
                     first_minutes: 25.0,
                     wave_min: 5,
@@ -203,6 +209,8 @@ impl Profile {
                 walls: true,
                 castle: CastleLayout::Octagon,
                 recipes: Vec::new(),
+                daring: 0.3,
+                helpfulness: 0.5,
                 attack: Some(Attack {
                     first_minutes: 18.0,
                     wave_min: 8,
@@ -275,6 +283,8 @@ impl Profile {
                 walls: true,
                 castle: CastleLayout::Narrows,
                 recipes: Vec::new(),
+                daring: 0.3,
+                helpfulness: 0.5,
                 // Große Wellen: wartet, bis viele beisammen sind, und greift dann an.
                 attack: Some(Attack {
                     first_minutes: 14.0,
@@ -319,6 +329,18 @@ fn pick(p: &AiPersonality, family: &[BuildingKind], level_kind: BuildingKind) ->
 impl Profile {
     /// Profil der Stufe mit dem Charakter darauf. `economy` braucht er, um zu wissen, was
     /// zusätzliche Soldaten brauchen (Waffen, Betriebe, Kasernenstufe).
+    /// Profil für einen Platz: Stufe, Charakter und die Regler aus der Lobby.
+    pub fn for_seat(seat: &crate::ai::Seat, all: &protocol::AiPersonalities, economy: &Economy) -> Profile {
+        let mut prof = Profile::build(seat.level, crate::ai::personality::find(all, &seat.personality), economy);
+        if let Some(d) = seat.daring {
+            prof.daring = d.min(100) as f32 / 100.0;
+        }
+        if let Some(h) = seat.helpfulness {
+            prof.helpfulness = h.min(100) as f32 / 100.0;
+        }
+        prof
+    }
+
     pub fn build(level: AiLevel, p: &AiPersonality, economy: &Economy) -> Profile {
         let mut prof = Profile::for_level(level);
         let bw = |k: BuildingKind| weight(&p.buildings, &k);
@@ -393,6 +415,8 @@ impl Profile {
         if p.castle != CastleLayout::Level {
             prof.castle = p.castle;
         }
+        prof.daring = p.daring.min(100) as f32 / 100.0;
+        prof.helpfulness = p.helpfulness.min(100) as f32 / 100.0;
         // Angriffslust.
         if p.aggression == 0 {
             prof.attack = None;
