@@ -9,7 +9,10 @@
 //! - `GET  /api/account`           `{ "enabled": bool }` (ohne `DATABASE_URL` aus)
 //! - `POST /api/account/register`  `{ username, password, token }` → `{ username, token }`
 //! - `POST /api/account/login`     `{ username, password }` → `{ username, token }`
-//! - `POST /api/account/me`        `{ token }` → `{ username, admin }` oder `{ username: null }`
+//! - `POST /api/account/me`        `{ token }` → `{ username, admin, email, avatar }` oder `{ username: null }`
+//! - `POST /api/account/profile`   `{ token, username?, email?, avatar?, current_password?, new_password? }`
+//!   Profil ändern (nur was mitkommt; `""` bei E-Mail/Bild löscht). Neues Passwort braucht
+//!   das alte. → wie `me`
 //!
 //! Fehler kommen als `{ "error": "account.…" }` (Schlüssel, der Client übersetzt).
 //! Passwörter werden mit Argon2 gehasht. Die Tabellen legt der Server beim
@@ -74,6 +77,7 @@ pub fn router(accounts: Accounts) -> Router {
         .route("/api/account/register", post(register))
         .route("/api/account/login", post(login))
         .route("/api/account/me", post(me))
+        .route("/api/account/profile", post(profile))
         .with_state(Arc::new(accounts))
 }
 
@@ -99,6 +103,8 @@ struct RegisterBody {
     username: String,
     password: String,
     token: String,
+    #[serde(default)]
+    email: Option<String>,
 }
 
 async fn register(State(acc): State<Arc<Accounts>>, Json(b): Json<RegisterBody>) -> Response {
@@ -113,17 +119,16 @@ async fn register(State(acc): State<Arc<Accounts>>, Json(b): Json<RegisterBody>)
     if !valid_token(&b.token) {
         return fail(StatusCode::BAD_REQUEST, "account.invalid_token");
     }
-    let password = b.password;
-    let hash = tokio::task::spawn_blocking(move || {
-        let salt = SaltString::generate(&mut OsRng);
-        Argon2::default().hash_password(password.as_bytes(), &salt).map(|h| h.to_string())
-    })
-    .await;
-    let Ok(Ok(hash)) = hash else { return fail(StatusCode::INTERNAL_SERVER_ERROR, "account.error") };
-    let result = sqlx::query("INSERT INTO accounts (username, password_hash, player_token, last_login) VALUES ($1, $2, $3, now())")
+    let email = match clean_email(b.email.as_deref().unwrap_or("")) {
+        Ok(e) => e,
+        Err(r) => return r,
+    };
+    let Some(hash) = hash_password(b.password).await else { return fail(StatusCode::INTERNAL_SERVER_ERROR, "account.error") };
+    let result = sqlx::query("INSERT INTO accounts (username, password_hash, player_token, last_login, email) VALUES ($1, $2, $3, now(), $4)")
         .bind(&username)
         .bind(&hash)
         .bind(&b.token)
+        .bind(&email)
         .execute(db)
         .await;
     match result {
@@ -131,12 +136,23 @@ async fn register(State(acc): State<Arc<Accounts>>, Json(b): Json<RegisterBody>)
             info!("Account {username} angelegt");
             Json(serde_json::json!({ "username": username, "token": b.token })).into_response()
         }
-        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
-            let key = if e.constraint() == Some("accounts_player_token_key") { "account.token_taken" } else { "account.name_taken" };
+        Err(e) => unique_error(e, "Account anlegen"),
+    }
+}
+
+/// Doppelter Name, Token oder E-Mail: passende Meldung, sonst allgemeiner Fehler.
+fn unique_error(e: sqlx::Error, what: &str) -> Response {
+    match e {
+        sqlx::Error::Database(e) if e.is_unique_violation() => {
+            let key = match e.constraint() {
+                Some("accounts_player_token_key") => "account.token_taken",
+                Some("accounts_email_lower") => "account.email_taken",
+                _ => "account.name_taken",
+            };
             fail(StatusCode::CONFLICT, key)
         }
-        Err(e) => {
-            warn!("Account anlegen: {e}");
+        e => {
+            warn!("{what}: {e}");
             fail(StatusCode::INTERNAL_SERVER_ERROR, "account.error")
         }
     }
@@ -189,12 +205,162 @@ struct MeBody {
 
 async fn me(State(acc): State<Arc<Accounts>>, Json(b): Json<MeBody>) -> Response {
     let Some(db) = &acc.db else { return Json(serde_json::json!({ "username": null })).into_response() };
-    let name: Option<(String, bool)> = sqlx::query_as("SELECT username, is_admin FROM accounts WHERE player_token = $1")
+    me_json(db, &b.token).await
+}
+
+async fn me_json(db: &PgPool, token: &str) -> Response {
+    let row: Option<(String, bool, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT username, is_admin, email, avatar FROM accounts WHERE player_token = $1")
+            .bind(token)
+            .fetch_optional(db)
+            .await
+            .unwrap_or(None);
+    match row {
+        Some((username, admin, email, avatar)) => {
+            Json(serde_json::json!({ "username": username, "admin": admin, "email": email, "avatar": avatar })).into_response()
+        }
+        None => Json(serde_json::json!({ "username": null, "admin": false })).into_response(),
+    }
+}
+
+/// Größtes Profilbild (als data:-URL). Der Client verkleinert vorher auf 128 × 128.
+const MAX_AVATAR: usize = 200 * 1024;
+
+async fn hash_password(password: String) -> Option<String> {
+    tokio::task::spawn_blocking(move || {
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default().hash_password(password.as_bytes(), &salt).map(|h| h.to_string())
+    })
+    .await
+    .ok()?
+    .ok()
+}
+
+fn password_ok(password: &str) -> bool {
+    password.chars().count() >= 8 && password.len() <= 200
+}
+
+/// Leer = keine E-Mail.
+#[allow(clippy::result_large_err)]
+fn clean_email(email: &str) -> Result<Option<String>, Response> {
+    let email = email.trim();
+    if email.is_empty() {
+        return Ok(None);
+    }
+    let valid = email.len() <= 200
+        && !email.chars().any(char::is_whitespace)
+        && email.split_once('@').is_some_and(|(a, b)| !a.is_empty() && b.contains('.') && !b.starts_with('.') && !b.ends_with('.'));
+    if valid {
+        Ok(Some(email.to_string()))
+    } else {
+        Err(fail(StatusCode::BAD_REQUEST, "account.invalid_email"))
+    }
+}
+
+/// Leer = kein Bild. Nur kleine PNG/JPEG/WebP-Bilder als data:-URL.
+#[allow(clippy::result_large_err)]
+fn clean_avatar(avatar: &str) -> Result<Option<String>, Response> {
+    if avatar.is_empty() {
+        return Ok(None);
+    }
+    let ok_type = ["data:image/png;base64,", "data:image/jpeg;base64,", "data:image/webp;base64,"].iter().any(|p| avatar.starts_with(p));
+    let ok_chars = avatar.split_once(',').is_some_and(|(_, d)| d.chars().all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c)));
+    if !ok_type || !ok_chars {
+        return Err(fail(StatusCode::BAD_REQUEST, "account.invalid_avatar"));
+    }
+    if avatar.len() > MAX_AVATAR {
+        return Err(fail(StatusCode::PAYLOAD_TOO_LARGE, "account.avatar_too_big"));
+    }
+    Ok(Some(avatar.to_string()))
+}
+
+#[derive(Deserialize)]
+struct ProfileBody {
+    token: String,
+    username: Option<String>,
+    email: Option<String>,
+    avatar: Option<String>,
+    current_password: Option<String>,
+    new_password: Option<String>,
+}
+
+async fn profile(State(acc): State<Arc<Accounts>>, Json(b): Json<ProfileBody>) -> Response {
+    let Some(db) = &acc.db else { return fail(StatusCode::SERVICE_UNAVAILABLE, "account.disabled") };
+    let row: Option<(i64, String, String)> = match sqlx::query_as("SELECT id, username, password_hash FROM accounts WHERE player_token = $1")
         .bind(&b.token)
         .fetch_optional(db)
         .await
-        .unwrap_or(None);
-    Json(serde_json::json!({ "username": name.as_ref().map(|n| &n.0), "admin": name.is_some_and(|n| n.1) })).into_response()
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("Profil: {e}");
+            return fail(StatusCode::INTERNAL_SERVER_ERROR, "account.error");
+        }
+    };
+    let Some((id, old_name, hash)) = row else { return fail(StatusCode::NOT_FOUND, "account.not_logged_in") };
+    // Erst alles prüfen, dann in einem Rutsch schreiben.
+    let username = match b.username.map(|u| u.trim().to_string()) {
+        Some(u) if u != old_name => {
+            if !valid_username(&u) {
+                return fail(StatusCode::BAD_REQUEST, "account.invalid_name");
+            }
+            Some(u)
+        }
+        _ => None,
+    };
+    let email = match b.email.as_deref().map(clean_email) {
+        Some(Ok(e)) => Some(e),
+        Some(Err(r)) => return r,
+        None => None,
+    };
+    let avatar = match b.avatar.as_deref().map(clean_avatar) {
+        Some(Ok(a)) => Some(a),
+        Some(Err(r)) => return r,
+        None => None,
+    };
+    let new_hash = match b.new_password {
+        Some(new) if !new.is_empty() => {
+            if !password_ok(&new) {
+                return fail(StatusCode::BAD_REQUEST, "account.password_short");
+            }
+            let current = b.current_password.unwrap_or_default();
+            let ok = tokio::task::spawn_blocking(move || {
+                PasswordHash::new(&hash).is_ok_and(|p| Argon2::default().verify_password(current.as_bytes(), &p).is_ok())
+            })
+            .await
+            .unwrap_or(false);
+            if !ok {
+                return fail(StatusCode::UNAUTHORIZED, "account.wrong_password");
+            }
+            let Some(h) = hash_password(new).await else { return fail(StatusCode::INTERNAL_SERVER_ERROR, "account.error") };
+            Some(h)
+        }
+        _ => None,
+    };
+    let result = sqlx::query(
+        "UPDATE accounts SET \
+           username = COALESCE($2, username), \
+           email = CASE WHEN $3 THEN $4 ELSE email END, \
+           avatar = CASE WHEN $5 THEN $6 ELSE avatar END, \
+           password_hash = COALESCE($7, password_hash) \
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&username)
+    .bind(email.is_some())
+    .bind(email.flatten())
+    .bind(avatar.is_some())
+    .bind(avatar.flatten())
+    .bind(&new_hash)
+    .execute(db)
+    .await;
+    if let Err(e) = result {
+        return unique_error(e, "Profil speichern");
+    }
+    if let Some(u) = &username {
+        info!("Account {old_name} heißt jetzt {u}");
+    }
+    me_json(db, &b.token).await
 }
 
 #[cfg(test)]
@@ -208,5 +374,17 @@ mod tests {
         assert!(!valid_username("ab"));
         assert!(!valid_username("mit leerzeichen"));
         assert!(!valid_username(&"x".repeat(25)));
+    }
+
+    #[test]
+    fn email_und_bild_pruefen() {
+        assert_eq!(clean_email(" jan@example.org ").ok(), Some(Some("jan@example.org".into())));
+        assert_eq!(clean_email("").ok(), Some(None));
+        assert!(clean_email("kein-at").is_err());
+        assert!(clean_email("a@b").is_err());
+        assert!(clean_avatar("data:image/png;base64,iVBORw0KGgo=").is_ok());
+        assert!(clean_avatar("data:text/html;base64,PGI+").is_err());
+        assert!(clean_avatar("data:image/png;base64,<script>").is_err());
+        assert!(clean_avatar(&format!("data:image/png;base64,{}", "A".repeat(MAX_AVATAR))).is_err());
     }
 }

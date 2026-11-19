@@ -904,6 +904,7 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
         },
     );
     hub.set_name(&token, &name);
+    hub.admin.record_guest(&token, &name);
     hub.notify();
 
     let writer = tokio::spawn(async move {
@@ -922,8 +923,11 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                 let _ = out_tx.try_send(LobbyServerMsg::Pong { client_time });
             }
             Ok(msg) => {
+                let renamed = matches!(msg, LobbyClientMsg::SetName { .. });
                 if let Err(text) = hub.handle(&token, &mut name, msg) {
                     let _ = out_tx.try_send(LobbyServerMsg::Rejected { text });
+                } else if renamed {
+                    hub.admin.record_guest(&token, &name);
                 }
                 hub.notify();
             }
