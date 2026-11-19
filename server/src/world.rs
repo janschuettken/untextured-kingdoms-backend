@@ -10,6 +10,7 @@ use protocol::{
 
 use crate::{economy::Economy, map::GameMap, stock::Stock};
 
+mod alerts;
 mod army;
 mod bridge;
 pub use bridge::NEUTRAL;
@@ -264,6 +265,8 @@ pub struct World {
     winners: Option<Vec<u32>>,
     /// Sekunden, seit einem Gebäude ein Arbeiter, Träger oder Karren fehlt (siehe `people.rs`).
     respawn_clock: HashMap<u32, f32>,
+    /// Warnungen an Spieler (siehe `alerts.rs`).
+    alerts: alerts::Alerts,
 }
 
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
@@ -351,6 +354,7 @@ impl World {
             teams: HashMap::new(),
             winners: None,
             respawn_clock: HashMap::new(),
+            alerts: alerts::Alerts::default(),
             worker_carries_default: true,
             self_carry: HashSet::new(),
             combat_rng: 0x9E37_79B9_7F4A_7C15,
@@ -1448,6 +1452,7 @@ impl World {
         self.step_combat(dt);
         self.step_waypoints();
         self.step_heal(dt);
+        self.step_alerts(dt);
         self.balance_hubs();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);

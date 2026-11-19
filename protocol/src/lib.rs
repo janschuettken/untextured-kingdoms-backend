@@ -298,10 +298,31 @@ pub enum ServerMsg {
     Heals {
         heals: Vec<Heal>,
     },
+    /// Warnung für einen Spieler (geht nur an ihn): Feinde nahe der Burg oder ein Gebäude
+    /// wird angegriffen. `x`/`y` = wo (für den Sprung der Kamera).
+    Alert {
+        player: u32,
+        alert: AlertKind,
+        x: f32,
+        y: f32,
+        /// Bei `building_attacked`: welches Gebäude.
+        building: Option<BuildingKind>,
+    },
     /// Nur noch ein Spieler (oder ein Bündnis) hat seinen König: das Spiel ist entschieden.
     GameOver {
         winners: Vec<u32>,
     },
+}
+
+/// Art einer Warnung (siehe `ServerMsg::Alert`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AlertKind {
+    /// Feindliche Kämpfer im Umkreis `army.alert_radius` um den eigenen Bergfried.
+    EnemyNear,
+    /// Ein eigenes Gebäude nimmt Schaden.
+    BuildingAttacked,
 }
 
 /// Ein Spieler im laufenden Spiel.
@@ -1377,6 +1398,10 @@ pub struct ArmyDef {
     pub fall_seconds: f32,
     /// Sekunden zwischen zwei Behandlungen eines Heilers.
     pub heal_seconds: f32,
+    /// Warnung, sobald ein feindlicher Soldat oder König so nah (Felder) am eigenen Bergfried ist. 0 = aus.
+    pub alert_radius: f32,
+    /// Nach einer Warnung kommt dieselbe Art frühestens nach so vielen Sekunden wieder.
+    pub alert_seconds: f32,
 }
 
 impl Default for ArmyDef {
@@ -1393,6 +1418,8 @@ impl Default for ArmyDef {
             fall_damage: 15,
             fall_seconds: 8.0,
             heal_seconds: 2.0,
+            alert_radius: 80.0,
+            alert_seconds: 30.0,
         }
     }
 }
