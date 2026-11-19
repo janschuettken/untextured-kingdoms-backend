@@ -338,7 +338,7 @@ impl World {
                     }
                     let d = (t.pos.0 - u.pos.0).hypot(t.pos.1 - u.pos.1);
                     let key = (civilian, d);
-                    if d <= reach && best.is_none_or(|(bk, _)| key.0 < bk.0 || (key.0 == bk.0 && key.1 < bk.1)) {
+                    if d <= reach && best.is_none_or(|(bk, _)| (key.0, key.1) < (bk.0, bk.1)) {
                         best = Some((key, j));
                     }
                 }
