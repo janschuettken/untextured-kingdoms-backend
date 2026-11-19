@@ -3,6 +3,7 @@ import type { BuildingState } from "./BuildingState";
 import type { CastleStatus } from "./CastleStatus";
 import type { EconomyDef } from "./EconomyDef";
 import type { GoodAmount } from "./GoodAmount";
+import type { Heal } from "./Heal";
 import type { MapRef } from "./MapRef";
 import type { PlayerInfo } from "./PlayerInfo";
 import type { ResourceKind } from "./ResourceKind";
@@ -50,4 +51,4 @@ carts: number, } | { "type": "player_defeated", player: number,
 /**
  * Wessen Einheit den letzten Schlag geführt hat.
  */
-by: number | null, } | { "type": "units_died", unit_ids: Array<number>, } | { "type": "shots", shots: Array<Shot>, } | { "type": "game_over", winners: Array<number>, };
+by: number | null, } | { "type": "units_died", unit_ids: Array<number>, } | { "type": "shots", shots: Array<Shot>, } | { "type": "heals", heals: Array<Heal>, } | { "type": "game_over", winners: Array<number>, };

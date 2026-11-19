@@ -266,6 +266,10 @@ pub enum ServerMsg {
     Shots {
         shots: Vec<Shot>,
     },
+    /// Behandlungen der Heiler in diesem Takt (für das grüne Leuchten im Client).
+    Heals {
+        heals: Vec<Heal>,
+    },
     /// Nur noch ein Spieler (oder ein Bündnis) hat seinen König: das Spiel ist entschieden.
     GameOver {
         winners: Vec<u32>,
@@ -658,6 +662,18 @@ pub struct Shot {
     pub arc: Option<(f32, f32)>,
 }
 
+/// Ein Heiler behandelt einen Verwundeten.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Heal {
+    pub from: (f32, f32),
+    pub to: (f32, f32),
+    pub from_wall: bool,
+    pub to_wall: bool,
+    /// Wer geheilt wurde.
+    pub unit_id: u32,
+}
+
 /// Ziel eines Angriffsbefehls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -695,12 +711,14 @@ pub enum UnitKind {
     Knight,
     /// Handelskarren: bringt Waren zu einem Verbündeten und verschwindet dort.
     TradeCart,
+    /// Heiler aus der Apotheke: kämpft nicht, heilt verwundete eigene und verbündete Einheiten in der Nähe.
+    Healer,
 }
 
 impl UnitKind {
     /// Soldaten: werden in der Kaserne ausgebildet und kosten Sold.
     pub fn is_soldier(self) -> bool {
-        matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight)
+        matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer)
     }
 
     /// Zivilisten: Arbeiter, Träger und Karren. Sie kämpfen nicht, können aber angegriffen werden.
@@ -828,6 +846,8 @@ pub enum Good {
     Armor,
     LightArmor,
     Saddle,
+    /// Heilsalbe aus der Apotheke, für Heiler.
+    Salve,
 }
 
 /// Menge einer Ware.
@@ -928,6 +948,8 @@ pub enum BuildingKind {
     StonePath,
     /// Großes Torhaus: zwei Türme, dazwischen ein tiefer Durchgang mit Tor.
     Gatehouse,
+    /// Apotheke: rührt Heilsalbe an und bildet daraus Heiler aus.
+    Apothecary,
 }
 
 /// Gruppe im Baumenü.
@@ -1176,6 +1198,12 @@ pub struct UnitDef {
     /// (der König: nur Nahkämpfer können ihn töten).
     #[serde(default)]
     pub ranged_immune: bool,
+    /// Heiler: so viele Lebenspunkte gibt er je Behandlung zurück (alle `army.heal_seconds`). 0 = heilt nicht.
+    #[serde(default)]
+    pub heal: u32,
+    /// Heiler: so weit (Felder) reicht er zu einem Verwundeten.
+    #[serde(default)]
+    pub heal_range: f32,
 }
 
 /// Regeln für das Heer.
@@ -1199,11 +1227,13 @@ pub struct ArmyDef {
     /// Bauen, Ausbauen und Reparieren nur, wenn in diesem Umkreis (Felder) kein feindlicher
     /// Soldat oder König steht. 0 = immer erlaubt.
     pub enemy_block_radius: f32,
+    /// Sekunden zwischen zwei Behandlungen eines Heilers.
+    pub heal_seconds: f32,
 }
 
 impl Default for ArmyDef {
     fn default() -> Self {
-        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, attack_seconds: 1.5, melee_range: 2.0, civilian_respawn_seconds: 30.0, enemy_block_radius: 50.0 }
+        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, attack_seconds: 1.5, melee_range: 2.0, civilian_respawn_seconds: 30.0, enemy_block_radius: 50.0, heal_seconds: 2.0 }
     }
 }
 

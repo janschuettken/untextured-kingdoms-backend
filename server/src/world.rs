@@ -19,6 +19,7 @@ mod enclosure;
 pub use enclosure::castle_closed;
 pub use gate::{is_gate, passage_tiles};
 mod gate;
+mod heal;
 mod market;
 mod gather;
 mod save;
@@ -80,6 +81,9 @@ pub struct Unit {
     /// Gruppenmarsch: höchstens so schnell (Felder pro Sekunde), damit die Gruppe zusammenbleibt.
     #[serde(default)]
     speed_cap: Option<f32>,
+    /// Heiler: Sekunden bis zur nächsten Behandlung.
+    #[serde(default)]
+    heal_cooldown: f32,
     /// Weitere Ziele nach dem aktuellen (Strg+Rechtsklick), das nächste zuerst.
     #[serde(default)]
     waypoints: Vec<Waypoint>,
@@ -118,6 +122,7 @@ impl Unit {
             chase_timer: 0.0,
             speed_cap: None,
             waypoints: Vec::new(),
+            heal_cooldown: 0.0,
         }
     }
 
@@ -1317,6 +1322,7 @@ impl World {
         self.step_trade(dt);
         self.step_combat(dt);
         self.step_waypoints();
+        self.step_heal(dt);
         self.balance_hubs();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
@@ -1331,7 +1337,7 @@ impl World {
                 UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Cart | UnitKind::TradeCart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
-                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
+                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer => soldier[k],
             };
             let speed = unit.speed_cap.map_or(full, |c| full.min(c));
             if unit.path.is_empty() {

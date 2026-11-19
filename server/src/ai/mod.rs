@@ -223,7 +223,26 @@ impl Computer {
         }
         self.aid(world, &stock, &mut cmds);
         self.rally(world, layout, &mut cmds);
+        // Steht ein Feind zu nah, lehnt der Server Bauen, Ausbauen und Reparieren ab: gar nicht erst schicken.
+        cmds.retain(|c| self.no_enemy_near(world, c));
         cmds
+    }
+
+    fn no_enemy_near(&self, world: &World, cmd: &ClientMsg) -> bool {
+        let at = match cmd {
+            ClientMsg::PlaceBuilding { kind, x, y, .. } => {
+                let (w, h) = world.economy.building(*kind).map_or((1, 1), |d| (d.w, d.h));
+                (*x as f32 + w as f32 / 2.0, *y as f32 + h as f32 / 2.0)
+            }
+            ClientMsg::UpgradeBuilding { building_id } | ClientMsg::RepairBuilding { building_id } => {
+                match world.buildings.iter().find(|b| b.id == *building_id) {
+                    Some(b) => (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0),
+                    None => return true,
+                }
+            }
+            _ => return true,
+        };
+        world.check_no_enemy(self.player, at).is_ok()
     }
 
     /// Ein Befehl wurde abgelehnt (sollte selten sein, er prüft vorher).
@@ -660,7 +679,9 @@ impl Computer {
         if units.is_empty() {
             return;
         }
-        let barracks: Vec<_> = world.buildings.iter().filter(|b| b.owner == self.player && b.kind == BuildingKind::Barracks).collect();
+        // Alles, was ausbildet: Kasernen, Apotheken.
+        let trains = |k: BuildingKind| world.economy.building(k).is_some_and(|d| d.levels.iter().any(|l| !l.trains.is_empty()));
+        let barracks: Vec<_> = world.buildings.iter().filter(|b| b.owner == self.player && trains(b.kind)).collect();
         let mut queued: u32 = barracks.iter().map(|b| b.training.len() as u32).sum();
         let queue_max = (world.economy.def.army.queue_max).min(self.profile.queue_per_barracks) as usize;
         // Mit Markt bleibt ein Rest Taler für den Handel liegen.
