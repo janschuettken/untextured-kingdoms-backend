@@ -44,7 +44,7 @@ fn play_seats(
         let player = i as u32 + 1;
         world.spawn_player_at(player, spawns[i]);
         ais.push(match all {
-            Some(all) => Computer::new(super::Seat { player, level, personality: personality.into() }, all, &world.economy),
+            Some(all) => Computer::new(super::Seat { player, level, personality: personality.into(), daring: None, helpfulness: None }, all, &world.economy),
             None => Computer::with_level(player, level, &world.economy),
         });
     }
@@ -201,7 +201,7 @@ fn friedlicher_charakter_greift_nicht_an() {
     p.aggression = 0;
     let eco = crate::economy::Economy::parse(crate::economy::ECONOMY_JSON).unwrap();
     let all = protocol::AiPersonalities { personalities: vec![p] };
-    let c = Computer::new(super::Seat { player: 1, level: AiLevel::Hard, personality: String::new() }, &all, &eco);
+    let c = Computer::new(super::Seat { player: 1, level: AiLevel::Hard, personality: String::new(), daring: None, helpfulness: None }, &all, &eco);
     assert!(c.profile.attack.is_none());
 }
 
@@ -224,4 +224,58 @@ fn alle_charaktere_bauen_eine_burg() {
         println!("{id}: {n} Gebäude, {} Soldaten, Burg zu {} {kinds:?}", world.stock_state(p).army.soldiers, st.closed);
         assert!(n >= 12, "{id}: nur {n} Gebäude");
     }
+}
+
+/// Verbündeter (2) wird von Spieler 3 bedrängt: Spieler 1 schickt einen Teil seiner Soldaten
+/// und Waren, aber nicht alle; ohne Hilfsbereitschaft niemanden.
+#[test]
+fn hilft_dem_verbuendeten_aber_nicht_mit_allen() {
+    use protocol::{ClientMsg, UnitKind};
+    const RANDOM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/maps/4-player-zufall-256-682070261.txt"));
+    let setup = |help: u8| {
+        let map = GameMap::parse(RANDOM).unwrap();
+        let spawns = map.spawns.clone();
+        let mut world = World::new(map, Economy::parse(crate::economy::ECONOMY_JSON).unwrap());
+        for p in 1..=3 {
+            world.spawn_player_at(p, spawns[p as usize - 1]);
+        }
+        world.set_team(1, 1);
+        world.set_team(2, 1);
+        world.give_everything_for_tests(1);
+        let home = super::attack::keep_center(&world, 1).unwrap();
+        for i in 0..14 {
+            let id = 50_000 + i;
+            world.units.push(crate::world::Unit::new(id, 1, UnitKind::Spearman, (home.0 + 6.0 + (i % 4) as f32, home.1 + 6.0 + (i / 4) as f32)));
+        }
+        let ally = super::attack::keep_center(&world, 2).unwrap();
+        for i in 0..3 {
+            world.units.push(crate::world::Unit::new(60_000 + i, 3, UnitKind::Swordsman, (ally.0 + 8.0 + i as f32, ally.1 + 8.0)));
+        }
+        let all = protocol::AiPersonalities { personalities: vec![super::personality::neutral()] };
+        let seat = super::Seat { player: 1, level: AiLevel::Normal, personality: String::new(), daring: None, helpfulness: Some(help) };
+        let mut ai = Computer::new(seat, &all, &world.economy);
+        let mut cmds = Vec::new();
+        for _ in 0..20 {
+            cmds.extend(ai.think(&world, 0.25));
+        }
+        // Nur Befehle, die zum Verbündeten führen.
+        let relief: Vec<usize> = cmds
+            .iter()
+            .filter_map(|c| match c {
+                ClientMsg::MoveUnits { unit_ids, x, y, .. } if (x - ally.0).hypot(y - ally.1) < 30.0 => Some(unit_ids.len()),
+                _ => None,
+            })
+            .collect();
+        (cmds, relief)
+    };
+    let (cmds, sent) = setup(50);
+    println!("geschickt: {sent:?}");
+    assert!(!sent.is_empty(), "keine Hilfe");
+    // 14 Speerträger, 4 bleiben daheim, höchstens die Hälfte der übrigen, und nur so viele
+    // wie gegen drei Schwertkämpfer nötig.
+    assert!(sent[0] >= 2 && sent[0] <= 5, "{} geschickt", sent[0]);
+    assert!(cmds.iter().any(|c| matches!(c, ClientMsg::SendGoods { to: 2, goods, .. } if !goods.is_empty())), "Waren für den Verbündeten");
+    let (none, sent) = setup(0);
+    assert!(sent.is_empty());
+    assert!(!none.iter().any(|c| matches!(c, ClientMsg::SendGoods { .. })));
 }

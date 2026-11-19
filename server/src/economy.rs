@@ -21,6 +21,7 @@ fn default_king(speed: f32) -> UnitDef {
         attack: 14,
         range: 1.2,
         upkeep: 0,
+        food: 0,
         ranged_immune: true,
     }
 }

@@ -23,7 +23,16 @@ pub enum ClientMsg {
     Ping { client_time: f64 },
     /// Bewegungsbefehl: Einheiten sollen zum Punkt (x, y) laufen.
     /// Der Server prüft Besitz und sucht selbst den Weg.
-    MoveUnits { unit_ids: Vec<u32>, x: f32, y: f32 },
+    /// Eine Gruppe läuft im Tempo ihrer langsamsten Einheit; `fast` (zweiter Befehl gleich
+    /// hinterher, wie ein Doppelklick) lässt jede so schnell laufen, wie sie kann.
+    MoveUnits {
+        unit_ids: Vec<u32>,
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        #[ts(optional)]
+        fast: Option<bool>,
+    },
     /// Angriffsbefehl (Rechtsklick auf einen Feind): die Einheiten laufen hin, verfolgen das
     /// Ziel und greifen an, bis es fällt. Wer dem Ziel nichts anhaben kann (Fernkämpfer gegen
     /// König oder Gebäude) oder ein Verbündeter ist, läuft nur hin.
@@ -93,6 +102,9 @@ pub enum ClientMsg {
     },
     /// Nur Admin: Spieltempo für alle in Prozent (100 = normal, 25 bis 800, 0 = Pause).
     AdminGameSpeed { percent: u32 },
+    /// Pause drücken (`true`) oder die eigene Pause wieder aufheben. Das Spiel steht,
+    /// solange mindestens ein Spieler Pause gedrückt hat.
+    SetPause { paused: bool },
     /// Sichtbereich des Clients in Feldern (Rechteck, Ecken eingeschlossen).
     /// Der Server schickt Einheiten nur für diesen Bereich (plus Rand) und
     /// immer die eigenen. Ohne diese Nachricht sieht der Client alles.
@@ -185,6 +197,11 @@ pub enum ServerMsg {
     /// Spieltempo in Prozent (100 = normal). Kommt beim Verbinden und nach jeder Änderung.
     GameSpeed {
         percent: u32,
+    },
+    /// Wer gerade Pause gedrückt hat (Spieler-Nummern). Leer = das Spiel läuft.
+    /// Kommt beim Verbinden und nach jeder Änderung.
+    Pauses {
+        players: Vec<u32>,
     },
     /// Die Wirtschaftsdaten wurden im Balancing-Editor geändert und gelten ab sofort.
     EconomyChanged {
@@ -314,6 +331,17 @@ pub enum LobbyClientMsg {
     /// Nur vor dem Start: Bündnis eines Startplatzes (0 = keins). Den eigenen darf
     /// jeder setzen, die der Computergegner nur der Gastgeber.
     SetTeam { slot: u32, team: u8 },
+    /// Nur Gastgeber, nur vor dem Start: Regler eines Computergegners (0 bis 100) für dieses
+    /// Spiel. Leer = wie sein Charakter.
+    SetComputerTraits {
+        slot: u32,
+        #[serde(default)]
+        #[ts(optional)]
+        daring: Option<u8>,
+        #[serde(default)]
+        #[ts(optional)]
+        helpfulness: Option<u8>,
+    },
     /// Nur Gastgeber, nur vor dem Start: wie Waren zwischen Verbündeten ankommen.
     SetTradeMode { mode: TradeMode },
 }
@@ -422,6 +450,12 @@ pub struct LobbyMember {
     /// Bündnis (gleiche Zahl ab 1 = verbündet), 0 = keins.
     #[serde(default)]
     pub team: u8,
+    /// Computergegner: eigener Wert für „Angriff trotz Unterlegenheit“ (sonst der des Charakters).
+    #[serde(default)]
+    pub daring: Option<u8>,
+    /// Computergegner: eigener Wert für „Hilfsbereitschaft“ (sonst der des Charakters).
+    #[serde(default)]
+    pub helpfulness: Option<u8>,
 }
 
 /// Ob ein Gegner zu Fuß bis an den eigenen Bergfried kommt (eigene Tore gelten als zu,
@@ -464,6 +498,16 @@ pub struct AiPersonality {
     /// Armeegröße in Prozent der Stufe.
     #[serde(default = "percent_100")]
     pub army: u32,
+    /// Angriff trotz Unterlegenheit, 0 bis 100: 0 = nur, wenn er sich stärker glaubt;
+    /// 100 = ständig, sobald eine Welle bereit ist. Dazwischen greift er umso eher an, je
+    /// länger er schon wartet.
+    #[serde(default = "daring_default")]
+    pub daring: u32,
+    /// Hilfsbereitschaft gegenüber Verbündeten, 0 bis 100: 0 = hilft nie; sonst schickt er
+    /// Truppen (höchstens diesen Anteil seiner freien Soldaten) und Waren, wenn ein
+    /// Verbündeter angegriffen wird.
+    #[serde(default = "helpfulness_default")]
+    pub helpfulness: u32,
     /// Gebäude in Prozent: 100 = wie die Stufe, 0 = baut es nie, 50 = halb so viele,
     /// 200 = doppelt so viele. Steht es nicht in der Bauliste der Stufe, baut er ab 200 eins
     /// (300 zwei, ...). Fehlende Gebäude gelten als 100.
@@ -496,6 +540,14 @@ pub enum CastleLayout {
 
 fn percent_100() -> u32 {
     100
+}
+
+fn daring_default() -> u32 {
+    30
+}
+
+fn helpfulness_default() -> u32 {
+    50
 }
 
 /// Art eines Feldes.
@@ -877,6 +929,9 @@ pub struct BuildingLevel {
     /// So viele Bewohner passen auf dieser Stufe hinein (Wohnhäuser).
     #[serde(default)]
     pub housing: u32,
+    /// Lager: Gesamtplatz auf dieser Stufe (0 = wie beim Gebäude, `hub_capacity`).
+    #[serde(default)]
+    pub hub_capacity: u32,
     /// Einheiten, die mit dieser Stufe dazukommen (Wagenschuppen: Träger, dann Karren).
     #[serde(default)]
     pub spawns: Vec<UnitCount>,
@@ -1082,6 +1137,9 @@ pub struct UnitDef {
     /// Sold in Talern je Zahltag (siehe `army.upkeep_seconds`).
     #[serde(default)]
     pub upkeep: u32,
+    /// Essen je Zahltag (Einheiten aus `population.food`). Fehlt es, laufen die Soldaten langsamer.
+    #[serde(default)]
+    pub food: u32,
     /// Fernkämpfer (Reichweite über `army.melee_range`) können diese Einheit nicht verletzen
     /// (der König: nur Nahkämpfer können ihn töten).
     #[serde(default)]
@@ -1126,6 +1184,12 @@ pub struct ArmyState {
     pub upkeep: u32,
     /// Am letzten Zahltag reichte das Geld nicht.
     pub unpaid: bool,
+    /// Essen aller Soldaten je Zahltag.
+    #[serde(default)]
+    pub food: u32,
+    /// Am letzten Zahltag reichte das Essen nicht.
+    #[serde(default)]
+    pub hungry: bool,
 }
 
 /// Lauftempo der Einheiten, die nicht transportieren (Felder pro Sekunde).

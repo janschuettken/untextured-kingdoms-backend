@@ -64,6 +64,11 @@ pub struct Member {
     /// Bündnis (gleiche Zahl ab 1 = verbündet), 0 = keins.
     #[serde(default)]
     pub team: u8,
+    /// Computergegner: eigene Regler (0 bis 100), sonst die seines Charakters.
+    #[serde(default)]
+    pub daring: Option<u8>,
+    #[serde(default)]
+    pub helpfulness: Option<u8>,
 }
 
 impl Member {
@@ -74,6 +79,8 @@ impl Member {
             computer: None,
             personality: String::new(),
             team: 0,
+            daring: None,
+            helpfulness: None,
         }
     }
 
@@ -125,7 +132,13 @@ impl Meta {
             .enumerate()
             .filter_map(|(i, s)| {
                 let m = s.as_ref()?;
-                Some(ai::Seat { player: i as u32 + 1, level: m.computer?, personality: m.personality.clone() })
+                Some(ai::Seat {
+                    player: i as u32 + 1,
+                    level: m.computer?,
+                    personality: m.personality.clone(),
+                    daring: m.daring,
+                    helpfulness: m.helpfulness,
+                })
             })
             .collect()
     }
@@ -444,6 +457,8 @@ impl Hub {
                         computer: m.computer,
                         personality: m.computer.map(|_| m.personality.clone()),
                         team: m.team,
+                        daring: m.daring,
+                        helpfulness: m.helpfulness,
                     }),
                 })
                 .collect();
@@ -681,6 +696,8 @@ impl Hub {
                 ai::personality::find(&all, personality.as_deref().unwrap_or("")).id.clone()
             },
             team: 0,
+            daring: None,
+            helpfulness: None,
         });
         Ok(())
     }
@@ -729,6 +746,26 @@ impl Hub {
             return err("lobby.not_your_slot");
         }
         m.team = team;
+        Ok(())
+    }
+
+    /// Gastgeber: Regler eines Computergegners für dieses Spiel (leer = wie sein Charakter).
+    fn set_computer_traits(&self, token: &str, slot: u32, daring: Option<u8>, helpfulness: Option<u8>) -> Reply {
+        let Some(game) = self.game_of(token) else {
+            return err("lobby.not_in_game");
+        };
+        let mut meta = game.meta.lock().unwrap();
+        if meta.host != token {
+            return err("lobby.not_host");
+        }
+        if meta.phase != GamePhase::Waiting {
+            return err("lobby.game_running");
+        }
+        let Some(m) = meta.slots.get_mut(slot as usize).and_then(|s| s.as_mut()).filter(|m| !m.is_human()) else {
+            return err("lobby.not_computer");
+        };
+        m.daring = daring.map(|d| d.min(100));
+        m.helpfulness = helpfulness.map(|h| h.min(100));
         Ok(())
     }
 
@@ -801,6 +838,7 @@ impl Hub {
             LobbyClientMsg::AddComputer { slot, level, personality } => self.add_computer(token, slot, level, personality),
             LobbyClientMsg::RemoveComputer { slot } => self.remove_computer(token, slot),
             LobbyClientMsg::SetTeam { slot, team } => self.set_team(token, slot, team),
+            LobbyClientMsg::SetComputerTraits { slot, daring, helpfulness } => self.set_computer_traits(token, slot, daring, helpfulness),
             LobbyClientMsg::SetTradeMode { mode } => self.set_trade_mode(token, mode),
         }
     }
@@ -942,7 +980,7 @@ mod tests {
         let token = {
             let game = hub.game(id).unwrap();
             let meta = game.meta.lock().unwrap();
-            assert_eq!(meta.computers(), vec![ai::Seat { player: 3, level: AiLevel::Normal, personality: "balanced".into() }]);
+            assert_eq!(meta.computers(), vec![ai::Seat { player: 3, level: AiLevel::Normal, personality: "balanced".into(), daring: None, helpfulness: None }]);
             meta.slots[2].as_ref().unwrap().token.clone()
         };
         assert!(
