@@ -508,6 +508,14 @@
           "housing": 0,
           "spawns": [],
           "trains": []
+        },
+        {
+          "cost": [{"good": "wood", "amount": 30}, {"good": "boards", "amount": 30}],
+          "recipes": [],
+          "housing": 0,
+          "hub_capacity": 1200,
+          "spawns": [],
+          "trains": []
         }
       ]
     },
@@ -578,6 +586,14 @@
           ],
           "recipes": [],
           "housing": 0,
+          "spawns": [],
+          "trains": []
+        },
+        {
+          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 25}, {"good": "stone", "amount": 25}],
+          "recipes": [],
+          "housing": 0,
+          "hub_capacity": 400,
           "spawns": [],
           "trains": []
         }
