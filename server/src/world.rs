@@ -379,6 +379,12 @@ impl World {
         state.people = self.people.get(&player).cloned().unwrap_or_default();
         state.people.next_meal_in = self.meal_soonest.get(&player).copied().unwrap_or(0.0).max(0.0).ceil() as u32;
         state.army = self.army_state(player);
+        // Pferde liegen in den Pferdezuchten, zählen für die Anzeige (und Ausbildung) aber zum Vorrat.
+        let horses = self.horses_available(player);
+        state.goods.retain(|g| g.good != protocol::Good::Horse);
+        if horses > 0 {
+            state.goods.push(GoodAmount { good: protocol::Good::Horse, amount: horses });
+        }
         state
     }
 
@@ -1511,6 +1517,10 @@ impl World {
                 None => (self.hub_state(id).unwrap_or_default(), self.hub_capacity(id)),
             };
             let Some(b) = self.buildings.iter_mut().find(|b| b.id == id) else { continue };
+            // Pferdezucht: Pferde zählen zum angezeigten Vorrat.
+            if self.economy.building(b.kind).is_some_and(|d| d.horse_capacity > 0) {
+                self.dirty_stocks.insert(b.owner);
+            }
             b.inventory = goods;
             b.capacity = capacity;
             self.events.push(ServerMsg::BuildingChanged { building: b.clone() });

@@ -15,6 +15,12 @@ fn good_key(g: protocol::Good) -> String {
     serde_json::to_value(g).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default()
 }
 
+/// Pferde je Einheit: aus den Kosten, mindestens eins, wenn sie beritten aus der Kaserne kommt.
+fn horses_needed(u: &protocol::UnitDef) -> u32 {
+    let cost: u32 = u.cost.iter().filter(|c| c.good == protocol::Good::Horse).map(|c| c.amount).sum();
+    cost.max(u.mounted as u32)
+}
+
 impl World {
     /// Soldaten, die diese Kaserne auf ihrer Stufe ausbilden kann.
     fn trainable(&self, b: &BuildingState) -> Vec<UnitKind> {
@@ -40,10 +46,14 @@ impl World {
         if room == 0 {
             return Err(Text::new("error.queue_full").arg("max", max));
         }
-        // Ritter kommen beritten: je einer braucht ein freies Pferd aus einer Pferdezucht.
+        // Pferde (in den Kosten oder weil die Einheit beritten kommt) liegen nicht im Vorrat,
+        // sondern in den Pferdezuchten: von dort nehmen.
         let mut room = room;
-        if unit.mounted {
-            let horses = self.horses_available(player);
+        let per_unit = horses_needed(&unit);
+        let mut unit = unit;
+        unit.cost.retain(|c| c.good != protocol::Good::Horse);
+        if per_unit > 0 {
+            let horses = self.horses_available(player) / per_unit;
             if horses == 0 {
                 return Err(Text::new("error.no_horse"));
             }
@@ -72,10 +82,8 @@ impl World {
             ordered += 1;
         }
         self.dirty_stocks.insert(player);
-        if unit.mounted {
-            for _ in 0..ordered {
-                self.take_horse(player, near);
-            }
+        for _ in 0..ordered * per_unit {
+            self.take_horse(player, near);
         }
         let b = self.buildings.iter_mut().find(|b| b.id == building_id).expect("eben gefunden");
         if b.training.is_empty() {
@@ -173,9 +181,9 @@ impl World {
         let mut horses = 0;
         for k in kinds {
             if let Some(u) = self.economy.unit(*k) {
-                goods.extend(u.cost.iter().copied());
+                goods.extend(u.cost.iter().copied().filter(|c| c.good != protocol::Good::Horse));
                 taler += u.taler;
-                horses += u.mounted as u32;
+                horses += horses_needed(u);
             }
         }
         for _ in 0..horses {
