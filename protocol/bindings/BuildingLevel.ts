@@ -23,6 +23,10 @@ recipes: Array<string>,
  */
 housing: number, 
 /**
+ * Lager: Gesamtplatz auf dieser Stufe (0 = wie beim Gebäude, `hub_capacity`).
+ */
+hub_capacity: number, 
+/**
  * Einheiten, die mit dieser Stufe dazukommen (Wagenschuppen: Träger, dann Karren).
  */
 spawns: Array<UnitCount>, 

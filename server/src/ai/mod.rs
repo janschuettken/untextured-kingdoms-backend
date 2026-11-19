@@ -436,7 +436,9 @@ impl Computer {
                 continue;
             };
             let Some(next) = def.levels.get(b.level as usize) else { continue };
-            if next.cost.iter().all(|c| have(stock, c.good) >= c.amount) {
+            // Mit Feinden in der Nähe darf nicht ausgebaut werden.
+            let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
+            if next.cost.iter().all(|c| have(stock, c.good) >= c.amount) && world.check_no_enemy(self.player, center).is_ok() {
                 cmds.push(ClientMsg::UpgradeBuilding { building_id: b.id });
             }
             return;

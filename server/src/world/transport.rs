@@ -6,7 +6,7 @@
 //! - **Abholen:** Fertige Waren (alles, was kein Eingang des gewählten Rezepts
 //!   ist) aus dem Betrieb zum nächsten Lager bringen.
 //! - **Beliefern:** Fehlende Eingänge aus dem Vorrat zum Betrieb bringen, aber
-//!   nur, wenn der Betrieb Lieferungen annimmt (`accept_deliveries`). Er hält
+//!   (Lieferungen nimmt jeder Betrieb an, `accept_deliveries` gilt nicht mehr). Er hält
 //!   Eingänge für zwei Durchläufe vorrätig.
 //!
 //! Träger wohnen in den Lagern und tragen wenig. Der Karren aus dem
@@ -19,7 +19,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use protocol::{BuildingState, Good, GoodAmount, UnitKind};
+use protocol::{BuildingKind, BuildingState, BuildingStatus, Good, GoodAmount, UnitKind};
 
 use super::World;
 
@@ -215,6 +215,28 @@ impl World {
             .map(|b| b.id)
     }
 
+    /// Ergebnis passt nicht mehr ins Betriebslager: wartet es aufs Abholen oder
+    /// ist in keinem eigenen Lager Platz dafür?
+    pub(super) fn full_status(&self, owner: u32, goods: impl IntoIterator<Item = Good>) -> BuildingStatus {
+        let Some(stock) = self.stocks.get(&owner) else { return BuildingStatus::StorageFull };
+        if goods.into_iter().any(|g| stock.room(g) == 0) {
+            BuildingStatus::NoStorageRoom
+        } else {
+            BuildingStatus::StorageFull
+        }
+    }
+
+    /// Liegt die Fläche (x, y, w, h) im Umkreis eines eigenen Wagenschuppens?
+    /// Dann tragen neue Betriebe dort nicht mehr selbst.
+    pub(super) fn cart_shed_covers(&self, owner: u32, x: u32, y: u32, w: u32, h: u32) -> bool {
+        let c = (x as f32 + w as f32 / 2.0, y as f32 + h as f32 / 2.0);
+        self.buildings.iter().filter(|b| b.owner == owner && b.kind == BuildingKind::CartShed).any(|b| {
+            let r = self.economy.building(b.kind).map_or(0, |d| d.at(b.level).service_radius) as f32;
+            let s = center(b);
+            r <= 0.0 || (s.0 - c.0).hypot(s.1 - c.1) <= r
+        })
+    }
+
     /// Mittelpunkt und Reichweite des Wagenschuppens eines Karrens (0 = überall).
     fn service_area(&self, home: Option<u32>) -> Option<((f32, f32), f32)> {
         let b = self.buildings.iter().find(|b| Some(b.id) == home)?;
@@ -297,7 +319,7 @@ impl World {
                 }
             }
             // Beliefern: Eingänge für zwei Durchläufe, aber nicht unter den Mindestbestand.
-            if !b.settings.accept_deliveries || b.settings.paused || (cart && !b.settings.cart_deliveries) {
+            if b.settings.paused || (cart && !b.settings.cart_deliveries) {
                 continue;
             }
             for i in inputs.iter().filter(|i| moves(i.good)) {
@@ -797,20 +819,17 @@ mod tests {
     }
 
     #[test]
-    fn ohne_lieferungen_nur_eigener_vorrat() {
-        let mut w = flat(40, 20);
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
-        let saw = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap();
-        let mut s = saw.settings.clone();
-        s.accept_deliveries = false;
-        w.configure(1, saw.id, s).unwrap();
-        let wood = central(&w, Good::Wood);
-        run(&mut w, 30.0);
-        assert_eq!(central(&w, Good::Wood), wood, "nichts geliefert");
-        assert_eq!(
-            w.buildings.iter().find(|b| b.id == saw.id).unwrap().status,
-            BuildingStatus::MissingInput
-        );
+    fn neben_wagenschuppen_traegt_der_arbeiter_nicht_selbst() {
+        let mut w = flat(80, 20);
+        w.admin_give(1, &[GoodAmount { good: Good::Wood, amount: 200 }, GoodAmount { good: Good::Boards, amount: 200 }], 0);
+        let far = w.place_building(1, BuildingKind::Sawmill, 2, 2).unwrap();
+        assert!(far.settings.worker_carries, "ohne Wagenschuppen trägt er selbst");
+        w.economy.def.buildings.iter_mut().find(|d| d.kind == BuildingKind::CartShed).unwrap().levels.iter_mut().for_each(|l| l.service_radius = 15);
+        w.place_building(1, BuildingKind::CartShed, 60, 2).unwrap();
+        let near = w.place_building(1, BuildingKind::Sawmill, 66, 2).unwrap();
+        assert!(!near.settings.worker_carries, "im Umkreis tragen die Träger");
+        let out = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap();
+        assert!(out.settings.worker_carries, "außerhalb des Umkreises trägt er selbst");
     }
 
     #[test]
@@ -828,7 +847,7 @@ mod tests {
                 .find(|b| b.id == orchard.id)
                 .unwrap()
                 .status,
-            BuildingStatus::StorageFull
+            BuildingStatus::NoStorageRoom
         );
         // Bergfried mit Trägern und ein Wagenschuppen: Die große Ladung lassen
         // die Träger für den Karren liegen, er holt alles auf einmal.

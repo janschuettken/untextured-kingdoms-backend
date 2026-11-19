@@ -77,7 +77,7 @@ impl World {
                 BuildingStatus::Working
             }
             Some(Gather::Working { tile, left }) => {
-                let left = left - dt * self.hunger_factor(owner);
+                let left = left - dt * self.unit_hunger_factor(k);
                 if left > 0.0 {
                     self.units[k].gather = Some(Gather::Working { tile, left });
                     return BuildingStatus::Working;
@@ -107,7 +107,7 @@ impl World {
                         self.units[k].cooldown = RETRY;
                         self.go_to_building(k, bi);
                         self.units[k].gather = Some(Gather::Home);
-                        return BuildingStatus::StorageFull;
+                        return BuildingStatus::NoStorageRoom;
                     }
                 }
                 self.units[k].gather = None;
@@ -200,7 +200,7 @@ impl World {
             return BuildingStatus::Working;
         }
         self.units[k].gather = Some(Gather::Home);
-        BuildingStatus::StorageFull
+        self.full_status(owner, [load.good])
     }
 
     fn go_to_building(&mut self, k: usize, bi: usize) {
