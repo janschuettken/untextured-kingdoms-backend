@@ -11,4 +11,13 @@ worker_speed: number,
 /**
  * Tempo auf Schrägen in Prozent (100 = wie flach). Langsamer macht Umwege um Berge lohnend.
  */
-slope_speed_percent: number, };
+slope_speed_percent: number, 
+/**
+ * Mindestabstand stehender Soldaten zueinander (Felder); enger stehende rücken auseinander.
+ * Reiter brauchen das 1,5-Fache. 0 = aus.
+ */
+spread_distance: number, 
+/**
+ * So schnell rücken sie dabei (Felder pro Sekunde).
+ */
+spread_speed: number, };

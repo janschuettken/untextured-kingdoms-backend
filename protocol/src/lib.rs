@@ -1452,6 +1452,21 @@ pub struct MovementDef {
     /// Tempo auf Schrägen in Prozent (100 = wie flach). Langsamer macht Umwege um Berge lohnend.
     #[serde(default = "default_slope_speed")]
     pub slope_speed_percent: u16,
+    /// Mindestabstand stehender Soldaten zueinander (Felder); enger stehende rücken auseinander.
+    /// Reiter brauchen das 1,5-Fache. 0 = aus.
+    #[serde(default = "default_spread_distance")]
+    pub spread_distance: f32,
+    /// So schnell rücken sie dabei (Felder pro Sekunde).
+    #[serde(default = "default_spread_speed")]
+    pub spread_speed: f32,
+}
+
+fn default_spread_distance() -> f32 {
+    0.5
+}
+
+fn default_spread_speed() -> f32 {
+    1.0
 }
 
 fn default_slope_speed() -> u16 {
@@ -1528,7 +1543,13 @@ pub struct PeopleState {
 
 impl Default for MovementDef {
     fn default() -> Self {
-        MovementDef { king_speed: 1.5, worker_speed: 1.2, slope_speed_percent: default_slope_speed() }
+        MovementDef {
+            king_speed: 1.5,
+            worker_speed: 1.2,
+            slope_speed_percent: default_slope_speed(),
+            spread_distance: default_spread_distance(),
+            spread_speed: default_spread_speed(),
+        }
     }
 }
 
