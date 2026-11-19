@@ -86,6 +86,82 @@ pub struct Match {
     next_conn: AtomicU64,
     /// Computergegner in diesem Spiel. Reihenfolge beim Sperren: nach `world`.
     pub(crate) computers: Mutex<Vec<Computer>>,
+    /// Wie lange die letzten Ticks gedauert haben (Serverauslastung für den Admin).
+    pub load: Mutex<TickLoad>,
+}
+
+/// Rechenzeit der letzten Ticks eines Spiels, in Mikrosekunden.
+/// Budget je Tick ist 1/TICK_RATE Sekunde (50 ms); was darüber liegt, macht das Spiel langsamer.
+pub struct TickLoad {
+    /// Die letzten LOAD_WINDOW Ticks, neueste hinten.
+    recent: std::collections::VecDeque<u32>,
+    /// Ticks seit dem Start und davon zu langsame (über Budget).
+    pub total: u64,
+    pub late_total: u64,
+}
+
+/// So viele Ticks merkt sich die Auslastung (60 s).
+const LOAD_WINDOW: usize = 60 * TICK_RATE as usize;
+/// Kurzer Schnitt über so viele Ticks (5 s).
+const LOAD_SHORT: usize = 5 * TICK_RATE as usize;
+
+/// Auslastung zum Anzeigen (alles in Millisekunden bzw. Prozent des Budgets).
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+pub struct LoadSummary {
+    pub budget_ms: f32,
+    /// Schnitt der letzten 5 Sekunden und der letzten Minute.
+    pub avg_ms: f32,
+    pub avg_minute_ms: f32,
+    /// Längster Tick der letzten 5 Sekunden und der letzten Minute.
+    pub max_ms: f32,
+    pub max_minute_ms: f32,
+    /// Schnitt der letzten 5 Sekunden in Prozent des Budgets.
+    pub percent: f32,
+    /// Ticks der letzten Minute über dem Budget.
+    pub late_minute: u32,
+    pub ticks_total: u64,
+    pub late_total: u64,
+}
+
+impl TickLoad {
+    fn new() -> TickLoad {
+        TickLoad { recent: std::collections::VecDeque::with_capacity(LOAD_WINDOW), total: 0, late_total: 0 }
+    }
+
+    pub fn record(&mut self, took: Duration) {
+        let us = took.as_micros().min(u32::MAX as u128) as u32;
+        if self.recent.len() == LOAD_WINDOW {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(us);
+        self.total += 1;
+        if took > Duration::from_secs(1) / TICK_RATE {
+            self.late_total += 1;
+        }
+    }
+
+    pub fn summary(&self) -> LoadSummary {
+        let budget_us = 1_000_000.0 / TICK_RATE as f32;
+        let ms = |us: f32| (us / 10.0).round() / 100.0;
+        let stats = |n: usize| {
+            let part: Vec<u32> = self.recent.iter().rev().take(n).copied().collect();
+            let avg = if part.is_empty() { 0.0 } else { part.iter().map(|&v| v as f32).sum::<f32>() / part.len() as f32 };
+            (avg, part.iter().copied().max().unwrap_or(0) as f32)
+        };
+        let (avg, max) = stats(LOAD_SHORT);
+        let (avg_min, max_min) = stats(LOAD_WINDOW);
+        LoadSummary {
+            budget_ms: ms(budget_us),
+            avg_ms: ms(avg),
+            avg_minute_ms: ms(avg_min),
+            max_ms: ms(max),
+            max_minute_ms: ms(max_min),
+            percent: (avg / budget_us * 1000.0).round() / 10.0,
+            late_minute: self.recent.iter().filter(|&&v| v as f32 > budget_us).count() as u32,
+            ticks_total: self.total,
+            late_total: self.late_total,
+        }
+    }
 }
 
 impl Match {
@@ -103,6 +179,7 @@ impl Match {
             stop: AtomicBool::new(false),
             next_conn: AtomicU64::new(1),
             computers: Mutex::new(Vec::new()),
+            load: Mutex::new(TickLoad::new()),
         }
     }
 
@@ -253,6 +330,8 @@ fn game_loop(hub: Arc<Hub>, game: Arc<Game>, state: Arc<Match>) {
         }
         dirty = true;
         tick += 1;
+        // Gemessen wird alles, was der Tick tut (auch das Speichern einmal pro Minute).
+        let started = Instant::now();
         if tick.is_multiple_of(AUTOSAVE_SECONDS * TICK_RATE as u64) {
             if let Err(e) = hub.save_game(&game) {
                 warn!(
@@ -262,6 +341,7 @@ fn game_loop(hub: Arc<Hub>, game: Arc<Game>, state: Arc<Match>) {
             }
         }
         step(&state, tick);
+        state.load.lock().unwrap().record(started.elapsed());
     }
     info!("Spiel {} beendet", game.id);
 }
@@ -841,6 +921,28 @@ pub fn apply_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auslastung_rechnet_schnitt_spitze_und_zu_langsame() {
+        let mut l = TickLoad::new();
+        for _ in 0..99 {
+            l.record(Duration::from_millis(10));
+        }
+        l.record(Duration::from_millis(60));
+        let s = l.summary();
+        assert_eq!(s.budget_ms, 50.0);
+        assert_eq!(s.max_ms, 60.0);
+        assert_eq!(s.avg_ms, 10.5);
+        assert_eq!(s.percent, 21.0);
+        assert_eq!(s.late_minute, 1);
+        assert_eq!((s.ticks_total, s.late_total), (100, 1));
+        // Das Fenster ist begrenzt.
+        for _ in 0..LOAD_WINDOW {
+            l.record(Duration::from_millis(1));
+        }
+        assert_eq!(l.summary().late_minute, 0);
+        assert_eq!(l.summary().late_total, 1);
+    }
 
     #[test]
     fn pause_haelt_bis_alle_sie_loesen() {
