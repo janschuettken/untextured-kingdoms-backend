@@ -11,4 +11,12 @@ upkeep: number,
 /**
  * Am letzten Zahltag reichte das Geld nicht.
  */
-unpaid: boolean, };
+unpaid: boolean, 
+/**
+ * Essen aller Soldaten je Zahltag.
+ */
+food: number, 
+/**
+ * Am letzten Zahltag reichte das Essen nicht.
+ */
+hungry: boolean, };

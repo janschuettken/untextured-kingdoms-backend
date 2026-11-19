@@ -6,4 +6,4 @@ import type { Text } from "./Text";
 /**
  * Nachrichten der Lobby an den Client.
  */
-export type LobbyServerMsg = { "type": "welcome", you: string, maps: Array<string>, } | { "type": "state", games: Array<GameSummary>, current: LobbyGame | null, } | { "type": "pong", client_time: number, } | { "type": "rejected", text: Text, };
+export type LobbyServerMsg = { "type": "welcome", you: string, maps: Array<string>, server_version: string, } | { "type": "state", games: Array<GameSummary>, current: LobbyGame | null, } | { "type": "pong", client_time: number, } | { "type": "rejected", text: Text, };

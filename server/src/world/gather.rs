@@ -275,7 +275,7 @@ impl World {
         if def.gathers.is_empty() && def.levels.iter().all(|l| l.recipes.is_empty()) {
             return 0;
         }
-        def.workers.max(1)
+        def.at(b.level).workers.max(1)
     }
 
     /// `count` neue Arbeiter für das Gebäude `bi`.
@@ -371,7 +371,7 @@ mod tests {
         let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
         w.spawn_player(1);
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
-        let r = w.economy.building(BuildingKind::Quarry).unwrap().gather_radius;
+        let r = w.economy.building(BuildingKind::Quarry).unwrap().at(1).gather_radius;
         assert!(r >= 2, "kleiner Umkreis eingestellt");
         // Zu weit weg geht nicht, daneben schon.
         assert_eq!(w.place_building(1, BuildingKind::Quarry, 24 - r, 6).unwrap_err().key, "error.needs_resource");

@@ -44,7 +44,7 @@ impl World {
                 }
             }
             for b in self.buildings.iter().filter(|b| b.owner == player) {
-                let need = self.economy.building(b.kind).map_or(0, |d| d.workers);
+                let need = self.economy.building(b.kind).map_or(0, |d| d.at(b.level).workers);
                 if need == 0 {
                     continue;
                 }
@@ -159,7 +159,7 @@ impl World {
             let Some(def) = self.economy.building(b.kind) else { continue };
             let mut totals: BTreeMap<UnitKind, u32> = BTreeMap::new();
             totals.insert(UnitKind::Worker, self.worker_slots(b));
-            for s in def.spawns.iter().chain(def.levels.iter().take(b.level.max(1) as usize).flat_map(|l| &l.spawns)) {
+            for s in def.levels.iter().take(b.level.max(1) as usize).flat_map(|l| &l.spawns) {
                 *totals.entry(s.kind).or_default() += s.count;
             }
             let Some((&kind, _)) = totals.iter().find(|(k, n)| have.get(&(b.id, **k)).copied().unwrap_or(0) < **n) else { continue };

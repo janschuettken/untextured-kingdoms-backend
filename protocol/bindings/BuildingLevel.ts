@@ -5,6 +5,9 @@ import type { UnitKind } from "./UnitKind";
 
 /**
  * Eine Ausbaustufe. Stufe 1 ist das Bauen selbst.
+ *
+ * Alle Werte, die sich mit der Stufe ändern dürfen, stehen hier je Stufe vollständig
+ * (Format 2 der Balancing-Datei). Fehlt ein Wert in einer Stufe, gilt der der Stufe davor.
  */
 export type BuildingLevel = { 
 /**
@@ -30,4 +33,62 @@ spawns: Array<UnitCount>,
 /**
  * Kaserne: Soldaten, die diese Stufe ausbilden kann (zusätzlich zu den vorigen).
  */
-trains: Array<UnitKind>, };
+trains: Array<UnitKind>, 
+/**
+ * Lebenspunkte auf dieser Stufe.
+ */
+max_hp: number, 
+/**
+ * Arbeiter, die der Betrieb auf dieser Stufe braucht (sie wohnen in Häusern und essen).
+ */
+workers: number, 
+/**
+ * Wie weit um das Gebäude abgebaut wird (Felder vom Rand). 0 = nur unter dem Gebäude.
+ */
+gather_radius: number, 
+/**
+ * Wagenschuppen: der Karren fährt nur Betriebe in diesem Umkreis (Felder) an. 0 = überall.
+ */
+service_radius: number, 
+/**
+ * Auf dieser Stufe können eigene Einheiten oben auf dem Gebäude laufen (Wehrgang).
+ */
+walkway: boolean, 
+/**
+ * Tor/Turm: auf dieser Stufe führt eine Treppe auf den Wehrgang.
+ */
+stairs: boolean, 
+/**
+ * Tor: im Modus „automatisch“ schließt es, sobald fremde Einheiten so nah (Felder) sind.
+ */
+gate_radius: number, 
+/**
+ * So viele Einheiten finden oben Platz. 0 = so viele, wie draufpassen.
+ */
+garrison: number, 
+/**
+ * Deckung für Einheiten oben auf dem Gebäude: so viel Prozent der Fernkampf-Schüsse
+ * auf sie gehen daneben. 0 = keine Deckung.
+ */
+cover_percent: number, 
+/**
+ * Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte): die ganze Fläche
+ * muss in diesem Umkreis liegen (beim Bauen bzw. beim Ausbau auf diese Stufe). 0 = überall.
+ */
+build_radius: number, 
+/**
+ * Weg: man läuft hier so viel Prozent schneller. Ob es ein Weg ist, entscheidet Stufe 1 (> 0).
+ */
+road_speed_percent: number, 
+/**
+ * Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
+ */
+hub_capacity: number, 
+/**
+ * Betriebe: so viel passt je Eingangsware ins eigene Lager. 0 = `transport.building_capacity`.
+ */
+storage_inputs: number, 
+/**
+ * Betriebe: so viel passt je Ergebnis ins eigene Lager. 0 = `transport.building_capacity`.
+ */
+storage_outputs: number, };

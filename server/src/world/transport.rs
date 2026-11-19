@@ -231,7 +231,7 @@ impl World {
     pub(super) fn cart_shed_covers(&self, owner: u32, x: u32, y: u32, w: u32, h: u32) -> bool {
         let c = (x as f32 + w as f32 / 2.0, y as f32 + h as f32 / 2.0);
         self.buildings.iter().filter(|b| b.owner == owner && b.kind == BuildingKind::CartShed).any(|b| {
-            let r = self.economy.building(b.kind).map_or(0, |d| d.service_radius) as f32;
+            let r = self.economy.building(b.kind).map_or(0, |d| d.at(b.level).service_radius) as f32;
             let s = center(b);
             r <= 0.0 || (s.0 - c.0).hypot(s.1 - c.1) <= r
         })
@@ -240,7 +240,7 @@ impl World {
     /// Mittelpunkt und Reichweite des Wagenschuppens eines Karrens (0 = überall).
     fn service_area(&self, home: Option<u32>) -> Option<((f32, f32), f32)> {
         let b = self.buildings.iter().find(|b| Some(b.id) == home)?;
-        let r = self.economy.building(b.kind).map_or(0, |d| d.service_radius);
+        let r = self.economy.building(b.kind).map_or(0, |d| d.at(b.level).service_radius);
         Some((center(b), r as f32))
     }
 
@@ -711,7 +711,7 @@ mod tests {
         w.upgrade(1, shed).unwrap();
         w.upgrade(1, shed).unwrap();
         let def = w.economy.building(BuildingKind::CartShed).unwrap();
-        let carts: u32 = def.levels.iter().flat_map(|l| &l.spawns).chain(&def.spawns).filter(|sp| sp.kind == UnitKind::Cart).map(|sp| sp.count).sum();
+        let carts: u32 = def.levels.iter().flat_map(|l| &l.spawns).filter(|sp| sp.kind == UnitKind::Cart).map(|sp| sp.count).sum();
         assert_eq!(count(&w, UnitKind::Cart) as u32, carts, "Stufe 3 und 4: weitere Karren laut Daten");
         // Träger stehen nie in Gebäuden, und befehlen lassen sie sich nicht.
         let id = w.units.iter().find(|u| u.kind == UnitKind::Carrier).unwrap().id;
@@ -824,7 +824,7 @@ mod tests {
         w.admin_give(1, &[GoodAmount { good: Good::Wood, amount: 200 }, GoodAmount { good: Good::Boards, amount: 200 }], 0);
         let far = w.place_building(1, BuildingKind::Sawmill, 2, 2).unwrap();
         assert!(far.settings.worker_carries, "ohne Wagenschuppen trägt er selbst");
-        w.economy.def.buildings.iter_mut().find(|d| d.kind == BuildingKind::CartShed).unwrap().service_radius = 15;
+        w.economy.def.buildings.iter_mut().find(|d| d.kind == BuildingKind::CartShed).unwrap().levels.iter_mut().for_each(|l| l.service_radius = 15);
         w.place_building(1, BuildingKind::CartShed, 60, 2).unwrap();
         let near = w.place_building(1, BuildingKind::Sawmill, 66, 2).unwrap();
         assert!(!near.settings.worker_carries, "im Umkreis tragen die Träger");

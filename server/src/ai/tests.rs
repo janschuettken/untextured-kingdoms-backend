@@ -134,6 +134,9 @@ fn schwerer_computer_baut_torhaus_wege_und_grosse_armee() {
     assert!(stock.army.soldiers >= 15, "{:?}", stock.army);
     let on_keep = world.units.iter().filter(|u| u.owner == 1 && u.is_on_wall()).count();
     assert!(on_keep >= 1, "keine Bogenschützen oben");
+    assert!(count(&world, BuildingKind::Apothecary) >= 1, "{kinds:?}");
+    let healers = world.units.iter().filter(|u| u.owner == 1 && u.kind == protocol::UnitKind::Healer).count();
+    assert!(healers >= 1, "keine Heiler");
 }
 
 #[test]
@@ -151,7 +154,7 @@ fn vier_computer_auf_zufallskarte_mit_fluessen() {
     const RANDOM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/maps/4-player-zufall-256-682070261.txt"));
     let world = play_on(RANDOM, &[AiLevel::Easy, AiLevel::Normal, AiLevel::Hard, AiLevel::Hard], 45);
     for p in 1..=4 {
-        let n = world.buildings.iter().filter(|b| b.owner == p && world.economy.building(b.kind).is_some_and(|d| d.road_speed_percent == 0)).count();
+        let n = world.buildings.iter().filter(|b| b.owner == p && world.economy.building(b.kind).is_some_and(|d| !d.is_road())).count();
         let kinds = |k: BuildingKind| world.buildings.iter().filter(|b| b.owner == p && b.kind == k).count();
         println!(
             "Spieler {p}: {n} Gebäude, {} Soldaten, Wege {}, Tore {}+{}, Mauer {}, Türme {}, oben {}",
@@ -216,7 +219,7 @@ fn alle_charaktere_bauen_eine_burg() {
     let world = play_seats(RANDOM, &seats, 45, Some(&all), |_, _| {});
     for (i, id) in ids.iter().enumerate() {
         let p = i as u32 + 1;
-        let n = world.buildings.iter().filter(|b| b.owner == p && world.economy.building(b.kind).is_some_and(|d| d.road_speed_percent == 0)).count();
+        let n = world.buildings.iter().filter(|b| b.owner == p && world.economy.building(b.kind).is_some_and(|d| !d.is_road())).count();
         let mut kinds = std::collections::BTreeMap::new();
         for b in world.buildings.iter().filter(|b| b.owner == p) {
             *kinds.entry(format!("{:?}", b.kind)).or_insert(0) += 1;
@@ -263,7 +266,7 @@ fn hilft_dem_verbuendeten_aber_nicht_mit_allen() {
         let relief: Vec<usize> = cmds
             .iter()
             .filter_map(|c| match c {
-                ClientMsg::MoveUnits { unit_ids, x, y } if (x - ally.0).hypot(y - ally.1) < 30.0 => Some(unit_ids.len()),
+                ClientMsg::MoveUnits { unit_ids, x, y, .. } if (x - ally.0).hypot(y - ally.1) < 30.0 => Some(unit_ids.len()),
                 _ => None,
             })
             .collect();

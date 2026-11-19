@@ -17,10 +17,6 @@ unpaid_speed_percent: number,
  */
 queue_max: number, 
 /**
- * Sekunden zwischen zwei Schlägen oder Schüssen einer Einheit.
- */
-attack_seconds: number, 
-/**
  * Bis zu dieser Reichweite (Felder) zählt ein Angriff als Nahkampf, darüber als Fernkampf.
  */
 melee_range: number, 
@@ -33,4 +29,8 @@ civilian_respawn_seconds: number,
  * Bauen, Ausbauen und Reparieren nur, wenn in diesem Umkreis (Felder) kein feindlicher
  * Soldat oder König steht. 0 = immer erlaubt.
  */
-enemy_block_radius: number, };
+enemy_block_radius: number, 
+/**
+ * Sekunden zwischen zwei Behandlungen eines Heilers.
+ */
+heal_seconds: number, };
