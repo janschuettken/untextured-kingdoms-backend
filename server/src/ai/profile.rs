@@ -448,6 +448,10 @@ impl Profile {
         for c in &def.cost {
             self.good_needs(economy, c.good, &mut needs, 0);
         }
+        // Ritter kommen beritten aus der Kaserne: dafür eine Pferdezucht.
+        if def.mounted {
+            self.good_needs(economy, Good::Horse, &mut needs, 0);
+        }
         for (kind, level) in needs {
             if !self.build_order.iter().any(|e| e.0 == kind) {
                 self.build_order.push((kind, 1));
@@ -516,6 +520,15 @@ mod tests {
 
     fn eco() -> Economy {
         Economy::parse(crate::economy::ECONOMY_JSON).unwrap()
+    }
+
+    #[test]
+    fn ritter_brauchen_eine_pferdezucht() {
+        let mut p = personality::neutral();
+        p.units.insert(UnitKind::Knight, 100);
+        let prof = Profile::build(AiLevel::Hard, &p, &eco());
+        assert!(prof.build_order.iter().any(|e| e.0 == HorseFarm), "{:?}", prof.build_order);
+        assert!(prof.recipes.contains(&"breed_horse".to_string()));
     }
 
     #[test]

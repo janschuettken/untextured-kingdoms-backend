@@ -65,6 +65,10 @@ hub_goods: Array<Good>,
  */
 delivery: DeliveryDefaults, 
 /**
+ * Pferdezucht: so viele Pferde passen hinein. 0 = keine Pferde.
+ */
+horse_capacity: number, 
+/**
  * Mindestens eine Stufe.
  */
 levels: Array<BuildingLevel>, };

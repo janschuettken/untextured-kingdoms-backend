@@ -21,4 +21,16 @@ inside: boolean,
 /**
  * Lebenspunkte (Höchstwert: `hp` der Einheit in `economy.units`). 0 = hat keine (Träger, Arbeiter).
  */
-hp: number, };
+hp: number, 
+/**
+ * Sitzt auf einem Pferd.
+ */
+mounted: boolean, 
+/**
+ * Lebenspunkte des Pferdes (Höchstwert: `army.horse_hp`), 0 ohne Pferd.
+ */
+horse_hp: number, 
+/**
+ * Sekunden, die die Einheit nach einem Sturz noch am Boden liegt (0 = steht).
+ */
+down: number, };

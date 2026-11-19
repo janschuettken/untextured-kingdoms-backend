@@ -44,6 +44,14 @@ food: number,
  */
 ranged_immune: boolean, 
 /**
+ * Kann auf ein Pferd aus der Pferdezucht steigen.
+ */
+can_ride: boolean, 
+/**
+ * Kommt beritten aus der Kaserne (Ritter): die Ausbildung braucht ein Pferd aus einer Pferdezucht.
+ */
+mounted: boolean, 
+/**
  * Sekunden zwischen zwei Schlägen oder Schüssen.
  */
 attack_seconds: number, 

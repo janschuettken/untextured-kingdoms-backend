@@ -22,6 +22,7 @@ mod gate;
 mod heal;
 mod market;
 mod gather;
+mod horses;
 mod save;
 mod storage;
 pub use save::SaveGame;
@@ -78,6 +79,18 @@ pub struct Unit {
     /// Sekunden bis zur nächsten Wegsuche beim Verfolgen.
     #[serde(default)]
     chase_timer: f32,
+    /// Sitzt auf einem Pferd.
+    #[serde(default)]
+    mounted: bool,
+    /// Schaden am Pferd (Lebenspunkte des Pferdes = `army.horse_hp` minus das).
+    #[serde(default)]
+    horse_damage: u32,
+    /// Nach dem Sturz vom Pferd: so viele Sekunden noch am Boden.
+    #[serde(default)]
+    down: f32,
+    /// Unterwegs zu dieser Pferdezucht, um aufzusteigen.
+    #[serde(default)]
+    mount_at: Option<u32>,
     /// Bewohner: Sekunden bis zur eigenen nächsten Mahlzeit (`None` = noch nicht verteilt).
     #[serde(default)]
     meal_in: Option<f32>,
@@ -105,6 +118,11 @@ pub(crate) struct Waypoint {
 }
 
 impl Unit {
+    /// Sitzt auf einem Pferd.
+    pub fn mounted(&self) -> bool {
+        self.mounted
+    }
+
     pub(crate) fn new(id: u32, owner: u32, kind: UnitKind, pos: (f32, f32)) -> Unit {
         Unit {
             id,
@@ -126,6 +144,10 @@ impl Unit {
             attack_cooldown: 0.0,
             attack_order: None,
             chase_timer: 0.0,
+            mounted: false,
+            horse_damage: 0,
+            down: 0.0,
+            mount_at: None,
             meal_in: None,
             hungry: false,
             speed_cap: None,
@@ -379,7 +401,12 @@ impl World {
             .iter()
             .filter(|r| r.building == kind)
             .flat_map(|r| r.inputs.iter().map(|i| (i.good, inputs)))
-            .collect();
+            .collect::<BTreeMap<_, _>>();
+        // Pferdezucht: so viele Pferde passen hinein.
+        let mut limits = limits;
+        if let Some(n) = self.economy.building(kind).map(|d| d.horse_capacity).filter(|&n| n > 0) {
+            limits.insert(protocol::Good::Horse, n);
+        }
         (outputs, limits)
     }
 
@@ -1018,7 +1045,7 @@ impl World {
         let Some(pos) = self.buildings.iter().position(|b| b.id == id) else { return };
         let b = self.buildings.remove(pos);
         if !b.training.is_empty() {
-            self.refund_training(b.owner, &b.training);
+            self.refund_training(b.owner, &b.training, (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0));
         }
         self.work.remove(&id);
         self.dirty_buildings.remove(&id);
@@ -1160,9 +1187,10 @@ impl World {
         if !reachable {
             return false;
         }
-        // Ein Laufbefehl hebt einen Angriffsbefehl auf.
+        // Ein Laufbefehl hebt einen Angriffsbefehl auf (und den Weg zum Pferd).
         for &k in &chosen {
             self.units[k].attack_order = None;
+            self.units[k].mount_at = None;
         }
         let mut orders = Vec::new();
         for (&k, &spot) in chosen.iter().zip(&spots) {
@@ -1377,6 +1405,7 @@ impl World {
         self.step_progress(dt);
         self.step_gates();
         self.step_army(dt);
+        self.step_horses(dt);
         self.step_trade(dt);
         self.step_auto_trade(dt);
         self.step_combat(dt);
@@ -1387,6 +1416,7 @@ impl World {
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
         let king = self.economy.def.movement.king_speed;
         let worker = self.economy.def.movement.worker_speed;
+        let horse = self.economy.def.army.horse_speed;
         let hungry_speed = self.hungry_speed();
         let soldier: Vec<f32> = self.units.iter().map(|u| if u.kind.is_soldier() { self.soldier_speed(u.owner, u.kind) } else { 0.0 }).collect();
         let nav = &self.map.nav;
@@ -1398,6 +1428,8 @@ impl World {
                 UnitKind::Worker => worker * if unit.hungry { hungry_speed } else { 1.0 },
                 UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer => soldier[k],
             };
+            // Zu Pferd mindestens so schnell wie das Pferd; nach einem Sturz liegt man still.
+            let full = if unit.down > 0.0 { 0.0 } else if unit.mounted { full.max(horse) } else { full };
             let speed = unit.speed_cap.map_or(full, |c| full.min(c));
             if unit.path.is_empty() {
                 unit.speed_cap = None;
@@ -1464,6 +1496,9 @@ impl World {
                 on_wall: u.on_wall,
                 inside: self.inside(u),
                 hp: self.unit_hp(u),
+                mounted: u.mounted,
+                horse_hp: if u.mounted { self.economy.def.army.horse_hp.saturating_sub(u.horse_damage) } else { 0 },
+                down: u.down,
             })
             .collect()
     }
@@ -1499,6 +1534,11 @@ impl World {
             (None, None) if walking && u.is_civilian() => {
                 target_building = u.home;
                 UnitActivity::Returning
+            }
+            (None, None) if u.down > 0.0 => UnitActivity::Fallen,
+            (None, None) if u.mount_at.is_some() => {
+                target_building = u.mount_at;
+                UnitActivity::ToHorse
             }
             (None, None) if walking => UnitActivity::Walking,
             (None, None) if u.on_wall => UnitActivity::OnWall,
