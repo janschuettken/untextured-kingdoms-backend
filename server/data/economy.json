@@ -2378,6 +2378,8 @@
     "melee_range": 2,
     "civilian_respawn_seconds": 30,
     "enemy_block_radius": 50,
+    "alert_radius": 80,
+    "alert_seconds": 30,
     "horse_hp": 40,
     "horse_speed": 2.4,
     "fall_damage": 15,

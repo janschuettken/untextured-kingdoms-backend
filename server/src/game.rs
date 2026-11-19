@@ -546,6 +546,8 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
                 r = ticks.recv() => match r {
                     // Lieferungen unter Verbündeten sehen nur Absender und Empfänger.
                     Ok(ServerMsg::Shipment { from, to, .. }) if from != player_id && to != player_id => continue,
+                    // Warnungen nur an den Betroffenen.
+                    Ok(ServerMsg::Alert { player, .. }) if player != player_id => continue,
                     Ok(m) => m,
                     // Zu langsam gelesen: Ereignisse (gebaut, abgerissen …) sind verloren
                     // und der Client wäre dauerhaft falsch. Verbindung schließen, der

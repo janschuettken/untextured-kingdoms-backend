@@ -320,8 +320,12 @@ impl World {
             self.events.push(ServerMsg::Shots { shots });
         }
         // Gebäude: Schaden, bei 0 eingerissen.
+        let mut building_alerts = Vec::new();
         for (id, attack) in building_hits {
             let Some(b) = self.buildings.iter_mut().find(|b| b.id == id) else { continue };
+            if attack > 0 && b.hp > 0 {
+                building_alerts.push((b.owner, b.kind, (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0)));
+            }
             b.hp = b.hp.saturating_sub(attack);
             // Der Bergfried bleibt als Ruine stehen: nur die Tür ist weg, jeder kann hinauf.
             if b.hp == 0 && b.kind == BuildingKind::Keep {
@@ -332,6 +336,9 @@ impl World {
             } else {
                 self.dirty_buildings.insert(id);
             }
+        }
+        for (owner, kind, at) in building_alerts {
+            self.alert_building_attacked(owner, kind, at);
         }
         // Deckung: Schüsse auf Einheiten oben auf Gebäuden gehen teils daneben.
         let mut landed = Vec::with_capacity(hits.len());

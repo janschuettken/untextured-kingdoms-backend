@@ -246,7 +246,8 @@ mod tests {
         let farm = farm_with_horses(&mut w, 1);
         w.units.push(Unit::new(500, 1, UnitKind::Swordsman, (25.0, 25.0)));
         w.units.push(Unit::new(501, 1, UnitKind::Archer, (25.0, 26.0)));
-        // Bogenschützen reiten nicht (Grundeinstellung).
+        // Bogenschützen reiten hier nicht (fest gesetzt, unabhängig vom Balancing).
+        w.economy.def.units.iter_mut().find(|u| u.kind == UnitKind::Archer).unwrap().can_ride = false;
         assert_eq!(w.order_mount(1, &[501]).unwrap_err().key, "error.cannot_ride");
         assert_eq!(w.order_mount(1, &[500]).unwrap(), 1);
         // Das eine Pferd ist versprochen.

@@ -37,7 +37,7 @@ fn default_king(speed: f32) -> UnitDef {
 /// Was eine ältere Balancing-Datei noch nicht kennt (neue Waren, neue Gebäude samt
 /// ihren Rezepten), kommt aus den eingebauten Werten dazu. Vorhandene Werte bleiben.
 fn fill_from_builtin(def: &mut EconomyDef) {
-    let Ok(builtin) = serde_json::from_str::<EconomyDef>(ECONOMY_JSON) else { return };
+    let Some(builtin) = builtin_def() else { return };
     for g in &builtin.goods {
         if !def.goods.contains(g) {
             def.goods.push(*g);
@@ -56,6 +56,14 @@ fn fill_from_builtin(def: &mut EconomyDef) {
         }
         def.buildings.push(b.clone());
     }
+}
+
+/// Die eingebaute economy.json, roh gelesen (ohne Ergänzungen), aber wie `Economy::parse`
+/// über `migrate`: so stört weder ein älteres Format noch ein doppelter Schlüssel.
+fn builtin_def() -> Option<EconomyDef> {
+    let mut value: serde_json::Value = serde_json::from_str(ECONOMY_JSON).ok()?;
+    migrate(&mut value);
+    serde_json::from_value(value).ok()
 }
 
 /// Aktueller Aufbau der Balancing-Datei.
@@ -346,6 +354,12 @@ impl Economy {
         if !(army.fall_seconds >= 0.0 && army.fall_seconds.is_finite()) {
             return Err("Heer: fall_seconds darf nicht negativ sein".into());
         }
+        if !(army.alert_radius >= 0.0 && army.alert_radius.is_finite()) {
+            return Err("Heer: alert_radius darf nicht negativ sein (0 = aus)".into());
+        }
+        if !(army.alert_seconds >= 0.0 && army.alert_seconds.is_finite()) {
+            return Err("Heer: alert_seconds darf nicht negativ sein".into());
+        }
         if !(army.enemy_block_radius >= 0.0 && army.enemy_block_radius.is_finite()) {
             return Err("Heer: enemy_block_radius darf nicht negativ sein (0 = aus)".into());
         }
@@ -439,7 +453,7 @@ fn add_apothecary(def: &mut EconomyDef) {
     if !(missing_good || missing_building || missing_unit) {
         return;
     }
-    let Ok(base) = serde_json::from_str::<EconomyDef>(ECONOMY_JSON) else { return };
+    let Some(base) = builtin_def() else { return };
     if missing_good {
         def.goods.push(Good::Salve);
         for b in def.buildings.iter_mut().filter(|b| b.kind == BuildingKind::Armory && !b.hub_goods.is_empty()) {
