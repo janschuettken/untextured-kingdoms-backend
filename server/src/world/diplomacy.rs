@@ -31,6 +31,13 @@ pub struct Delivery {
     pub hub: u32,
     pub goods: Option<GoodAmount>,
     pub taler: u32,
+    /// Beute aus dem Lager dieses (ausgeschiedenen) Spielers; der Karren gehört dem Sieger.
+    #[serde(default)]
+    pub loot_from: Option<u32>,
+    /// Der Besitzer hat den Karren selbst geschickt: er fährt erst diese Strecke (und ihre
+    /// Wegpunkte) zu Ende und sucht danach wieder den Weg zum Lager.
+    #[serde(default)]
+    pub steered: bool,
 }
 
 impl World {
@@ -123,7 +130,7 @@ impl World {
         dst.taler = dst.taler.saturating_add(taler);
         self.dirty_stocks.insert(from);
         self.dirty_stocks.insert(to);
-        self.events.push(ServerMsg::Shipment { from, to, goods: list, taler, arrived: true, carts: 0 });
+        self.events.push(ServerMsg::Shipment { from, to, goods: list, taler, arrived: true, carts: 0, loot: false });
         Ok(())
     }
 
@@ -163,11 +170,68 @@ impl World {
             u.path = path;
             u.target = Some(door);
             u.carrying = good;
-            u.trade = Some(Delivery { to, hub, goods: good, taler: money });
+            u.trade = Some(Delivery { to, hub, goods: good, taler: money, loot_from: None, steered: false });
             self.units.push(u);
         }
-        self.events.push(ServerMsg::Shipment { from, to, goods: list, taler, arrived: false, carts: n });
+        self.events.push(ServerMsg::Shipment { from, to, goods: list, taler, arrived: false, carts: n, loot: false });
         Ok(())
+    }
+
+    /// Beute: die Hälfte aller Waren und Taler des Besiegten geht an `to`, der seinen König
+    /// getötet hat, wie beim Handel (sofort oder mit Handelskarren, die `to` gehören und
+    /// die er steuern kann). Muss laufen, bevor die Gebäude des Besiegten verschwinden.
+    pub(super) fn send_loot(&mut self, from: u32, to: u32) {
+        let (Some(src), true) = (self.stocks.get(&from), self.stocks.contains_key(&to)) else { return };
+        let list: Vec<GoodAmount> =
+            src.state().goods.into_iter().map(|g| GoodAmount { good: g.good, amount: g.amount / 2 }).filter(|g| g.amount > 0).collect();
+        let taler = src.taler / 2;
+        if list.is_empty() && taler == 0 {
+            return;
+        }
+        if self.trade_mode == TradeMode::Instant {
+            // Beute passt immer ins Lager (wie Ware, die ein Handelskarren nicht abladen kann).
+            let dst = self.stocks.get_mut(&to).expect("geprüft");
+            for g in &list {
+                dst.add_unlimited(g.good, g.amount);
+            }
+            dst.taler = dst.taler.saturating_add(taler);
+            self.dirty_stocks.insert(to);
+            self.events.push(ServerMsg::Shipment { from, to, goods: list, taler, arrived: true, carts: 0, loot: true });
+            return;
+        }
+        let cap = self.economy.def.transport.cart_capacity.max(1);
+        let mut loads: Vec<(Option<GoodAmount>, u32)> = Vec::new();
+        for g in &list {
+            let mut left = g.amount;
+            while left > 0 {
+                let n = left.min(cap);
+                loads.push((Some(GoodAmount { good: g.good, amount: n }), 0));
+                left -= n;
+            }
+        }
+        match loads.first_mut() {
+            Some(first) => first.1 = taler,
+            None => loads.push((None, taler)),
+        }
+        let mut n = 0;
+        for (good, money) in loads {
+            let key = good.map(|g| g.good);
+            let Some(start) = self.trade_start(from, key) else { continue };
+            // Kein Weg (noch)? Dann sucht der Karren ihn später selbst (`step_trade`).
+            let (hub, door, path) = self.trade_route(to, start, key).unwrap_or((0, start, Vec::new()));
+            let id = self.next_unit_id;
+            self.next_unit_id += 1;
+            let mut u = Unit::new(id, to, UnitKind::TradeCart, start);
+            u.path = path;
+            u.target = Some(door);
+            u.carrying = good;
+            u.trade = Some(Delivery { to, hub, goods: good, taler: money, loot_from: Some(from), steered: false });
+            self.units.push(u);
+            n += 1;
+        }
+        if n > 0 {
+            self.events.push(ServerMsg::Shipment { from, to, goods: list, taler, arrived: false, carts: n, loot: true });
+        }
     }
 
     /// Wo ein Handelskarren des Absenders losfährt: am Lager, in dem die Ware liegt.
@@ -218,8 +282,19 @@ impl World {
                 arrived.push(k);
                 continue;
             }
-            // Ziel weg oder Weg versperrt (z. B. Tor zu): ab und zu neu versuchen.
+            let steered = d.steered;
             let u = &mut self.units[k];
+            if steered {
+                // Vom Besitzer geschickt: noch Wegpunkte offen? Sonst gleich wieder Richtung Lager.
+                if !u.waypoints.is_empty() {
+                    continue;
+                }
+                if let Some(d) = &mut u.trade {
+                    d.steered = false;
+                }
+                u.cooldown = 0.0;
+            }
+            // Ziel weg oder Weg versperrt (z. B. Tor zu): ab und zu neu versuchen.
             u.cooldown -= dt;
             if u.cooldown > 0.0 {
                 continue;
@@ -265,7 +340,8 @@ impl World {
             self.dirty_stocks.insert(from);
         }
         if !got.is_empty() || d.taler > 0 {
-            self.events.push(ServerMsg::Shipment { from, to: d.to, goods: got, taler: d.taler, arrived: true, carts: 1 });
+            let (from, loot) = d.loot_from.map_or((from, false), |p| (p, true));
+            self.events.push(ServerMsg::Shipment { from, to: d.to, goods: got, taler: d.taler, arrived: true, carts: 1, loot });
         }
     }
 }
@@ -347,15 +423,21 @@ mod tests {
         assert_eq!(amount(&w, 1, Good::Stone), s1 - n, "beim Losfahren abgezogen");
         assert_eq!(amount(&w, 2, Good::Stone), s2, "noch nicht da");
         assert_eq!(w.units.iter().filter(|u| u.kind == UnitKind::TradeCart).count(), 2);
-        // Befehle gelten nicht für Handelskarren.
+        // Der Absender kann einen Karren selbst schicken (Umweg); danach fährt er weiter zum Lager.
         let cart = w.units.iter().find(|u| u.kind == UnitKind::TradeCart).unwrap().id;
-        assert!(!w.order_move(1, &[cart], (1.5, 1.5)));
+        assert!(w.order_move(1, &[cart], (40.5, 10.5)));
+        assert!(!w.order_move(2, &[cart], (1.5, 1.5)), "nur der Besitzer");
+        let mut detour = false;
         for _ in 0..20 * 120 {
             w.step(0.05);
+            if let Some(u) = w.units.iter().find(|u| u.id == cart) {
+                detour |= (u.pos.0 - 40.5).hypot(u.pos.1 - 10.5) < 1.0;
+            }
             if !w.units.iter().any(|u| u.kind == UnitKind::TradeCart) {
                 break;
             }
         }
+        assert!(detour, "Umweg gefahren");
         assert!(!w.units.iter().any(|u| u.kind == UnitKind::TradeCart), "Karren sind angekommen und weg");
         assert_eq!(amount(&w, 2, Good::Stone), s2 + n);
         // Spielstand mit fahrenden Karren lässt sich speichern und laden.
@@ -367,5 +449,46 @@ mod tests {
         assert!(l.allied(1, 2));
         assert_eq!(l.trade_mode(), TradeMode::Carts);
         assert!(l.units.iter().any(|u| u.kind == UnitKind::TradeCart && u.trade.is_some()));
+    }
+
+    #[test]
+    fn beute_geht_an_den_sieger() {
+        let mut w = two();
+        w.set_trade_mode(TradeMode::Instant);
+        w.admin_give(2, &[GoodAmount { good: Good::Stone, amount: 40 }], 60);
+        let (s1, s2) = (amount(&w, 1, Good::Stone), amount(&w, 2, Good::Stone));
+        let (t1, t2) = (w.stocks[&1].taler, w.stocks[&2].taler);
+        w.eliminate(2, Some(1));
+        assert_eq!(amount(&w, 1, Good::Stone), s1 + s2 / 2, "halbe Steine, auch über den Lagerplatz hinaus");
+        assert_eq!(w.stocks[&1].taler, t1 + t2 / 2, "halbe Taler");
+        assert!(w.take_events().iter().any(|e| matches!(e, protocol::ServerMsg::Shipment { from: 2, to: 1, loot: true, .. })));
+    }
+
+    #[test]
+    fn beute_als_karawane_des_siegers() {
+        let mut w = two();
+        w.set_trade_mode(TradeMode::Carts);
+        w.admin_give(2, &[GoodAmount { good: Good::Stone, amount: 40 }], 60);
+        let (s1, s2) = (amount(&w, 1, Good::Stone), amount(&w, 2, Good::Stone));
+        w.eliminate(2, Some(1));
+        assert_eq!(amount(&w, 1, Good::Stone), s1, "noch unterwegs");
+        let carts: Vec<u32> = w.units.iter().filter(|u| u.kind == UnitKind::TradeCart).map(|u| u.id).collect();
+        assert!(!carts.is_empty());
+        assert!(w.units.iter().filter(|u| u.kind == UnitKind::TradeCart).all(|u| u.owner == 1), "gehören dem Sieger");
+        assert!(w.order_move(1, &carts, (30.5, 30.5)), "Sieger kann sie steuern");
+        // Ein Karren wird unterwegs zerstört: seine Ladung ist weg.
+        let lost = w.units.iter().find(|u| u.kind == UnitKind::TradeCart && u.carrying.is_some_and(|g| g.good == Good::Stone)).map(|u| (u.id, u.carrying.unwrap().amount));
+        let lost_amount = lost.map(|(id, n)| {
+            w.units.retain(|u| u.id != id);
+            n
+        });
+        for _ in 0..20 * 200 {
+            w.step(0.05);
+            if !w.units.iter().any(|u| u.kind == UnitKind::TradeCart) {
+                break;
+            }
+        }
+        assert!(!w.units.iter().any(|u| u.kind == UnitKind::TradeCart), "alle angekommen");
+        assert_eq!(amount(&w, 1, Good::Stone), s1 + s2 / 2 - lost_amount.unwrap_or(0));
     }
 }

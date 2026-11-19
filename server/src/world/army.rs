@@ -224,14 +224,18 @@ impl World {
         true
     }
 
-    /// Alle `upkeep_seconds` bekommt jeder Soldat seinen Sold. Reicht das Geld
-    /// nicht, wird alles Geld verteilt und die Soldaten laufen langsamer.
+    /// Alle `upkeep_seconds` bekommt jeder Soldat seinen Sold und sein Essen (`food`, aus den
+    /// Waren in `population.food`, von der am meisten da ist). Reicht das Geld nicht, wird alles
+    /// Geld verteilt und die Soldaten laufen langsamer; reicht das Essen nicht, sind sie hungrig
+    /// und laufen ebenfalls langsamer (`population.hungry_speed_percent`).
     fn step_payday(&mut self, dt: f32) {
         let every = self.economy.def.army.upkeep_seconds;
         if every <= 0.0 {
             self.unpaid.clear();
+            self.army_hungry.clear();
             return;
         }
+        let food_goods = self.economy.def.population.food.clone();
         let players: Vec<u32> = self.stocks.keys().copied().collect();
         for p in players {
             let timer = self.pay_timer.entry(p).or_insert(0.0);
@@ -240,43 +244,72 @@ impl World {
                 continue;
             }
             *timer -= every;
-            let upkeep = self.army_state(p).upkeep;
+            let ArmyState { upkeep, food, .. } = self.army_state(p);
+            let stock = self.stocks.get_mut(&p).expect("Spieler hat Vorrat");
             if upkeep == 0 {
                 self.unpaid.remove(&p);
-                continue;
-            }
-            let stock = self.stocks.get_mut(&p).expect("Spieler hat Vorrat");
-            let was = self.unpaid.contains(&p);
-            if stock.taler >= upkeep {
+            } else if stock.taler >= upkeep {
                 stock.taler -= upkeep;
                 self.unpaid.remove(&p);
             } else {
                 stock.taler = 0;
                 self.unpaid.insert(p);
             }
-            if was != self.unpaid.contains(&p) || upkeep > 0 {
-                self.dirty_stocks.insert(p);
+            let mut eaten = 0;
+            while eaten < food {
+                let Some(&good) = food_goods.iter().filter(|g| stock.amount(**g) > 0).max_by_key(|g| stock.amount(**g)) else { break };
+                let take = stock.amount(good).min(food - eaten);
+                stock.take_all(&[GoodAmount { good, amount: take }]);
+                eaten += take;
             }
+            if eaten < food {
+                self.army_hungry.insert(p);
+            } else {
+                self.army_hungry.remove(&p);
+            }
+            self.dirty_stocks.insert(p);
         }
     }
 
     /// Soldaten, Sold und ob er zuletzt gereicht hat.
     pub(super) fn army_state(&self, player: u32) -> ArmyState {
-        let mut s = ArmyState { soldiers: 0, upkeep: 0, unpaid: self.unpaid.contains(&player) };
+        let mut s = ArmyState {
+            soldiers: 0,
+            upkeep: 0,
+            unpaid: self.unpaid.contains(&player),
+            food: 0,
+            hungry: self.army_hungry.contains(&player),
+        };
         for u in self.units.iter().filter(|u| u.owner == player && u.kind.is_soldier()) {
             s.soldiers += 1;
-            s.upkeep += self.economy.unit(u.kind).map_or(0, |d| d.upkeep);
+            if let Some(d) = self.economy.unit(u.kind) {
+                s.upkeep += d.upkeep;
+                s.food += d.food;
+            }
         }
         s
     }
 
-    /// Tempo eines Soldaten (langsamer, wenn der Sold ausbleibt).
+    /// Tempo eines Soldaten (langsamer, wenn der Sold oder das Essen ausbleibt).
     pub(super) fn soldier_speed(&self, owner: u32, kind: UnitKind) -> f32 {
-        let base = self.economy.unit(kind).map_or(1.0, |u| u.speed);
+        let mut speed = self.economy.unit(kind).map_or(1.0, |u| u.speed);
         if self.unpaid.contains(&owner) {
-            base * self.economy.def.army.unpaid_speed_percent as f32 / 100.0
+            speed *= self.economy.def.army.unpaid_speed_percent as f32 / 100.0;
+        }
+        if self.army_hungry.contains(&owner) {
+            speed *= self.economy.def.population.hungry_speed_percent as f32 / 100.0;
+        }
+        speed
+    }
+
+    /// Volles Lauftempo einer Einheit, die Befehle bekommt (König, Soldaten).
+    pub(super) fn base_speed(&self, u: &Unit) -> f32 {
+        if u.kind == UnitKind::King {
+            self.economy.def.movement.king_speed
+        } else if u.kind == UnitKind::TradeCart {
+            self.economy.def.transport.cart_speed
         } else {
-            base
+            self.soldier_speed(u.owner, u.kind)
         }
     }
 
@@ -291,7 +324,7 @@ impl World {
 mod tests {
     use protocol::{BuildingKind, Good, GoodAmount, UnitKind};
 
-    use crate::{economy::Economy, map::GameMap, world::World};
+    use crate::{economy::Economy, map::GameMap, world::{Unit, World}};
 
     fn world() -> World {
         let row = "0".repeat(30);
@@ -424,5 +457,64 @@ mod tests {
         }
         assert!(!w.stock_state(1).army.unpaid);
         assert_eq!(w.soldier_speed(1, UnitKind::Spearman), full);
+    }
+
+    #[test]
+    fn soldaten_essen_am_zahltag_sonst_langsamer() {
+        let mut w = world();
+        for u in w.economy.def.units.iter_mut() {
+            if u.kind == UnitKind::Spearman {
+                u.food = 2;
+            }
+        }
+        w.units.push(Unit::new(50_001, 1, UnitKind::Spearman, (20.5, 20.5)));
+        w.units.push(Unit::new(50_002, 1, UnitKind::Spearman, (21.5, 20.5)));
+        assert_eq!(w.stock_state(1).army.food, 4);
+        // Erst alles Essen weg, dann genau 5 hinein.
+        for g in w.economy.def.population.food.clone() {
+            let stock = w.stocks.get_mut(&1).unwrap();
+            let n = stock.amount(g);
+            stock.take_all(&[GoodAmount { good: g, amount: n }]);
+        }
+        let food = w.economy.def.population.food[0];
+        w.admin_give(1, &[GoodAmount { good: food, amount: 5 }], 1000);
+        let before = w.stocks[&1].amount(food);
+        let every = w.economy.def.army.upkeep_seconds;
+        for _ in 0..(every * 20.0) as usize + 1 {
+            w.step(0.05);
+        }
+        assert_eq!(w.stocks[&1].amount(food), before - 4);
+        assert!(!w.stock_state(1).army.hungry);
+        for _ in 0..(every * 20.0) as usize + 1 {
+            w.step(0.05);
+        }
+        assert!(w.stock_state(1).army.hungry, "nur noch 1 übrig");
+        let full = w.economy.unit(UnitKind::Spearman).unwrap().speed;
+        assert!(w.soldier_speed(1, UnitKind::Spearman) < full);
+    }
+
+    #[test]
+    fn gruppe_laeuft_im_tempo_der_langsamsten_doppelbefehl_jeder_so_schnell_er_kann() {
+        let mut w = world();
+        let slow = w.economy.unit(UnitKind::Crossbowman).unwrap().speed;
+        let fast = w.economy.unit(UnitKind::Spearman).unwrap().speed;
+        assert!(slow < fast, "Testannahme: Armbrust langsamer als Speer");
+        w.units.push(Unit::new(51_001, 1, UnitKind::Spearman, (5.5, 20.5)));
+        w.units.push(Unit::new(51_002, 1, UnitKind::Crossbowman, (5.5, 22.5)));
+        let x = |w: &World, id| w.units.iter().find(|u| u.id == id).unwrap().pos.0;
+        assert!(w.order_move(1, &[51_001, 51_002], (25.5, 21.5)));
+        for _ in 0..40 {
+            w.step(0.05);
+        }
+        assert!((x(&w, 51_001) - x(&w, 51_002)).abs() < 0.2, "zusammen");
+        assert!(w.order_move_as(1, &[51_001, 51_002], (25.5, 21.5), true));
+        for _ in 0..40 {
+            w.step(0.05);
+        }
+        assert!(x(&w, 51_001) - x(&w, 51_002) > 0.3, "Speerträger vorn");
+        // Einzeln: volles Tempo.
+        w.units.push(Unit::new(51_003, 1, UnitKind::Spearman, (5.5, 10.5)));
+        w.order_move(1, &[51_003], (25.5, 10.5));
+        assert!(w.units.iter().find(|u| u.id == 51_003).unwrap().speed_cap.is_none());
     }
 }

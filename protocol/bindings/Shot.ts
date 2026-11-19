@@ -4,4 +4,12 @@ import type { UnitKind } from "./UnitKind";
 /**
  * Ein Schuss: von wo nach wo (Feld-Koordinaten), wer schoss und womit.
  */
-export type Shot = { from: [number, number], to: [number, number], from_wall: boolean, to_wall: boolean, kind: UnitKind, };
+export type Shot = { from: [number, number], to: [number, number], from_wall: boolean, to_wall: boolean, kind: UnitKind, 
+/**
+ * Höhe (Welt) am Start und am Ziel.
+ */
+from_h: number, to_h: number, 
+/**
+ * Wurfbahn: Steigung beim Abschuss (tan) und Reichweite des Schützen. `None` = gerade Linie.
+ */
+arc: [number, number] | null, };

@@ -27,7 +27,7 @@ use tracing::debug;
 
 use crate::world::{level_cost, World};
 use layout::{GateSpot, Layout};
-use attack::Campaign;
+use attack::{Campaign, Relief};
 use protocol::AiPersonalities;
 pub use profile::Profile;
 
@@ -40,6 +40,9 @@ pub struct Seat {
     pub level: AiLevel,
     /// Id des Charakters (leer = der erste).
     pub personality: String,
+    /// Eigene Regler für dieses Spiel (0 bis 100), sonst die des Charakters.
+    pub daring: Option<u8>,
+    pub helpfulness: Option<u8>,
 }
 
 /// So lange (Spielsekunden) lässt er ein Gebäude aus, für das er keinen Platz gefunden hat.
@@ -60,6 +63,18 @@ const SPARE_TALER: u32 = 80;
 const SPARE_BATCH: u32 = 15;
 /// Soldaten, die weiter als so viele Felder vom Sammelpunkt stehen, holt er zurück.
 const RALLY_SLACK: f32 = 7.0;
+/// Hilfe für Verbündete: so viel stärker als die Angreifer schickt er höchstens.
+const RELIEF_MARGIN: f32 = 1.5;
+/// So lange bleibt die Hilfe höchstens weg.
+const RELIEF_SECONDS: f32 = 240.0;
+/// Hilfe kehrt um, wenn weniger als dieser Anteil übrig ist.
+const RELIEF_RETREAT: f32 = 0.4;
+/// So oft schickt er einem bedrängten Verbündeten Waren.
+const AID_SECONDS: f32 = 120.0;
+/// So viel Essen jeder Sorte behält er.
+const AID_FOOD_RESERVE: u32 = 30;
+/// So viele Taler behält er mindestens.
+const AID_TALER_RESERVE: u32 = 100;
 
 /// Ein Computergegner in einem laufenden Spiel.
 #[derive(Debug, Clone)]
@@ -102,11 +117,17 @@ pub struct Computer {
     /// Ist die eigene Burg zu (alle paar Sekunden neu geprüft)?
     closed: bool,
     next_closed_check: f32,
+    /// Seit wann eine Welle bereitsteht, die er für zu schwach hält.
+    weak_since: Option<f32>,
+    /// Truppen, die einem Verbündeten helfen.
+    relief: Option<Relief>,
+    /// Frühestens dann wieder Waren an einen bedrängten Verbündeten.
+    next_aid: f32,
 }
 
 impl Computer {
     pub fn new(seat: Seat, personalities: &AiPersonalities, economy: &Economy) -> Computer {
-        let profile = Profile::build(seat.level, personality::find(personalities, &seat.personality), economy);
+        let profile = Profile::for_seat(&seat, personalities, economy);
         let next_attack = profile.attack.as_ref().map_or(f32::MAX, |a| a.first_minutes * 60.0);
         Computer {
             player: seat.player,
@@ -120,6 +141,9 @@ impl Computer {
             next_unit: 0,
             road_target: 0,
             campaign: None,
+            weak_since: None,
+            relief: None,
+            next_aid: 0.0,
             next_attack,
             layout: None,
             next_seal: 0.0,
@@ -138,13 +162,13 @@ impl Computer {
     #[cfg(test)]
     pub fn with_level(player: u32, level: AiLevel, economy: &Economy) -> Computer {
         let all = AiPersonalities { personalities: vec![personality::neutral()] };
-        Computer::new(Seat { player, level, personality: String::new() }, &all, economy)
+        Computer::new(Seat { player, level, personality: String::new(), daring: None, helpfulness: None }, &all, economy)
     }
 
     /// Charaktere wurden im Editor geändert: Profil neu, alles andere bleibt.
     pub fn reconfigure(&mut self, personalities: &AiPersonalities, economy: &Economy) {
         self.layout = None;
-        self.profile = Profile::build(self.seat.level, personality::find(personalities, &self.seat.personality), economy);
+        self.profile = Profile::for_seat(&self.seat, personalities, economy);
         if self.profile.attack.is_none() {
             self.next_attack = f32::MAX;
         } else if self.next_attack == f32::MAX {
@@ -239,30 +263,36 @@ impl Computer {
         self.train(world, &stock, &mut cmds);
         self.guard_king(world, &mut cmds);
         let defending = self.defend(world, layout, &mut cmds);
-        if !defending {
+        if defending {
+            // Daheim brennt es: wer beim Verbündeten hilft, kommt mit zur Verteidigung.
+            self.relief = None;
+        } else {
+            self.help_allies(world, layout, &mut cmds);
             self.attack(world, layout, &mut cmds);
         }
+        self.aid(world, &stock, &mut cmds);
         self.rally(world, layout, &mut cmds);
         self.track_shortage(world);
-        // Mit Feinden in der Nähe darf man dort nicht bauen, ausbauen oder reparieren.
-        cmds.retain(|m| self.build_spot(world, m).is_none_or(|at| !world.enemy_near(self.player, at)));
+        // Steht ein Feind zu nah, lehnt der Server Bauen, Ausbauen und Reparieren ab: gar nicht erst schicken.
+        cmds.retain(|c| self.no_enemy_near(world, c));
         cmds
     }
 
-    /// Wo ein Bau-, Ausbau- oder Reparaturbefehl wirkt (Mitte), sonst `None`.
-    fn build_spot(&self, world: &World, msg: &ClientMsg) -> Option<(f32, f32)> {
-        let center = |b: &protocol::BuildingState| (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
-        match msg {
-            ClientMsg::PlaceBuilding { kind, x, y, rotation, .. } => {
-                let d = world.economy.building(*kind)?;
-                let (w, h) = if rotation % 2 == 1 { (d.h, d.w) } else { (d.w, d.h) };
-                Some((*x as f32 + w as f32 / 2.0, *y as f32 + h as f32 / 2.0))
+    fn no_enemy_near(&self, world: &World, cmd: &ClientMsg) -> bool {
+        let at = match cmd {
+            ClientMsg::PlaceBuilding { kind, x, y, .. } => {
+                let (w, h) = world.economy.building(*kind).map_or((1, 1), |d| (d.w, d.h));
+                (*x as f32 + w as f32 / 2.0, *y as f32 + h as f32 / 2.0)
             }
             ClientMsg::UpgradeBuilding { building_id } | ClientMsg::RepairBuilding { building_id } => {
-                world.buildings.iter().find(|b| b.id == *building_id).map(center)
+                match world.buildings.iter().find(|b| b.id == *building_id) {
+                    Some(b) => (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0),
+                    None => return true,
+                }
             }
-            _ => None,
-        }
+            _ => return true,
+        };
+        world.check_no_enemy(self.player, at).is_ok()
     }
 
     /// Ein Befehl wurde abgelehnt (sollte selten sein, er prüft vorher).
@@ -480,7 +510,9 @@ impl Computer {
                 continue;
             };
             let Some(next) = def.levels.get(b.level as usize) else { continue };
-            if next.cost.iter().all(|c| have(stock, c.good) >= c.amount) {
+            // Mit Feinden in der Nähe darf nicht ausgebaut werden.
+            let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
+            if next.cost.iter().all(|c| have(stock, c.good) >= c.amount) && world.check_no_enemy(self.player, center).is_ok() {
                 cmds.push(ClientMsg::UpgradeBuilding { building_id: b.id });
             }
             return;
@@ -761,7 +793,7 @@ impl Computer {
             .buildings
             .iter()
             .filter(|b| b.owner == p)
-            .filter(|b| world.economy.building(b.kind).is_some_and(|d| d.category == BuildingCategory::Fortification && b.hp < d.max_hp * 3 / 4))
+            .filter(|b| world.economy.building(b.kind).is_some_and(|d| d.category == BuildingCategory::Fortification && b.hp < d.at(b.level).max_hp * 3 / 4))
             .min_by_key(|b| b.hp);
         if let Some(b) = damaged {
             if world.repair_cost(b).iter().all(|c| have(stock, c.good) >= c.amount) {
@@ -949,7 +981,9 @@ impl Computer {
         if units.is_empty() {
             return;
         }
-        let barracks: Vec<_> = world.buildings.iter().filter(|b| b.owner == self.player && b.kind == BuildingKind::Barracks).collect();
+        // Alles, was ausbildet: Kasernen, Apotheken.
+        let trains = |k: BuildingKind| world.economy.building(k).is_some_and(|d| d.levels.iter().any(|l| !l.trains.is_empty()));
+        let barracks: Vec<_> = world.buildings.iter().filter(|b| b.owner == self.player && trains(b.kind)).collect();
         let mut queued: u32 = barracks.iter().map(|b| b.training.len() as u32).sum();
         let queue_max = (world.economy.def.army.queue_max).min(self.profile.queue_per_barracks) as usize;
         // Mit Markt bleibt ein Rest Taler für den Handel liegen.
@@ -1009,7 +1043,7 @@ impl Computer {
                 debug!("Computer {p}: Welle gegen {} kehrt um", c.target);
                 if let Some(home) = rally_point(world, p, layout) {
                     if !c.units.is_empty() {
-                        cmds.push(ClientMsg::MoveUnits { unit_ids: c.units.clone(), x: home.0, y: home.1 });
+                        cmds.push(ClientMsg::MoveUnits { unit_ids: c.units.clone(), x: home.0, y: home.1, fast: None, append: None });
                     }
                 }
                 self.campaign = None;
@@ -1040,7 +1074,7 @@ impl Computer {
                     .map(|u| u.id)
                     .collect();
                 if !stuck.is_empty() {
-                    cmds.push(ClientMsg::MoveUnits { unit_ids: stuck, x: c.goal.0, y: c.goal.1 });
+                    cmds.push(ClientMsg::MoveUnits { unit_ids: stuck, x: c.goal.0, y: c.goal.1, fast: None, append: None });
                 }
             }
             return;
@@ -1050,8 +1084,11 @@ impl Computer {
         }
         // Welle: stehende Soldaten am Boden; die dem Bergfried nächsten bleiben als Wache.
         let Some(home) = rally_point(world, p, layout) else { return };
-        let mut ready: Vec<&crate::world::Unit> =
-            world.units.iter().filter(|u| u.owner == p && u.kind.is_soldier() && !u.is_moving() && !u.is_on_wall()).collect();
+        let mut ready: Vec<&crate::world::Unit> = world
+            .units
+            .iter()
+            .filter(|u| u.owner == p && u.kind.is_soldier() && !u.is_moving() && !u.is_on_wall() && !self.on_relief(u.id))
+            .collect();
         ready.sort_by(|x, y| {
             let d = |u: &crate::world::Unit| (u.pos.0 - home.0).hypot(u.pos.1 - home.1);
             d(x).total_cmp(&d(y))
@@ -1060,17 +1097,24 @@ impl Computer {
         // Später wieder nachsehen (nicht jede Überlegung die ganze Karte absuchen).
         self.next_attack = self.clock + 30.0;
         if (wave.len() as u32) < a.wave_min {
+            self.weak_since = None;
             return;
         }
         let power: f32 = wave.iter().map(|u| attack::unit_power(world, u.kind)).sum();
         let Some((target, enemy, goal)) = attack::choose_target(world, p, wave[0].pos) else { return };
-        if power < enemy * a.superiority {
-            debug!("Computer {p}: Welle {power:.0} zu schwach gegen Spieler {target} ({enemy:.0})");
+        // Mut: je länger die Welle schon bereitsteht, desto eher zieht sie auch gegen einen
+        // stärkeren Gegner los (bei vollem Mut sofort).
+        let since = *self.weak_since.get_or_insert(self.clock);
+        let waited = (self.clock - since) / a.cooldown_seconds.max(1.0);
+        let needed = attack::needed_ratio(a.superiority, self.profile.daring, waited);
+        if power < enemy * needed {
+            debug!("Computer {p}: Welle {power:.0} zu schwach gegen Spieler {target} ({enemy:.0}, braucht ×{needed:.2})");
             return;
         }
+        self.weak_since = None;
         debug!("Computer {p}: greift Spieler {target} an ({} Soldaten, {power:.0} gegen {enemy:.0})", wave.len());
         let units: Vec<u32> = wave.iter().map(|u| u.id).collect();
-        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: goal.0, y: goal.1 });
+        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: goal.0, y: goal.1, fast: None, append: None });
         self.campaign = Some(Campaign { target, units, start_power: power, goal, arrived: None, last_progress: self.clock });
     }
 
@@ -1083,11 +1127,11 @@ impl Computer {
             return;
         }
         let Some(keep) = world.buildings.iter().find(|b| b.owner == p && b.kind == BuildingKind::Keep) else { return };
-        if world.economy.building(BuildingKind::Keep).is_none_or(|d| d.garrison == 0) {
+        if world.economy.building(BuildingKind::Keep).is_none_or(|d| d.at(keep.level).garrison == 0) {
             return;
         }
         let c = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
-        cmds.push(ClientMsg::MoveUnits { unit_ids: vec![king.id], x: c.0, y: c.1 });
+        cmds.push(ClientMsg::MoveUnits { unit_ids: vec![king.id], x: c.0, y: c.1, fast: None, append: None });
     }
 
     /// Feinde nahe am Bergfried: alle Soldaten am Boden, die nicht mit einer Welle unterwegs
@@ -1129,6 +1173,133 @@ impl Computer {
         self.campaign.as_ref().is_some_and(|c| c.units.contains(&id))
     }
 
+    /// Hilft dieser Soldat gerade einem Verbündeten?
+    fn on_relief(&self, id: u32) -> bool {
+        self.relief.as_ref().is_some_and(|r| r.units.contains(&id))
+    }
+
+    /// Verbündeter in Not: einen Teil der freien Soldaten hinschicken. Nur so viele, wie
+    /// gegen die Angreifer nötig sind (anderthalbfach), höchstens `helpfulness` der freien
+    /// und nie die Wache daheim: sonst lockt ein Scheinangriff die ganze Armee weg.
+    fn help_allies(&mut self, world: &World, layout: &Layout, cmds: &mut Vec<ClientMsg>) {
+        let p = self.player;
+        if let Some(r) = &mut self.relief {
+            let alive: Vec<&crate::world::Unit> = world.units.iter().filter(|u| u.owner == p && r.units.contains(&u.id)).collect();
+            r.units = alive.iter().map(|u| u.id).collect();
+            let power: f32 = alive.iter().map(|u| attack::unit_power(world, u.kind)).sum();
+            let enemies = attack::threats(world, r.ally, p, THREAT_RADIUS);
+            let done = alive.is_empty() || enemies.is_empty() || world.is_eliminated(r.ally) || self.clock > r.until;
+            if done || power < r.start_power * RELIEF_RETREAT {
+                debug!("Computer {p}: Hilfe für Spieler {} kehrt heim", r.ally);
+                if let (Some(home), false) = (rally_point(world, p, layout), r.units.is_empty()) {
+                    cmds.push(ClientMsg::MoveUnits { unit_ids: r.units.clone(), x: home.0, y: home.1, fast: None, append: None });
+                }
+                self.relief = None;
+                return;
+            }
+            // Wer steht und keinen Feind nah hat, geht auf den nächsten Angreifer.
+            let target = enemies[0].pos;
+            let idle: Vec<u32> = alive
+                .iter()
+                .filter(|u| !u.is_moving() && enemies.iter().all(|e| (e.pos.0 - u.pos.0).hypot(e.pos.1 - u.pos.1) > 6.0))
+                .map(|u| u.id)
+                .collect();
+            if !idle.is_empty() {
+                cmds.push(ClientMsg::MoveUnits { unit_ids: idle, x: target.0, y: target.1, fast: None, append: None });
+            }
+            return;
+        }
+        if self.profile.helpfulness <= 0.0 {
+            return;
+        }
+        // Der Verbündete, dem es am schlimmsten geht.
+        let mut worst: Option<(u32, f32, (f32, f32))> = None;
+        for ally in world.players() {
+            if ally == p || !world.allied(p, ally) || world.is_eliminated(ally) {
+                continue;
+            }
+            let enemies = attack::threats(world, ally, p, THREAT_RADIUS);
+            let power: f32 = enemies.iter().map(|u| attack::unit_power(world, u.kind)).sum();
+            if power > 0.0 && worst.is_none_or(|w| power > w.1) {
+                worst = Some((ally, power, enemies[0].pos));
+            }
+        }
+        let Some((ally, threat, at)) = worst else { return };
+        let Some(home) = rally_point(world, p, layout) else { return };
+        let guard = self.profile.attack.as_ref().map_or(2, |a| a.home_guard) as usize;
+        let mut free: Vec<&crate::world::Unit> = world
+            .units
+            .iter()
+            .filter(|u| u.owner == p && u.kind.is_soldier() && !u.is_on_wall() && !self.on_campaign(u.id))
+            .collect();
+        // Die nächsten am Sammelpunkt bleiben als Wache, geschickt werden die dem Verbündeten nächsten.
+        free.sort_by(|x, y| {
+            let d = |u: &crate::world::Unit| (u.pos.0 - home.0).hypot(u.pos.1 - home.1);
+            d(x).total_cmp(&d(y))
+        });
+        let mut free: Vec<&crate::world::Unit> = free.into_iter().skip(guard).collect();
+        let cap = (free.len() as f32 * self.profile.helpfulness).floor() as usize;
+        if cap < 2 {
+            return;
+        }
+        free.sort_by(|x, y| {
+            let d = |u: &crate::world::Unit| (u.pos.0 - at.0).hypot(u.pos.1 - at.1);
+            d(x).total_cmp(&d(y))
+        });
+        let mut units = Vec::new();
+        let mut power = 0.0;
+        for u in free.into_iter().take(cap) {
+            if power >= threat * RELIEF_MARGIN {
+                break;
+            }
+            power += attack::unit_power(world, u.kind);
+            units.push(u.id);
+        }
+        debug!("Computer {p}: hilft Spieler {ally} mit {} Soldaten ({power:.0} gegen {threat:.0})", units.len());
+        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: at.0, y: at.1, fast: None, append: None });
+        self.relief = Some(Relief { ally, units, start_power: power, until: self.clock + RELIEF_SECONDS });
+    }
+
+    /// Waren für einen bedrängten Verbündeten: ein Teil (nach Hilfsbereitschaft) der Waffen,
+    /// Rüstungen, des Essens über einer Reserve und der Taler über der Reserve.
+    fn aid(&mut self, world: &World, stock: &StockState, cmds: &mut Vec<ClientMsg>) {
+        let p = self.player;
+        let h = self.profile.helpfulness;
+        if h <= 0.0 || self.clock < self.next_aid {
+            return;
+        }
+        let ally = world
+            .players()
+            .into_iter()
+            .filter(|&a| a != p && world.allied(p, a) && !world.is_eliminated(a))
+            .find(|&a| !attack::threats(world, a, p, THREAT_RADIUS).is_empty());
+        let Some(ally) = ally else { return };
+        let eco = &world.economy.def;
+        let mut goods: Vec<GoodAmount> = Vec::new();
+        let mut give = |good: Good, keep: u32, share: f32| {
+            let n = ((have(stock, good).saturating_sub(keep)) as f32 * share).floor() as u32;
+            if n > 0 && !goods.iter().any(|g| g.good == good) {
+                goods.push(GoodAmount { good, amount: n });
+            }
+        };
+        for u in eco.units.iter().filter(|u| u.kind.is_soldier()) {
+            for c in &u.cost {
+                give(c.good, 0, h * 0.5);
+            }
+        }
+        for &f in &eco.population.food {
+            give(f, AID_FOOD_RESERVE, h * 0.3);
+        }
+        let reserve = self.profile.trade.as_ref().map_or(AID_TALER_RESERVE, |t| t.taler_reserve.max(AID_TALER_RESERVE));
+        let taler = (stock.taler.saturating_sub(reserve) as f32 * h * 0.3).floor() as u32;
+        self.next_aid = self.clock + AID_SECONDS;
+        if goods.is_empty() && taler == 0 {
+            return;
+        }
+        debug!("Computer {p}: schickt Spieler {ally} Hilfe ({goods:?}, {taler} Taler)");
+        cmds.push(ClientMsg::SendGoods { to: ally, goods, taler });
+    }
+
     /// Stehende Soldaten: Fernkämpfer (falls im Profil) hinauf auf Bergfried und Türme, so
     /// viele dort Platz haben; alle anderen, die weit weg sind, zum Sammelpunkt.
     fn rally(&self, world: &World, layout: &Layout, cmds: &mut Vec<ClientMsg>) {
@@ -1153,7 +1324,7 @@ impl Computer {
             };
             let mut keep_post = None;
             for b in world.buildings.iter().filter(|b| b.owner == p) {
-                let room = world.economy.building(b.kind).map_or(0, |d| d.garrison as usize);
+                let room = world.economy.building(b.kind).map_or(0, |d| d.at(b.level).garrison as usize);
                 if room == 0 {
                     continue;
                 }
@@ -1176,14 +1347,14 @@ impl Computer {
         let idle: Vec<&crate::world::Unit> = world
             .units
             .iter()
-            .filter(|u| u.owner == p && u.kind.is_soldier() && !u.is_moving() && !u.is_on_wall() && !self.on_campaign(u.id))
+            .filter(|u| u.owner == p && u.kind.is_soldier() && !u.is_moving() && !u.is_on_wall() && !self.on_campaign(u.id) && !self.on_relief(u.id))
             .collect();
         let mut to_rally = Vec::new();
         for u in idle {
             if ranged(u.kind) {
                 if let Some(post) = posts.iter_mut().find(|(_, room)| *room > 0) {
                     post.1 -= 1;
-                    cmds.push(ClientMsg::MoveUnits { unit_ids: vec![u.id], x: post.0 .0, y: post.0 .1 });
+                    cmds.push(ClientMsg::MoveUnits { unit_ids: vec![u.id], x: post.0 .0, y: post.0 .1, fast: None, append: None });
                     continue;
                 }
             }
@@ -1192,7 +1363,7 @@ impl Computer {
             }
         }
         if !to_rally.is_empty() {
-            cmds.push(ClientMsg::MoveUnits { unit_ids: to_rally, x: point.0, y: point.1 });
+            cmds.push(ClientMsg::MoveUnits { unit_ids: to_rally, x: point.0, y: point.1, fast: None, append: None });
         }
     }
 }
@@ -1206,14 +1377,14 @@ impl Computer {
         let stairs = world
             .buildings
             .iter()
-            .any(|b| b.owner == p && def(b.kind).is_some_and(|d| d.stairs_from_level > 0 && b.level >= d.stairs_from_level && b.kind != BuildingKind::Keep));
+            .any(|b| b.owner == p && def(b.kind).is_some_and(|d| d.at(b.level).stairs && b.kind != BuildingKind::Keep));
         if !stairs {
             return Vec::new();
         }
         let walkway = |b: &&protocol::BuildingState| {
             b.owner == p
                 && matches!(b.kind, BuildingKind::Palisade | BuildingKind::Wall | BuildingKind::HighWall)
-                && def(b.kind).is_some_and(|d| d.walkway_from_level > 0 && b.level >= d.walkway_from_level)
+                && def(b.kind).is_some_and(|d| d.at(b.level).walkway)
         };
         let main = layout.gates().first().map_or(layout.mid, |g| (g.1 as i64, g.2 as i64));
         let mut tiles: Vec<(i64, i64)> = world.buildings.iter().filter(walkway).map(|b| (b.x as i64, b.y as i64)).collect();
@@ -1321,7 +1492,7 @@ fn in_passage(b: &protocol::BuildingState, x: u32, y: u32) -> bool {
 }
 
 fn is_road(world: &World, kind: BuildingKind) -> bool {
-    world.economy.building(kind).is_some_and(|d| d.road_speed_percent > 0)
+    world.economy.building(kind).is_some_and(|d| d.is_road())
 }
 
 /// Sammelpunkt: ein paar Felder vor dem Eingang des Bergfrieds, auf der Straße.

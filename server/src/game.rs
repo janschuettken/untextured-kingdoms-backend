@@ -5,7 +5,7 @@
 //! ob der Token zu einem Startplatz dieses Spiels gehört.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         Arc, Mutex,
@@ -43,8 +43,12 @@ const CASTLE_CHECK_SECONDS: u64 = 2;
 
 /// Ein verbundener Client.
 pub struct Client {
-    /// Welche Verbindung (bei zwei Fenstern desselben Spielers gewinnt die neue).
-    conn: u64,
+    /// Als welcher Spieler diese Verbindung spielt. Mehrere Verbindungen dürfen
+    /// denselben Spieler steuern (Admin „Spielen als“: zwei bauen an einer Burg).
+    player: u32,
+    /// Token des Browsers: dasselbe Fenster zweimal (gleicher Token, gleicher Spieler)
+    /// gibt es nicht, dann gewinnt das neue.
+    token: String,
     /// Direkter Kanal (Ticks und Nachrichten nur an diesen Spieler).
     tx: tokio::sync::mpsc::Sender<ServerMsg>,
     /// Sichtbereich in Feldern (x0, y0, x1, y1); `None` = alles.
@@ -68,11 +72,15 @@ pub struct Match {
     pub map_name: String,
     /// Kartentext beim Start (für Neues Spiel und zum Speichern).
     pub map_text: String,
-    pub clients: Mutex<HashMap<u32, Client>>,
+    /// Verbundene Clients je Verbindung (nicht je Spieler, siehe `Client::player`).
+    /// Ist niemand verbunden, ist das Spiel angehalten.
+    pub clients: Mutex<HashMap<u64, Client>>,
     /// Ereignisse für alle (Gebäude, Ressourcen). Ticks gehen pro Client.
     pub ticks: broadcast::Sender<ServerMsg>,
     /// Spieltempo in Prozent (100 = normal), vom Admin einstellbar.
     pub game_speed: AtomicU32,
+    /// Spieler, die gerade Pause gedrückt haben. Solange einer drin ist, steht das Spiel.
+    pub pauses: Mutex<BTreeSet<u32>>,
     /// Gesetzt, wenn das Spiel beendet wird: der Thread hört auf.
     pub stop: AtomicBool,
     next_conn: AtomicU64,
@@ -91,6 +99,7 @@ impl Match {
             clients: Mutex::new(HashMap::new()),
             ticks,
             game_speed: AtomicU32::new(speed),
+            pauses: Mutex::new(BTreeSet::new()),
             stop: AtomicBool::new(false),
             next_conn: AtomicU64::new(1),
             computers: Mutex::new(Vec::new()),
@@ -104,11 +113,16 @@ impl Match {
     }
 
     pub fn is_online(&self, player: u32) -> bool {
-        self.clients.lock().unwrap().contains_key(&player)
+        self.clients.lock().unwrap().values().any(|c| c.player == player)
     }
 
     pub fn online_players(&self) -> Vec<u32> {
-        self.clients.lock().unwrap().keys().copied().collect()
+        players_of(&self.clients.lock().unwrap())
+    }
+
+    /// Angehalten: kein Mensch verbunden (dann läuft die Welt nicht weiter) oder Tempo 0.
+    pub fn paused(&self) -> bool {
+        self.clients.lock().unwrap().is_empty() || self.effective_speed() == 0
     }
 
     /// Alle Clients rauswerfen (Spiel beendet): sie gehen zurück in die Lobby.
@@ -118,11 +132,42 @@ impl Match {
         }
     }
 
+    /// Tempo, mit dem die Welt läuft: 0, solange jemand Pause gedrückt hat.
+    pub fn effective_speed(&self) -> u32 {
+        if self.pauses.lock().unwrap().is_empty() {
+            self.game_speed.load(Ordering::Relaxed)
+        } else {
+            0
+        }
+    }
+
+    /// Pause eines Spielers setzen oder lösen und allen melden, wenn sich etwas ändert.
+    pub fn set_pause(&self, player: u32, paused: bool) {
+        let players: Vec<u32> = {
+            let mut p = self.pauses.lock().unwrap();
+            let changed = if paused { p.insert(player) } else { p.remove(&player) };
+            if !changed {
+                return;
+            }
+            p.iter().copied().collect()
+        };
+        info!("Pause von Spieler {player}: {paused}");
+        let _ = self.ticks.send(ServerMsg::Pauses { players });
+    }
+
     /// Neue Welt einsetzen und alle Clients neu laden lassen.
     pub fn replace_world(&self, world: World) {
         *self.world.lock().unwrap() = world;
         let _ = self.ticks.send(ServerMsg::Reload);
     }
+}
+
+/// Spieler-Nummern der verbundenen Clients, jede nur einmal.
+fn players_of(clients: &HashMap<u64, Client>) -> Vec<u32> {
+    let mut players: Vec<u32> = clients.values().map(|c| c.player).collect();
+    players.sort_unstable();
+    players.dedup();
+    players
 }
 
 /// Eigener Thread pro Spiel, damit ein großes Spiel die anderen nicht ausbremst.
@@ -177,6 +222,8 @@ fn game_loop(hub: Arc<Hub>, game: Arc<Game>, state: Arc<Match>) {
     let dt = Duration::from_secs(1) / TICK_RATE;
     let mut next = Instant::now();
     let mut tick: u64 = 0;
+    // Seit dem letzten Speichern weitergelaufen?
+    let mut dirty = false;
     info!("Spiel {} läuft (eigener Thread)", game.id);
     while !state.stop.load(Ordering::Relaxed) {
         next += dt;
@@ -187,6 +234,18 @@ fn game_loop(hub: Arc<Hub>, game: Arc<Game>, state: Arc<Match>) {
             // Zu weit hinterher (Rechner war beschäftigt): nicht nachholen.
             next = now;
         }
+        // Kein Mensch im Spiel: anhalten, damit niemandem etwas passiert, während er weg ist.
+        // Computergegner denken dann auch nicht. Einmal speichern, dann ruht alles.
+        if state.clients.lock().unwrap().is_empty() {
+            if dirty {
+                dirty = false;
+                if let Err(e) = hub.save_game(&game) {
+                    warn!("Spiel {}: Speichern beim Anhalten fehlgeschlagen: {e}", game.id);
+                }
+            }
+            continue;
+        }
+        dirty = true;
         tick += 1;
         if tick.is_multiple_of(AUTOSAVE_SECONDS * TICK_RATE as u64) {
             if let Err(e) = hub.save_game(&game) {
@@ -204,13 +263,15 @@ fn game_loop(hub: Arc<Hub>, game: Arc<Game>, state: Arc<Match>) {
 fn step(state: &Match, tick: u64) {
     let (units, stocks, paths, infos, castles) = {
         let mut world = state.world.lock().unwrap();
-        let speed = state.game_speed.load(Ordering::Relaxed) as f32 / 100.0;
+        let speed = state.effective_speed() as f32 / 100.0;
         let dt = speed / TICK_RATE as f32;
         // Computergegner geben ihre Befehle wie Menschen, über denselben Weg.
         for computer in state.computers.lock().unwrap().iter_mut() {
             if world.is_eliminated(computer.player) {
                 continue;
             }
+            // Der Computer plant seine Wirtschaft mit selbst tragenden Arbeitern.
+            world.self_carry.insert(computer.player);
             for cmd in computer.think(&world, dt) {
                 if let Err(text) = apply_command(&mut world, &state.ticks, computer.player, cmd) {
                     computer.rejected(&text);
@@ -239,7 +300,7 @@ fn step(state: &Match, tick: u64) {
             .collect();
         // Burg geschlossen? Alle zwei Sekunden für jeden verbundenen Spieler.
         let castles: HashMap<u32, protocol::CastleStatus> = if tick.is_multiple_of(CASTLE_CHECK_SECONDS * TICK_RATE as u64) {
-            let players: Vec<u32> = state.clients.lock().unwrap().keys().copied().collect();
+            let players = players_of(&state.clients.lock().unwrap());
             players.into_iter().map(|p| (p, world.castle_status(p))).collect()
         } else {
             HashMap::new()
@@ -247,13 +308,14 @@ fn step(state: &Match, tick: u64) {
         (world.snapshot(), world.take_dirty_stocks(), paths, infos, castles)
     };
     let mut clients = state.clients.lock().unwrap();
-    let players_online = clients.len() as u32;
+    let players_online = players_of(&clients).len() as u32;
     for (player, stock) in stocks {
-        if let Some(c) = clients.get(&player) {
-            let _ = c.tx.try_send(ServerMsg::Stock { stock });
+        for c in clients.values().filter(|c| c.player == player) {
+            let _ = c.tx.try_send(ServerMsg::Stock { stock: stock.clone() });
         }
     }
-    for (&player, client) in clients.iter_mut() {
+    for client in clients.values_mut() {
+        let player = client.player;
         if let Some(status) = castles.get(&player) {
             if client.castle.as_ref() != Some(status) && client.tx.try_send(ServerMsg::Castle { status: status.clone() }).is_ok() {
                 client.castle = Some(status.clone());
@@ -321,7 +383,14 @@ pub async fn current_map(
     Path(id): Path<u32>,
     Query(q): Query<GameQuery>,
 ) -> Response {
-    let Some((_, m, _)) = q.token.as_deref().and_then(|t| hub.membership(id, t)) else {
+    let token = q.token.as_deref().unwrap_or("");
+    let m = match hub.membership(id, token) {
+        Some((_, m, _)) => Some(m),
+        // Admin „Spielen als“ auch in fremden Spielen.
+        None if q.play_as.is_some() && hub.admin.check(token).await => hub.game(id).and_then(|g| g.running.get().cloned()),
+        None => None,
+    };
+    let Some(m) = m else {
         return (StatusCode::NOT_FOUND, "Spiel nicht gefunden").into_response();
     };
     let text = m.world.lock().unwrap().map.to_text();
@@ -344,29 +413,22 @@ pub async fn ws_handler(
 }
 
 async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
-    // Nur wer in diesem laufenden Spiel einen Startplatz hat, kommt hinein.
-    let found = q
-        .game
-        .zip(q.token.as_deref())
-        .and_then(|(id, token)| hub.membership(id, token));
-    // Admin "Spielen als": anderer Startplatz desselben Spiels (Admin ist, wem der eigene Token gehört).
-    let may_play_as =
-        q.play_as.is_some() && hub.admin.check(q.token.as_deref().unwrap_or("")).await;
-    let found = found.and_then(|(game, state, seat)| {
-        let Some(pid) = q.play_as else {
-            return Some((game, state, seat));
-        };
-        if !may_play_as {
-            return None;
-        }
-        let spawn = *game
-            .meta
-            .lock()
-            .unwrap()
-            .spawns
-            .get((pid as usize).checked_sub(1)?)?;
-        Some((game, state, (pid, spawn)))
-    });
+    let token = q.token.clone().unwrap_or_default();
+    // Admin "Spielen als": irgendein Startplatz irgendeines laufenden Spiels, auch wenn
+    // der Admin dort nicht mitspielt und der Spieler gerade selbst spielt (dann bauen
+    // beide an derselben Burg). Admin ist, wem der eigene Token gehört.
+    let may_play_as = q.play_as.is_some() && hub.admin.check(&token).await;
+    let found = match (q.game, q.play_as) {
+        (Some(id), Some(pid)) if may_play_as => hub.game(id).and_then(|game| {
+            let state = game.running.get()?.clone();
+            let spawn = *game.meta.lock().unwrap().spawns.get((pid as usize).checked_sub(1)?)?;
+            Some((game, state, (pid, spawn)))
+        }),
+        (_, Some(_)) => None,
+        // Sonst nur, wer in diesem laufenden Spiel einen Startplatz hat.
+        (Some(id), None) => hub.membership(id, &token),
+        (None, None) => None,
+    };
     let Some((game, state, (player_id, spawn))) = found else {
         let text = serde_json::to_string(&ServerMsg::NotInGame).expect("serialisierbar");
         let _ = socket.send(Message::Text(text.into())).await;
@@ -394,7 +456,8 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
             world.spawn_player_at(player_id, spawn);
         }
         let client = Client {
-            conn,
+            player: player_id,
+            token: token.clone(),
             tx: out_tx.clone(),
             view: None,
             known: HashMap::new(),
@@ -403,10 +466,15 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
             watch_info: None,
             castle: None,
         };
-        // Ist derselbe Spieler schon in einem anderen Fenster drin, übernimmt dieses.
-        if let Some(old) = state.clients.lock().unwrap().insert(player_id, client) {
+        // Ist derselbe Browser als derselbe Spieler schon in einem anderen Fenster drin,
+        // übernimmt dieses. Andere (Admin „Spielen als“) dürfen mitspielen.
+        let mut clients = state.clients.lock().unwrap();
+        for old in clients.values().filter(|c| c.player == player_id && c.token == token) {
             let _ = old.tx.try_send(ServerMsg::OpenedElsewhere);
         }
+        clients.retain(|_, c| !(c.player == player_id && c.token == token));
+        clients.insert(conn, client);
+        drop(clients);
         (
             // Die Karte selbst holt der Client über /api/games/{id}/map.
             MapRef {
@@ -456,6 +524,8 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
             percent: state.game_speed.load(Ordering::Relaxed),
         })
         .await;
+    let paused_by: Vec<u32> = state.pauses.lock().unwrap().iter().copied().collect();
+    let _ = out_tx.send(ServerMsg::Pauses { players: paused_by }).await;
 
     // Ausgehend: direkte Antworten + Ticks an diesen Client schreiben.
     let mut writer = tokio::spawn(async move {
@@ -500,7 +570,7 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
         while let Some(Ok(msg)) = rx.next().await {
             let Message::Text(text) = msg else { continue };
             match serde_json::from_str::<ClientMsg>(&text) {
-                Ok(msg) => handle_msg(&hub, &state, player_id, &out_tx, &mut is_admin, msg).await,
+                Ok(msg) => handle_msg(&hub, &state, conn, player_id, &out_tx, &mut is_admin, msg).await,
                 Err(e) => warn!("Ungültige Nachricht von {player_id}: {e}"),
             }
         }
@@ -514,12 +584,15 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
 
     writer.abort();
     // Der Spieler bleibt mit allem stehen; er kann später weiterspielen.
-    // Nur austragen, wenn nicht schon ein neueres Fenster übernommen hat.
-    {
+    // Hatte nur diese Verbindung den Spieler, kann er seine Pause nicht mehr lösen:
+    // sie endet mit der Verbindung.
+    let gone = {
         let mut clients = state.clients.lock().unwrap();
-        if clients.get(&player_id).is_some_and(|c| c.conn == conn) {
-            clients.remove(&player_id);
-        }
+        clients.remove(&conn);
+        !clients.values().any(|c| c.player == player_id)
+    };
+    if gone {
+        state.set_pause(player_id, false);
     }
     info!("Spiel {}: Spieler {player_id} getrennt", game.id);
     hub.notify();
@@ -528,6 +601,7 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
 async fn handle_msg(
     hub: &Hub,
     state: &Match,
+    conn: u64,
     player_id: u32,
     out_tx: &tokio::sync::mpsc::Sender<ServerMsg>,
     is_admin: &mut bool,
@@ -539,17 +613,17 @@ async fn handle_msg(
             let _ = out_tx.send(ServerMsg::Pong { client_time }).await;
         }
         ClientMsg::View { x0, y0, x1, y1 } => {
-            if let Some(c) = state.clients.lock().unwrap().get_mut(&player_id) {
+            if let Some(c) = state.clients.lock().unwrap().get_mut(&conn) {
                 c.view = Some((x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)));
             }
         }
         // Nicht über `apply_command`: nur der Mensch bekommt das rote X bei unerreichbarem Ziel.
-        ClientMsg::MoveUnits { unit_ids, x, y } => {
+        ClientMsg::MoveUnits { unit_ids, x, y, fast, append } => {
             let reachable = state
                 .world
                 .lock()
                 .unwrap()
-                .order_move(player_id, &unit_ids, (x, y));
+                .order_move_full(player_id, &unit_ids, (x, y), fast.unwrap_or(false), append.unwrap_or(false));
             if !reachable {
                 drop(out_tx.try_send(ServerMsg::MoveUnreachable { x, y }));
             }
@@ -563,7 +637,7 @@ async fn handle_msg(
             let _ = out_tx.send(msg).await;
         }
         ClientMsg::WatchUnit { unit_id } => {
-            if let Some(c) = state.clients.lock().unwrap().get_mut(&player_id) {
+            if let Some(c) = state.clients.lock().unwrap().get_mut(&conn) {
                 c.watch = unit_id;
                 c.watch_sent = None;
                 c.watch_info = None;
@@ -581,6 +655,7 @@ async fn handle_msg(
         | ClientMsg::Attack { .. }
         | ClientMsg::RepairBuilding { .. }
         | ClientMsg::Trade { .. }
+        | ClientMsg::SetAutoTrade { .. }
         | ClientMsg::SendGoods { .. }) => {
             let mut world = state.world.lock().unwrap();
             if let Err(text) = apply_command(&mut world, &state.ticks, player_id, msg) {
@@ -604,6 +679,7 @@ async fn handle_msg(
                 });
             }
         }
+        ClientMsg::SetPause { paused } => state.set_pause(player_id, paused),
         ClientMsg::AdminGameSpeed { percent } => {
             if *is_admin {
                 // 0 = Pause, sonst 25–800 %.
@@ -639,8 +715,8 @@ pub fn apply_command(
         return Err(protocol::Text::new("defeat.eliminated"));
     }
     match msg {
-        ClientMsg::MoveUnits { unit_ids, x, y } => {
-            world.order_move(player_id, &unit_ids, (x, y));
+        ClientMsg::MoveUnits { unit_ids, x, y, fast, append } => {
+            world.order_move_full(player_id, &unit_ids, (x, y), fast.unwrap_or(false), append.unwrap_or(false));
         }
         ClientMsg::Attack { unit_ids, target } => {
             world.order_attack(player_id, &unit_ids, target);
@@ -724,6 +800,7 @@ pub fn apply_command(
             send(ServerMsg::BuildingChanged { building });
         }
         ClientMsg::Trade { good, amount, sell } => world.trade(player_id, good, amount, sell)?,
+        ClientMsg::SetAutoTrade { good, buy_below, sell_above } => world.set_auto_trade(player_id, good, buy_below, sell_above)?,
         ClientMsg::SendGoods { to, goods, taler } => {
             world.send_goods(player_id, to, &goods, taler)?;
             for event in world.take_events() {
@@ -733,4 +810,31 @@ pub fn apply_command(
         _ => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pause_haelt_bis_alle_sie_loesen() {
+        let map = crate::map::GameMap::parse(crate::map::DEFAULT_MAP).unwrap();
+        let eco = crate::economy::Economy::parse(crate::economy::ECONOMY_JSON).unwrap();
+        let m = Match::new(World::new(map, eco), "t".into(), String::new(), 100);
+        let mut rx = m.ticks.subscribe();
+        assert_eq!(m.effective_speed(), 100);
+        m.set_pause(1, true);
+        m.set_pause(2, true);
+        m.set_pause(2, true); // doppelt: keine neue Meldung
+        assert_eq!(m.effective_speed(), 0);
+        m.set_pause(1, false);
+        assert_eq!(m.effective_speed(), 0, "Spieler 2 hält noch Pause");
+        m.set_pause(2, false);
+        assert_eq!(m.effective_speed(), 100);
+        let mut seen = Vec::new();
+        while let Ok(ServerMsg::Pauses { players }) = rx.try_recv() {
+            seen.push(players);
+        }
+        assert_eq!(seen, vec![vec![1], vec![1, 2], vec![2], vec![]]);
+    }
 }

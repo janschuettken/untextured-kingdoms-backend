@@ -35,6 +35,10 @@ for repo in "$BACKEND" "$FRONTEND"; do
   git -C "$repo" log --oneline -1
 done
 
+# Versionen für die Anzeige in der Lobby (Commit und Datum).
+export BACKEND_REV="$(git -C "$BACKEND" log -1 --format='%h (%cs)')"
+export FRONTEND_REV="$(git -C "$FRONTEND" log -1 --format='%h (%cs)')"
+
 echo "== Balancing prüfen"
 LIVE="$(docker compose exec -T server cat /data/economy.json 2>/dev/null || true)"
 # Repo-Fassung in dasselbe Format bringen wie die Server-Fassung (Reihenfolge, Standardwerte).
@@ -49,6 +53,7 @@ elif [ "$ECONOMY_FROM_REPO" = 1 ]; then
   echo "Balancing: ab jetzt gilt die Fassung aus dem Repo (alte Server-Fassung: /data/economy.json.vor-update)."
 else
   echo "ACHTUNG: Das Balancing auf dem Server weicht von der economy.json im Repo ab."
+  echo "         (Neue Gebäude und Einheiten aus dem Repo kommen trotzdem dazu, mit ihren Grundwerten.)"
   echo "         Es bleibt die Server-Fassung. Willst du die aus dem Repo: ./deploy/update.sh --economy-from-repo"
   echo "         Server-Fassung sichern: im Balancing-Editor \"economy.json herunterladen\" und ins Repo committen."
 fi

@@ -23,7 +23,21 @@ pub enum ClientMsg {
     Ping { client_time: f64 },
     /// Bewegungsbefehl: Einheiten sollen zum Punkt (x, y) laufen.
     /// Der Server prüft Besitz und sucht selbst den Weg.
-    MoveUnits { unit_ids: Vec<u32>, x: f32, y: f32 },
+    /// Eine Gruppe läuft im Tempo ihrer langsamsten Einheit; `fast` (zweiter Befehl gleich
+    /// hinterher, wie ein Doppelklick) lässt jede so schnell laufen, wie sie kann.
+    MoveUnits {
+        unit_ids: Vec<u32>,
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        #[ts(optional)]
+        fast: Option<bool>,
+        /// Strg+Rechtsklick: als weiteren Wegpunkt hinten anhängen, statt den Weg zu ersetzen.
+        /// Ein Befehl ohne `append` löscht alle alten Wegpunkte.
+        #[serde(default)]
+        #[ts(optional)]
+        append: Option<bool>,
+    },
     /// Angriffsbefehl (Rechtsklick auf einen Feind): die Einheiten laufen hin, verfolgen das
     /// Ziel und greifen an, bis es fällt. Wer dem Ziel nichts anhaben kann (Fernkämpfer gegen
     /// König oder Gebäude) oder ein Verbündeter ist, läuft nur hin.
@@ -83,6 +97,8 @@ pub enum ClientMsg {
     PrioritizeTraining { building_id: u32, index: u32, count: u32 },
     /// Am Markt handeln: `sell` = verkaufen, sonst kaufen. Bezahlt wird in Talern.
     Trade { good: Good, amount: u32, sell: bool },
+    /// Automatisch handeln: unter `buy_below` kaufen, über `sell_above` verkaufen (0 = aus).
+    SetAutoTrade { good: Good, buy_below: u32, sell_above: u32 },
     /// Als Admin anmelden (Token aus der Server-Umgebung `ADMIN_TOKEN`).
     AdminLogin { token: String },
     /// Nur Admin: sich selbst Waren ins Lager legen.
@@ -93,6 +109,9 @@ pub enum ClientMsg {
     },
     /// Nur Admin: Spieltempo für alle in Prozent (100 = normal, 25 bis 800, 0 = Pause).
     AdminGameSpeed { percent: u32 },
+    /// Pause drücken (`true`) oder die eigene Pause wieder aufheben. Das Spiel steht,
+    /// solange mindestens ein Spieler Pause gedrückt hat.
+    SetPause { paused: bool },
     /// Sichtbereich des Clients in Feldern (Rechteck, Ecken eingeschlossen).
     /// Der Server schickt Einheiten nur für diesen Bereich (plus Rand) und
     /// immer die eigenen. Ohne diese Nachricht sieht der Client alles.
@@ -186,6 +205,11 @@ pub enum ServerMsg {
     GameSpeed {
         percent: u32,
     },
+    /// Wer gerade Pause gedrückt hat (Spieler-Nummern). Leer = das Spiel läuft.
+    /// Kommt beim Verbinden und nach jeder Änderung.
+    Pauses {
+        players: Vec<u32>,
+    },
     /// Die Wirtschaftsdaten wurden im Balancing-Editor geändert und gelten ab sofort.
     EconomyChanged {
         economy: EconomyDef,
@@ -228,6 +252,9 @@ pub enum ServerMsg {
         arrived: bool,
         /// Wie viele Handelskarren fahren (0 = sofort angekommen).
         carts: u32,
+        /// Beute: `from` ist ausgeschieden, `to` hat seinen König getötet.
+        #[serde(default)]
+        loot: bool,
     },
     /// Der König dieses Spielers ist tot: er scheidet aus, alles von ihm ist verschwunden.
     /// Geht an alle; ein ausgeschiedener Spieler bekommt es beim Verbinden noch einmal.
@@ -243,6 +270,10 @@ pub enum ServerMsg {
     /// Schüsse der Fernkämpfer in diesem Takt (für fliegende Pfeile und Bolzen im Client).
     Shots {
         shots: Vec<Shot>,
+    },
+    /// Behandlungen der Heiler in diesem Takt (für das grüne Leuchten im Client).
+    Heals {
+        heals: Vec<Heal>,
     },
     /// Nur noch ein Spieler (oder ein Bündnis) hat seinen König: das Spiel ist entschieden.
     GameOver {
@@ -273,6 +304,19 @@ pub enum TradeMode {
     Carts,
 }
 
+/// Wann Fernkämpfer treffen können (Einstellung des Spiels in der Lobby).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ShotMode {
+    /// Wurfbahn mit dem Tempo für die größte Reichweite (flach oder steil): stößt sie an
+    /// Gelände, Gebäude oder Mauer, wird nicht geschossen. Über Mauern hinweg geht es.
+    #[default]
+    Ballistic,
+    /// Der Schütze muss das Ziel sehen: eine gerade, freie Linie.
+    LineOfSight,
+}
+
 /// Nachrichten vom Client an die Lobby (WebSocket `/lobby`).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -287,8 +331,12 @@ pub enum LobbyClientMsg {
     CreateGame { map: String },
     /// Einem wartenden Spiel beitreten. Laufende Spiele nehmen niemanden auf.
     JoinGame { game_id: u32 },
-    /// Das eigene Spiel verlassen (wartend oder laufend).
-    LeaveGame,
+    /// Ein eigenes Spiel verlassen: das laufende mit dieser Id, ohne Id das wartende.
+    LeaveGame {
+        #[serde(default)]
+        #[ts(optional)]
+        game_id: Option<u32>,
+    },
     /// Startplatz wechseln (nur auf einen freien).
     TakeSlot { slot: u32 },
     /// Nur Gastgeber, nur vor dem Start: andere Karte.
@@ -310,8 +358,21 @@ pub enum LobbyClientMsg {
     /// Nur vor dem Start: Bündnis eines Startplatzes (0 = keins). Den eigenen darf
     /// jeder setzen, die der Computergegner nur der Gastgeber.
     SetTeam { slot: u32, team: u8 },
+    /// Nur Gastgeber, nur vor dem Start: Regler eines Computergegners (0 bis 100) für dieses
+    /// Spiel. Leer = wie sein Charakter.
+    SetComputerTraits {
+        slot: u32,
+        #[serde(default)]
+        #[ts(optional)]
+        daring: Option<u8>,
+        #[serde(default)]
+        #[ts(optional)]
+        helpfulness: Option<u8>,
+    },
     /// Nur Gastgeber, nur vor dem Start: wie Waren zwischen Verbündeten ankommen.
     SetTradeMode { mode: TradeMode },
+    /// Nur Gastgeber, nur vor dem Start: wann Fernkämpfer treffen (Wurfbahn oder Sichtlinie).
+    SetShotMode { mode: ShotMode },
 }
 
 /// Stärke eines Computergegners. Was jede Stufe tut, steht im Server (`server/src/ai/`).
@@ -334,9 +395,11 @@ pub enum AiLevel {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
 pub enum LobbyServerMsg {
-    /// Antwort auf `hello`: die eigene öffentliche Id und die Karten zur Auswahl.
-    Welcome { you: String, maps: Vec<String> },
-    /// Kompletter Stand, kommt bei jeder Änderung neu.
+    /// Antwort auf `hello`: die eigene öffentliche Id, die Karten zur Auswahl und
+    /// die Version des Servers (Commit und Datum).
+    Welcome { you: String, maps: Vec<String>, server_version: String },
+    /// Kompletter Stand, kommt bei jeder Änderung neu. `current` ist das wartende
+    /// Spiel, in dem man sitzt; laufende eigene Spiele stehen in `games` (`mine`).
     State { games: Vec<GameSummary>, current: Option<LobbyGame> },
     Pong { client_time: f64 },
     Rejected { text: Text },
@@ -362,6 +425,12 @@ pub struct GameSummary {
     pub host_name: String,
     pub players: u32,
     pub max_players: u32,
+    /// Man spielt selbst mit (laufende Spiele: man kann weiterspielen).
+    pub mine: bool,
+    /// Läuft, steht aber still: kein Mensch im Spiel (oder Tempo 0).
+    pub paused: bool,
+    /// Wer mitspielt (für den Admin: „Spielen als“ hinter jedem Spieler).
+    pub slots: Vec<LobbySlot>,
 }
 
 /// Das Spiel, in dem man selbst ist, mit allen Startplätzen.
@@ -380,6 +449,9 @@ pub struct LobbyGame {
     /// Handel unter Verbündeten: sofort oder mit Karren.
     #[serde(default)]
     pub trade_mode: TradeMode,
+    /// Fernkampf: Wurfbahn oder Sichtlinie.
+    #[serde(default)]
+    pub shot_mode: ShotMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -410,6 +482,12 @@ pub struct LobbyMember {
     /// Bündnis (gleiche Zahl ab 1 = verbündet), 0 = keins.
     #[serde(default)]
     pub team: u8,
+    /// Computergegner: eigener Wert für „Angriff trotz Unterlegenheit“ (sonst der des Charakters).
+    #[serde(default)]
+    pub daring: Option<u8>,
+    /// Computergegner: eigener Wert für „Hilfsbereitschaft“ (sonst der des Charakters).
+    #[serde(default)]
+    pub helpfulness: Option<u8>,
 }
 
 /// Ob ein Gegner zu Fuß bis an den eigenen Bergfried kommt (eigene Tore gelten als zu,
@@ -452,6 +530,16 @@ pub struct AiPersonality {
     /// Armeegröße in Prozent der Stufe.
     #[serde(default = "percent_100")]
     pub army: u32,
+    /// Angriff trotz Unterlegenheit, 0 bis 100: 0 = nur, wenn er sich stärker glaubt;
+    /// 100 = ständig, sobald eine Welle bereit ist. Dazwischen greift er umso eher an, je
+    /// länger er schon wartet.
+    #[serde(default = "daring_default")]
+    pub daring: u32,
+    /// Hilfsbereitschaft gegenüber Verbündeten, 0 bis 100: 0 = hilft nie; sonst schickt er
+    /// Truppen (höchstens diesen Anteil seiner freien Soldaten) und Waren, wenn ein
+    /// Verbündeter angegriffen wird.
+    #[serde(default = "helpfulness_default")]
+    pub helpfulness: u32,
     /// Gebäude in Prozent: 100 = wie die Stufe, 0 = baut es nie, 50 = halb so viele,
     /// 200 = doppelt so viele. Steht es nicht in der Bauliste der Stufe, baut er ab 200 eins
     /// (300 zwei, ...). Fehlende Gebäude gelten als 100.
@@ -484,6 +572,14 @@ pub enum CastleLayout {
 
 fn percent_100() -> u32 {
     100
+}
+
+fn daring_default() -> u32 {
+    30
+}
+
+fn helpfulness_default() -> u32 {
+    50
 }
 
 /// Art eines Feldes.
@@ -564,6 +660,23 @@ pub struct Shot {
     pub from_wall: bool,
     pub to_wall: bool,
     pub kind: UnitKind,
+    /// Höhe (Welt) am Start und am Ziel.
+    pub from_h: f32,
+    pub to_h: f32,
+    /// Wurfbahn: Steigung beim Abschuss (tan) und Reichweite des Schützen. `None` = gerade Linie.
+    pub arc: Option<(f32, f32)>,
+}
+
+/// Ein Heiler behandelt einen Verwundeten.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Heal {
+    pub from: (f32, f32),
+    pub to: (f32, f32),
+    pub from_wall: bool,
+    pub to_wall: bool,
+    /// Wer geheilt wurde.
+    pub unit_id: u32,
 }
 
 /// Ziel eines Angriffsbefehls.
@@ -603,12 +716,14 @@ pub enum UnitKind {
     Knight,
     /// Handelskarren: bringt Waren zu einem Verbündeten und verschwindet dort.
     TradeCart,
+    /// Heiler aus der Apotheke: kämpft nicht, heilt verwundete eigene und verbündete Einheiten in der Nähe.
+    Healer,
 }
 
 impl UnitKind {
     /// Soldaten: werden in der Kaserne ausgebildet und kosten Sold.
     pub fn is_soldier(self) -> bool {
-        matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight)
+        matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer)
     }
 
     /// Zivilisten: Arbeiter, Träger und Karren. Sie kämpfen nicht, können aber angegriffen werden.
@@ -736,6 +851,8 @@ pub enum Good {
     Armor,
     LightArmor,
     Saddle,
+    /// Heilsalbe aus der Apotheke, für Heiler.
+    Salve,
 }
 
 /// Menge einer Ware.
@@ -765,6 +882,21 @@ pub struct StockState {
     pub taler: u32,
     #[serde(default)]
     pub army: ArmyState,
+    /// Automatischer Handel am Markt je Ware.
+    #[serde(default)]
+    pub auto_trade: Vec<AutoTrade>,
+}
+
+/// Automatischer Handel für eine Ware: kaufen, solange weniger als `buy_below`
+/// im Vorrat liegt, verkaufen, was über `sell_above` liegt. 0 = aus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AutoTrade {
+    pub good: Good,
+    #[serde(default)]
+    pub buy_below: u32,
+    #[serde(default)]
+    pub sell_above: u32,
 }
 
 /// Lagerplatz einer Lagerart beim Spieler (alle Lager dieser Art zusammen).
@@ -836,6 +968,8 @@ pub enum BuildingKind {
     StonePath,
     /// Großes Torhaus: zwei Türme, dazwischen ein tiefer Durchgang mit Tor.
     Gatehouse,
+    /// Apotheke: rührt Heilsalbe an und bildet daraus Heiler aus.
+    Apothecary,
 }
 
 /// Gruppe im Baumenü.
@@ -854,23 +988,72 @@ pub enum BuildingCategory {
 }
 
 /// Eine Ausbaustufe. Stufe 1 ist das Bauen selbst.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+///
+/// Alle Werte, die sich mit der Stufe ändern dürfen, stehen hier je Stufe vollständig
+/// (Format 2 der Balancing-Datei). Fehlt ein Wert in einer Stufe, gilt der der Stufe davor.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
 #[ts(export)]
 pub struct BuildingLevel {
     /// Kosten für das Bauen (Stufe 1) bzw. den Ausbau auf diese Stufe.
     pub cost: Vec<GoodAmount>,
     /// Rezepte, die diese Stufe freischaltet (zusätzlich zu den vorigen).
-    #[serde(default)]
     pub recipes: Vec<String>,
     /// So viele Bewohner passen auf dieser Stufe hinein (Wohnhäuser).
-    #[serde(default)]
     pub housing: u32,
     /// Einheiten, die mit dieser Stufe dazukommen (Wagenschuppen: Träger, dann Karren).
-    #[serde(default)]
     pub spawns: Vec<UnitCount>,
     /// Kaserne: Soldaten, die diese Stufe ausbilden kann (zusätzlich zu den vorigen).
-    #[serde(default)]
     pub trains: Vec<UnitKind>,
+    /// Lebenspunkte auf dieser Stufe.
+    pub max_hp: u32,
+    /// Arbeiter, die der Betrieb auf dieser Stufe braucht (sie wohnen in Häusern und essen).
+    pub workers: u32,
+    /// Wie weit um das Gebäude abgebaut wird (Felder vom Rand). 0 = nur unter dem Gebäude.
+    pub gather_radius: u32,
+    /// Wagenschuppen: der Karren fährt nur Betriebe in diesem Umkreis (Felder) an. 0 = überall.
+    pub service_radius: u32,
+    /// Auf dieser Stufe können eigene Einheiten oben auf dem Gebäude laufen (Wehrgang).
+    pub walkway: bool,
+    /// Tor/Turm: auf dieser Stufe führt eine Treppe auf den Wehrgang.
+    pub stairs: bool,
+    /// Tor: im Modus „automatisch“ schließt es, sobald fremde Einheiten so nah (Felder) sind.
+    pub gate_radius: u32,
+    /// So viele Einheiten finden oben Platz. 0 = so viele, wie draufpassen.
+    pub garrison: u32,
+    /// Deckung für Einheiten oben auf dem Gebäude: so viel Prozent der Fernkampf-Schüsse
+    /// auf sie gehen daneben. 0 = keine Deckung.
+    pub cover_percent: u32,
+    /// Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte): die ganze Fläche
+    /// muss in diesem Umkreis liegen (beim Bauen bzw. beim Ausbau auf diese Stufe). 0 = überall.
+    pub build_radius: u32,
+    /// Weg: man läuft hier so viel Prozent schneller. Ob es ein Weg ist, entscheidet Stufe 1 (> 0).
+    pub road_speed_percent: u32,
+    /// Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
+    pub hub_capacity: u32,
+    /// Betriebe: so viel passt je Eingangsware ins eigene Lager. 0 = `transport.building_capacity`.
+    pub storage_inputs: u32,
+    /// Betriebe: so viel passt je Ergebnis ins eigene Lager. 0 = `transport.building_capacity`.
+    pub storage_outputs: u32,
+}
+
+/// Wie ein neues Gebäude beliefert wird (Voreinstellung, der Spieler kann es je Gebäude ändern).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct DeliveryDefaults {
+    /// Träger liefern Eingangswaren (`settings.accept_deliveries`).
+    pub carriers: bool,
+    /// Karren füllen das Eingangslager auf (`settings.cart_deliveries`).
+    pub carts: bool,
+    /// Der Arbeiter trägt selbst (`settings.worker_carries`).
+    pub worker: bool,
+}
+
+impl Default for DeliveryDefaults {
+    fn default() -> Self {
+        DeliveryDefaults { carriers: true, carts: false, worker: true }
+    }
 }
 
 /// Wo ein Gebäude stehen darf: ein Mindestanteil seiner Felder muss einer
@@ -882,7 +1065,7 @@ pub struct Placement {
     pub min_share_percent: u32,
 }
 
-/// Feste Eigenschaften einer Gebäudeart.
+/// Feste Eigenschaften einer Gebäudeart. Was sich mit der Stufe ändern darf, steht in `levels`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct BuildingDef {
@@ -891,7 +1074,10 @@ pub struct BuildingDef {
     /// Grundfläche in Feldern.
     pub w: u32,
     pub h: u32,
-    pub max_hp: u32,
+    /// Höhe über dem Boden (Welt, 1 = ein Feld) für Pfeile: was darunter fliegt, stößt an.
+    /// Je Ausbaustufe kommt ein Stockwerk dazu (nicht bei Befestigungen). 0 = Grundwert je Art.
+    #[serde(default)]
+    pub height: f32,
     /// Höchstens so viele pro Spieler.
     #[serde(default)]
     pub max_per_player: Option<u32>,
@@ -901,70 +1087,55 @@ pub struct BuildingDef {
     /// Rohstoff-Felder, die dieser Betrieb abbaut (z. B. Wald).
     #[serde(default)]
     pub gathers: Vec<ResourceKind>,
-    /// Wie weit um das Gebäude abgebaut wird (Felder vom Rand). 0 = nur unter dem Gebäude.
-    #[serde(default)]
-    pub gather_radius: u32,
     /// Aufgeben hinterlässt diesen Rohstoff auf der Fläche (Obstplantage → Wald).
     #[serde(default)]
     pub releases_as: Option<ResourceKind>,
-    /// Wagenschuppen: der Karren fährt nur Betriebe in diesem Umkreis (Felder) an. 0 = überall.
-    #[serde(default)]
-    pub service_radius: u32,
     /// Mauern und Türme haben keinen Eingang; alle anderen ein Feld davor, das frei bleiben muss.
     #[serde(default)]
     pub no_entrance: bool,
     /// Bergfried und Vorratslager: hier liegt der gemeinsame Vorrat, Träger liefern hierhin.
     #[serde(default)]
     pub hub: bool,
-    /// Einheiten, die zum Gebäude gehören (Träger, Karren).
-    #[serde(default)]
-    pub spawns: Vec<UnitCount>,
-    /// Mindestens eine Stufe.
-    /// Arbeiter, die der Betrieb braucht (sie wohnen in Häusern und essen).
-    #[serde(default)]
-    pub workers: u32,
-    /// Ab dieser Stufe können eigene Einheiten oben auf dem Gebäude laufen (Wehrgang). 0 = nie.
-    #[serde(default)]
-    pub walkway_from_level: u32,
-    /// Tor: ab dieser Stufe führt eine Treppe im Tor auf den Wehrgang. 0 = nie.
-    #[serde(default)]
-    pub stairs_from_level: u32,
-    /// Tor: im Modus „automatisch“ schließt es, sobald fremde Einheiten so nah (Felder) sind.
-    #[serde(default)]
-    pub gate_radius: u32,
-    /// So viele Einheiten finden oben Platz. 0 = so viele, wie draufpassen.
-    #[serde(default)]
-    pub garrison: u32,
-    /// Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte): die ganze Fläche
-    /// muss in diesem Umkreis liegen. 0 = überall.
-    #[serde(default)]
-    pub build_radius: u32,
     /// Darf direkt auf eigene Mauern gesetzt werden; die Mauer darunter wird abgerissen.
     #[serde(default)]
     pub on_walls: bool,
     /// Darf auf Schrägen stehen (Mauern folgen dem Gelände).
     #[serde(default)]
     pub on_ramps: bool,
-    /// Weg: das Feld bleibt begehbar, und man läuft hier so viel Prozent schneller.
-    /// 0 = kein Weg.
-    #[serde(default)]
-    pub road_speed_percent: u32,
     /// Das erste Gebäude dieser Art je Spieler kostet nichts.
     #[serde(default)]
     pub first_free: bool,
     /// Lager nur für diese Waren (z. B. Waffenkammer). Leer = alle Waren.
     #[serde(default)]
     pub hub_goods: Vec<Good>,
-    /// Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
+    /// Voreinstellung für neue Gebäude: wer liefert (Träger, Karren, Arbeiter selbst).
     #[serde(default)]
-    pub hub_capacity: u32,
-    /// Betriebe: so viel passt je Eingangsware ins eigene Lager. 0 = `transport.building_capacity`.
-    #[serde(default)]
-    pub storage_inputs: u32,
-    /// Betriebe: so viel passt je Ergebnis ins eigene Lager. 0 = `transport.building_capacity`.
-    #[serde(default)]
-    pub storage_outputs: u32,
+    pub delivery: DeliveryDefaults,
+    /// Mindestens eine Stufe.
     pub levels: Vec<BuildingLevel>,
+}
+
+impl BuildingDef {
+    /// Werte der Stufe `level` (beginnt bei 1; außerhalb: nächste vorhandene Stufe).
+    pub fn at(&self, level: u32) -> &BuildingLevel {
+        let i = (level.max(1) as usize - 1).min(self.levels.len().saturating_sub(1));
+        &self.levels[i]
+    }
+
+    /// Ist es ein Weg (das Feld bleibt begehbar)? Entscheidet Stufe 1.
+    pub fn is_road(&self) -> bool {
+        self.levels.first().is_some_and(|l| l.road_speed_percent > 0)
+    }
+
+    /// Hat irgendeine Stufe einen Wehrgang?
+    pub fn any_walkway(&self) -> bool {
+        self.levels.iter().any(|l| l.walkway)
+    }
+
+    /// Größter Wert über alle Stufen (z. B. für Kreise beim Bauen).
+    pub fn max_of(&self, f: impl Fn(&BuildingLevel) -> u32) -> u32 {
+        self.levels.iter().map(f).max().unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
@@ -1010,6 +1181,9 @@ pub struct RecipeDef {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct EconomyDef {
+    /// Aufbau der Datei: 2 = Werte je Gebäudestufe. Ältere Dateien (ohne) werden beim Laden umgewandelt.
+    #[serde(default)]
+    pub format: u32,
     pub goods: Vec<Good>,
     pub buildings: Vec<BuildingDef>,
     pub recipes: Vec<RecipeDef>,
@@ -1070,10 +1244,22 @@ pub struct UnitDef {
     /// Sold in Talern je Zahltag (siehe `army.upkeep_seconds`).
     #[serde(default)]
     pub upkeep: u32,
+    /// Essen je Zahltag (Einheiten aus `population.food`). Fehlt es, laufen die Soldaten langsamer.
+    #[serde(default)]
+    pub food: u32,
     /// Fernkämpfer (Reichweite über `army.melee_range`) können diese Einheit nicht verletzen
     /// (der König: nur Nahkämpfer können ihn töten).
     #[serde(default)]
     pub ranged_immune: bool,
+    /// Sekunden zwischen zwei Schlägen oder Schüssen.
+    #[serde(default)]
+    pub attack_seconds: f32,
+    /// Heiler: so viele Lebenspunkte gibt er je Behandlung zurück (alle `army.heal_seconds`). 0 = heilt nicht.
+    #[serde(default)]
+    pub heal: u32,
+    /// Heiler: so weit (Felder) reicht er zu einem Verwundeten.
+    #[serde(default)]
+    pub heal_range: f32,
 }
 
 /// Regeln für das Heer.
@@ -1087,8 +1273,6 @@ pub struct ArmyDef {
     pub unpaid_speed_percent: u32,
     /// So viele Soldaten kann eine Kaserne höchstens in der Warteschlange haben.
     pub queue_max: u32,
-    /// Sekunden zwischen zwei Schlägen oder Schüssen einer Einheit.
-    pub attack_seconds: f32,
     /// Bis zu dieser Reichweite (Felder) zählt ein Angriff als Nahkampf, darüber als Fernkampf.
     pub melee_range: f32,
     /// So viele Sekunden nach dem Tod eines Arbeiters, Trägers oder Karrens kommt Ersatz
@@ -1097,11 +1281,13 @@ pub struct ArmyDef {
     /// Bauen, Ausbauen und Reparieren nur, wenn in diesem Umkreis (Felder) kein feindlicher
     /// Soldat oder König steht. 0 = immer erlaubt.
     pub enemy_block_radius: f32,
+    /// Sekunden zwischen zwei Behandlungen eines Heilers.
+    pub heal_seconds: f32,
 }
 
 impl Default for ArmyDef {
     fn default() -> Self {
-        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, attack_seconds: 1.5, melee_range: 2.0, civilian_respawn_seconds: 30.0, enemy_block_radius: 50.0 }
+        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, melee_range: 2.0, civilian_respawn_seconds: 30.0, enemy_block_radius: 50.0, heal_seconds: 2.0 }
     }
 }
 
@@ -1114,6 +1300,12 @@ pub struct ArmyState {
     pub upkeep: u32,
     /// Am letzten Zahltag reichte das Geld nicht.
     pub unpaid: bool,
+    /// Essen aller Soldaten je Zahltag.
+    #[serde(default)]
+    pub food: u32,
+    /// Am letzten Zahltag reichte das Essen nicht.
+    #[serde(default)]
+    pub hungry: bool,
 }
 
 /// Lauftempo der Einheiten, die nicht transportieren (Felder pro Sekunde).
@@ -1188,9 +1380,12 @@ pub struct PeopleState {
     pub needed: u32,
     /// So viele davon haben eine Wohnung und arbeiten.
     pub working: u32,
-    /// Bei der letzten Mahlzeit gab es nicht genug Essen.
+    /// Mindestens ein Bewohner hat bei seiner letzten Mahlzeit nichts bekommen.
     pub hungry: bool,
-    /// So viele wurden bei der letzten Mahlzeit satt (von `working`).
+    /// So viele Bewohner hungern gerade (von `working`; nur sie sind langsamer).
+    #[serde(default)]
+    pub hungry_count: u32,
+    /// So viele sind satt (von `working`).
     #[serde(default)]
     pub fed: u32,
     /// Sekunden (Spielzeit) bis zur nächsten Mahlzeit, Stand beim Senden.
@@ -1271,6 +1466,8 @@ pub enum BuildingStatus {
     NoResource,
     /// Lager des Betriebs voll, das Ergebnis passt nicht hinein (Träger fehlen?).
     StorageFull,
+    /// Lager des Betriebs voll, und in keinem eigenen Lager ist Platz für das Ergebnis.
+    NoStorageRoom,
     /// Keine Wohnung frei für die Arbeiter: mehr Häuser bauen.
     NoWorkers,
     /// Der Arbeiter trägt gerade selbst Waren (kein Wagenschuppen mit Trägern).
@@ -1330,6 +1527,9 @@ pub struct BuildingState {
     /// Tor auf einem Weg gebaut: so viel % schneller ist der Durchgang (0 = kein Weg).
     #[serde(default)]
     pub road_under: u32,
+    /// Nur Lager: so viel passt insgesamt hinein (belegt = Summe von `inventory`).
+    #[serde(default)]
+    pub capacity: u32,
 }
 
 fn default_true() -> bool {

@@ -9,7 +9,12 @@ import type { UnitKind } from "./UnitKind";
 /**
  * Nachrichten vom Client an den Server.
  */
-export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", client_time: number, } | { "type": "move_units", unit_ids: Array<number>, x: number, y: number, } | { "type": "attack", unit_ids: Array<number>, target: AttackTarget, } | { "type": "place_building", kind: BuildingKind, x: number, y: number, rotation: number, 
+export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", client_time: number, } | { "type": "move_units", unit_ids: Array<number>, x: number, y: number, fast?: boolean, 
+/**
+ * Strg+Rechtsklick: als weiteren Wegpunkt hinten anhängen, statt den Weg zu ersetzen.
+ * Ein Befehl ohne `append` löscht alle alten Wegpunkte.
+ */
+append?: boolean, } | { "type": "attack", unit_ids: Array<number>, target: AttackTarget, } | { "type": "place_building", kind: BuildingKind, x: number, y: number, rotation: number, 
 /**
  * Gleich auf dieser Stufe bauen (0 oder 1 = erste Stufe). Kostet alle Stufen bis dahin.
  */
@@ -17,4 +22,4 @@ level: number, } | { "type": "demolish_building", building_id: number, } | { "ty
 /**
  * Auf alle eigenen Kasernen verteilen, die diese Einheit ausbilden können.
  */
-spread: boolean, } | { "type": "cancel_training", building_id: number, index?: number, count?: number, } | { "type": "prioritize_training", building_id: number, index: number, count: number, } | { "type": "trade", good: Good, amount: number, sell: boolean, } | { "type": "admin_login", token: string, } | { "type": "admin_give", goods: Array<GoodAmount>, taler: number, } | { "type": "admin_game_speed", percent: number, } | { "type": "view", x0: number, y0: number, x1: number, y1: number, } | { "type": "move_building", building_id: number, x: number, y: number, rotation: number, } | { "type": "send_goods", to: number, goods: Array<GoodAmount>, taler: number, };
+spread: boolean, } | { "type": "cancel_training", building_id: number, index?: number, count?: number, } | { "type": "prioritize_training", building_id: number, index: number, count: number, } | { "type": "trade", good: Good, amount: number, sell: boolean, } | { "type": "set_auto_trade", good: Good, buy_below: number, sell_above: number, } | { "type": "admin_login", token: string, } | { "type": "admin_give", goods: Array<GoodAmount>, taler: number, } | { "type": "admin_game_speed", percent: number, } | { "type": "set_pause", paused: boolean, } | { "type": "view", x0: number, y0: number, x1: number, y1: number, } | { "type": "move_building", building_id: number, x: number, y: number, rotation: number, } | { "type": "send_goods", to: number, goods: Array<GoodAmount>, taler: number, };

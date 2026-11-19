@@ -88,7 +88,7 @@ impl World {
                 0.0
             }
         };
-        let elapsed = elapsed + dt * self.speed(i) * self.hunger_factor(self.buildings[i].owner);
+        let elapsed = elapsed + dt * self.speed(i) * self.building_hunger_factor(id);
         self.work.get_mut(&id).expect("eben angelegt").elapsed = Some(elapsed);
         if elapsed < recipe.seconds {
             return BuildingStatus::Working;
@@ -97,8 +97,9 @@ impl World {
         // Fertig: Ergebnis ins eigene Lager, wenn alles hineinpasst. Abholen
         // ist Sache der Träger.
         let inv = self.inventories.get_mut(&id).expect("Betrieb hat ein Lager");
-        if recipe.outputs.iter().any(|o| o.amount > inv.room(o.good)) {
-            return BuildingStatus::StorageFull;
+        let blocked: Vec<_> = recipe.outputs.iter().filter(|o| o.amount > inv.room(o.good)).map(|o| o.good).collect();
+        if !blocked.is_empty() {
+            return self.full_status(self.buildings[i].owner, blocked);
         }
         for o in &recipe.outputs {
             inv.add(o.good, o.amount);
@@ -163,7 +164,7 @@ impl World {
         let (bx0, by0) = (b.x as i64, b.y as i64);
         let (bx1, by1) = (bx0 + b.w as i64 - 1, by0 + b.h as i64 - 1);
         let (mw, mh) = (self.map.width as i64, self.map.height as i64);
-        let max_r = (def.gather_radius as i64).min(mw.max(mh));
+        let max_r = (def.at(b.level).gather_radius as i64).min(mw.max(mh));
         // Abstand eines Feldes zum Gebäuderand.
         let dist = |tx: i64, ty: i64| {
             let dx = (bx0 - tx).max(tx - bx1).max(0) as f32;
@@ -259,6 +260,8 @@ impl World {
             .any(|g| !goods.contains(g)) {
             return Err(Text::new("error.unknown_good"));
         }
+        // Lieferungen nimmt jeder Betrieb an (der Schalter ist vorerst ausgeblendet).
+        let settings = BuildingSettings { accept_deliveries: true, ..settings };
         if b.settings.recipe != settings.recipe {
             // Rezept gewechselt: laufender Durchlauf verfällt (Eingänge sind verbraucht).
             self.work.remove(&id);
@@ -385,8 +388,8 @@ mod tests {
         assert_eq!(w.inventories[&b.id].capacity_of(Good::Longbow), std);
         let mut eco = w.economy.clone();
         let def = eco.def.buildings.iter_mut().find(|d| d.kind == BuildingKind::Bowyer).unwrap();
-        def.storage_inputs = 30;
-        def.storage_outputs = 5;
+        def.levels[0].storage_inputs = 30;
+        def.levels[0].storage_outputs = 5;
         w.set_economy(eco);
         assert_eq!(w.inventories[&b.id].capacity_of(Good::Wood), 30, "Eingang");
         assert_eq!(w.inventories[&b.id].capacity_of(Good::Longbow), 5, "Ergebnis");

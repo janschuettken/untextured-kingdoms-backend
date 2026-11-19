@@ -124,7 +124,7 @@ impl World {
             }
         }
         // Holen: Eingänge für zwei Durchläufe, wenn der Betrieb Lieferungen annimmt.
-        if !self.buildings[bi].settings.accept_deliveries || self.target_reached(bi) {
+        if self.target_reached(bi) {
             return true;
         }
         if let Some(load) = self.missing_input(bi) {
@@ -143,7 +143,7 @@ impl World {
     /// `only_here`: nur, was genau dieses Lager hat (beim Abliefern nebenbei mitnehmen).
     fn pick_up_inputs(&mut self, k: usize, bi: usize, hub: u32, only_here: bool) {
         let b = &self.buildings[bi];
-        if !b.settings.accept_deliveries || self.target_reached(bi) {
+        if self.target_reached(bi) {
             return;
         }
         let owner = b.owner;

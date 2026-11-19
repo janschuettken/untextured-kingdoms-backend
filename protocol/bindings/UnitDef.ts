@@ -35,7 +35,23 @@ range: number,
  */
 upkeep: number, 
 /**
+ * Essen je Zahltag (Einheiten aus `population.food`). Fehlt es, laufen die Soldaten langsamer.
+ */
+food: number, 
+/**
  * Fernkämpfer (Reichweite über `army.melee_range`) können diese Einheit nicht verletzen
  * (der König: nur Nahkämpfer können ihn töten).
  */
-ranged_immune: boolean, };
+ranged_immune: boolean, 
+/**
+ * Sekunden zwischen zwei Schlägen oder Schüssen.
+ */
+attack_seconds: number, 
+/**
+ * Heiler: so viele Lebenspunkte gibt er je Behandlung zurück (alle `army.heal_seconds`). 0 = heilt nicht.
+ */
+heal: number, 
+/**
+ * Heiler: so weit (Felder) reicht er zu einem Verwundeten.
+ */
+heal_range: number, };

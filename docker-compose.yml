@@ -6,7 +6,11 @@
 # HTTPS macht der Webserver davor (bei uns Apache, siehe deploy/apache-vhost.conf).
 services:
   server:
-    build: .
+    build:
+      context: .
+      # Version für die Lobby (Commit und Datum), setzt deploy/update.sh.
+      args:
+        GIT_REV: ${BACKEND_REV:-}
     restart: unless-stopped
     # Beim Stoppen speichert der Server alle laufenden Spiele, dafür etwas Zeit lassen.
     stop_grace_period: 30s
@@ -41,7 +45,10 @@ services:
       - db_data:/var/lib/postgresql/data
 
   web:
-    build: ../untextured-kingdoms-frontend
+    build:
+      context: ../untextured-kingdoms-frontend
+      args:
+        GIT_REV: ${FRONTEND_REV:-}
     restart: unless-stopped
     depends_on:
       - server

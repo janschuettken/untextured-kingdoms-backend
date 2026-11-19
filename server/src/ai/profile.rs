@@ -83,6 +83,10 @@ pub struct Profile {
     pub expand_max: u32,
     /// Schnelle Mauer (Palisade), solange für die richtige das Material fehlt; wird später ersetzt.
     pub quick_wall: Option<BuildingKind>,
+    /// Angriff trotz Unterlegenheit, 0 bis 1 (1 = ständig, sobald eine Welle bereit ist).
+    pub daring: f32,
+    /// Hilfsbereitschaft gegenüber Verbündeten, 0 bis 1 (Anteil der freien Soldaten).
+    pub helpfulness: f32,
 }
 
 /// Wann und wie er angreift.
@@ -173,6 +177,8 @@ impl Profile {
                 walls: true,
                 castle: CastleLayout::Octagon,
                 recipes: Vec::new(),
+                daring: 0.3,
+                helpfulness: 0.5,
                 attack: Some(Attack {
                     first_minutes: 18.0,
                     wave_min: 8,
@@ -217,6 +223,7 @@ impl Profile {
                     (Quarry, 2),
                     (Sawmill, 2),
                     (Smithy, 1),
+                    (Apothecary, 1),
                     (Barracks, 2),
                     (House, 4),
                     (Stonemason, 2),
@@ -229,9 +236,11 @@ impl Profile {
                     (Good::Spear, 8),
                     (Good::Longbow, 8),
                     (Good::Sword, 6),
+                    (Good::Salve, 6),
                 ],
                 army_size: 24,
-                army_units: vec![UnitKind::Spearman, UnitKind::Archer, UnitKind::LightSwordsman, UnitKind::Archer],
+                // Auf vier Kämpfer ein Heiler aus der Apotheke.
+                army_units: vec![UnitKind::Spearman, UnitKind::Archer, UnitKind::LightSwordsman, UnitKind::Archer, UnitKind::Healer],
                 queue_per_barracks: 3,
                 garrison_ranged: true,
                 wall_kind: Wall,
@@ -255,6 +264,8 @@ impl Profile {
                 walls: true,
                 castle: CastleLayout::Narrows,
                 recipes: Vec::new(),
+                daring: 0.3,
+                helpfulness: 0.5,
                 attack: Some(Attack {
                     first_minutes: 14.0,
                     wave_min: 12,
@@ -305,6 +316,7 @@ impl Profile {
                     (Woodcutter, 10),
                     (Sawmill, 2),
                     (Smithy, 1),
+                    (Apothecary, 1),
                     (Orchard, 2),
                     (House, 4),
                     (Stonemason, 2),
@@ -322,6 +334,7 @@ impl Profile {
                     (Good::Longbow, 10),
                     (Good::Crossbow, 8),
                     (Good::Sword, 8),
+                    (Good::Salve, 8),
                 ],
                 army_size: 40,
                 army_units: vec![
@@ -332,6 +345,7 @@ impl Profile {
                     UnitKind::Spearman,
                     UnitKind::Crossbowman,
                     UnitKind::Archer,
+                    UnitKind::Healer,
                 ],
                 queue_per_barracks: 4,
                 garrison_ranged: true,
@@ -361,6 +375,8 @@ impl Profile {
                 walls: true,
                 castle: CastleLayout::Narrows,
                 recipes: vec!["make_crossbow".into()],
+                daring: 0.4,
+                helpfulness: 0.7,
                 attack: Some(Attack {
                     first_minutes: 15.0,
                     wave_min: 14,
@@ -413,6 +429,18 @@ fn pick(p: &AiPersonality, family: &[BuildingKind], level_kind: BuildingKind) ->
 impl Profile {
     /// Profil der Stufe mit dem Charakter darauf. `economy` braucht er, um zu wissen, was
     /// zusätzliche Soldaten brauchen (Waffen, Betriebe, Kasernenstufe).
+    /// Profil für einen Platz: Stufe, Charakter und die Regler aus der Lobby.
+    pub fn for_seat(seat: &crate::ai::Seat, all: &protocol::AiPersonalities, economy: &Economy) -> Profile {
+        let mut prof = Profile::build(seat.level, crate::ai::personality::find(all, &seat.personality), economy);
+        if let Some(d) = seat.daring {
+            prof.daring = d.min(100) as f32 / 100.0;
+        }
+        if let Some(h) = seat.helpfulness {
+            prof.helpfulness = h.min(100) as f32 / 100.0;
+        }
+        prof
+    }
+
     pub fn build(level: AiLevel, p: &AiPersonality, economy: &Economy) -> Profile {
         let mut prof = Profile::for_level(level);
         let bw = |k: BuildingKind| weight(&p.buildings, &k);
@@ -496,6 +524,8 @@ impl Profile {
         if p.castle != CastleLayout::Level {
             prof.castle = p.castle;
         }
+        prof.daring = p.daring.min(100) as f32 / 100.0;
+        prof.helpfulness = p.helpfulness.min(100) as f32 / 100.0;
         // Angriffslust.
         if p.aggression == 0 {
             prof.attack = None;

@@ -77,7 +77,7 @@ impl World {
                 BuildingStatus::Working
             }
             Some(Gather::Working { tile, left }) => {
-                let left = left - dt * self.hunger_factor(owner);
+                let left = left - dt * self.unit_hunger_factor(k);
                 if left > 0.0 {
                     self.units[k].gather = Some(Gather::Working { tile, left });
                     return BuildingStatus::Working;
@@ -107,7 +107,7 @@ impl World {
                         self.units[k].cooldown = RETRY;
                         self.go_to_building(k, bi);
                         self.units[k].gather = Some(Gather::Home);
-                        return BuildingStatus::StorageFull;
+                        return BuildingStatus::NoStorageRoom;
                     }
                 }
                 self.units[k].gather = None;
@@ -200,7 +200,7 @@ impl World {
             return BuildingStatus::Working;
         }
         self.units[k].gather = Some(Gather::Home);
-        BuildingStatus::StorageFull
+        self.full_status(owner, [load.good])
     }
 
     fn go_to_building(&mut self, k: usize, bi: usize) {
@@ -275,7 +275,7 @@ impl World {
         if def.gathers.is_empty() && def.levels.iter().all(|l| l.recipes.is_empty()) {
             return 0;
         }
-        def.workers.max(1)
+        def.at(b.level).workers.max(1)
     }
 
     /// `count` neue Arbeiter für das Gebäude `bi`.
@@ -371,7 +371,7 @@ mod tests {
         let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
         w.spawn_player(1);
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
-        let r = w.economy.building(BuildingKind::Quarry).unwrap().gather_radius;
+        let r = w.economy.building(BuildingKind::Quarry).unwrap().at(1).gather_radius;
         assert!(r >= 2, "kleiner Umkreis eingestellt");
         // Zu weit weg geht nicht, daneben schon.
         assert_eq!(w.place_building(1, BuildingKind::Quarry, 24 - r, 6).unwrap_err().key, "error.needs_resource");
