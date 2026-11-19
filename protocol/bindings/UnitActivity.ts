@@ -3,4 +3,4 @@
 /**
  * Was eine Einheit gerade tut (für die Anzeige beim Anklicken).
  */
-export type UnitActivity = "idle" | "walking" | "on_wall" | "to_resource" | "gathering" | "working" | "bringing_home" | "delivering" | "fetching" | "picking_up" | "unloading" | "returning";
+export type UnitActivity = "idle" | "walking" | "on_wall" | "to_resource" | "gathering" | "working" | "bringing_home" | "delivering" | "fetching" | "picking_up" | "unloading" | "returning" | "to_horse" | "fallen";

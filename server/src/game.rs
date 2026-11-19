@@ -613,6 +613,8 @@ async fn handle_msg(
         | ClientMsg::CancelTraining { .. }
         | ClientMsg::PrioritizeTraining { .. }
         | ClientMsg::Attack { .. }
+        | ClientMsg::Mount { .. }
+        | ClientMsg::Dismount { .. }
         | ClientMsg::RepairBuilding { .. }
         | ClientMsg::Trade { .. }
         | ClientMsg::SendGoods { .. }) => {
@@ -682,6 +684,12 @@ pub fn apply_command(
             for event in world.take_events() {
                 send(event);
             }
+        }
+        ClientMsg::Mount { unit_ids } => {
+            world.order_mount(player_id, &unit_ids)?;
+        }
+        ClientMsg::Dismount { unit_ids } => {
+            world.order_dismount(player_id, &unit_ids)?;
         }
         ClientMsg::PlaceBuilding {
             kind,

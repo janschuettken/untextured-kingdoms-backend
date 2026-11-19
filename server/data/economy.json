@@ -18,7 +18,8 @@
     "sword",
     "armor",
     "light_armor",
-    "saddle"
+    "saddle",
+    "horse"
   ],
   "buildings": [
     {
@@ -44,6 +45,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 1}],
@@ -77,6 +79,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 1}],
@@ -110,6 +113,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 6}],
@@ -150,6 +154,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 3}],
@@ -190,6 +195,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "blocks", "amount": 3}],
@@ -230,6 +236,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 6}, {"good": "blocks", "amount": 10}],
@@ -270,6 +277,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 5}, {"good": "blocks", "amount": 14}],
@@ -310,6 +318,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 12}, {"good": "wood", "amount": 5}],
@@ -350,6 +359,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -388,6 +398,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 3}],
@@ -428,6 +439,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 6}, {"good": "wood", "amount": 4}],
@@ -463,6 +475,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -501,6 +514,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 26}],
@@ -543,6 +557,7 @@
       "hub_capacity": 300,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}, {"good": "boards", "amount": 10}],
@@ -577,6 +592,7 @@
       "hub_capacity": 200,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -622,6 +638,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -677,6 +694,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [{"cost": [], "recipes": [], "housing": 0, "spawns": [], "trains": []}]
     },
     {
@@ -704,6 +722,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 10}],
@@ -740,6 +759,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -776,6 +796,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 15}],
@@ -810,6 +831,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -843,6 +865,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -876,6 +899,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -909,6 +933,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -942,6 +967,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 20}],
@@ -982,6 +1008,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 20}],
@@ -1022,6 +1049,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -1059,6 +1087,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -1107,6 +1136,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 30}],
@@ -1140,6 +1170,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -1178,6 +1209,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -1211,6 +1243,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -1252,10 +1285,45 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 30}],
           "recipes": ["raise_cattle"],
+          "housing": 0,
+          "spawns": [],
+          "trains": []
+        }
+      ]
+    },
+    {
+      "kind": "horse_farm",
+      "category": "military",
+      "w": 6,
+      "h": 6,
+      "max_hp": 300,
+      "service_radius": 0,
+      "no_entrance": false,
+      "spawns": [],
+      "workers": 1,
+      "walkway_from_level": 0,
+      "stairs_from_level": 0,
+      "gate_radius": 0,
+      "garrison": 0,
+      "build_radius": 0,
+      "on_walls": false,
+      "on_ramps": false,
+      "road_speed_percent": 0,
+      "first_free": false,
+      "hub_goods": [],
+      "hub_capacity": 0,
+      "storage_inputs": 0,
+      "storage_outputs": 0,
+      "horse_capacity": 6,
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 25}],
+          "recipes": ["breed_horse"],
           "housing": 0,
           "spawns": [],
           "trains": []
@@ -1285,6 +1353,7 @@
       "hub_capacity": 0,
       "storage_inputs": 0,
       "storage_outputs": 0,
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -1478,6 +1547,14 @@
       "outputs": [{"good": "fruit", "amount": 10}],
       "seconds": 25,
       "unattended_percent": 80
+    },
+    {
+      "id": "breed_horse",
+      "building": "horse_farm",
+      "inputs": [{"good": "grain", "amount": 2}],
+      "outputs": [{"good": "horse", "amount": 1}],
+      "seconds": 45,
+      "unattended_percent": 60
     }
   ],
   "start_stock": [
@@ -1553,7 +1630,9 @@
       "attack": 20,
       "range": 1.2,
       "upkeep": 0,
-      "ranged_immune": false
+      "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false
     },
     {
       "kind": "worker",
@@ -1565,7 +1644,9 @@
       "attack": 0,
       "range": 0,
       "upkeep": 0,
-      "ranged_immune": false
+      "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false
     },
     {
       "kind": "carrier",
@@ -1577,7 +1658,9 @@
       "attack": 0,
       "range": 0,
       "upkeep": 0,
-      "ranged_immune": false
+      "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false
     },
     {
       "kind": "cart",
@@ -1589,7 +1672,9 @@
       "attack": 0,
       "range": 0,
       "upkeep": 0,
-      "ranged_immune": false
+      "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false
     },
     {
       "kind": "trade_cart",
@@ -1601,7 +1686,9 @@
       "attack": 0,
       "range": 0,
       "upkeep": 0,
-      "ranged_immune": false
+      "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false
     },
     {
       "kind": "spearman",
@@ -1613,7 +1700,9 @@
       "attack": 8,
       "range": 1.5,
       "upkeep": 0,
-      "ranged_immune": false
+      "ranged_immune": false,
+      "can_ride": true,
+      "mounted": false
     },
     {
       "kind": "archer",
@@ -1625,7 +1714,9 @@
       "attack": 3,
       "range": 18,
       "upkeep": 0,
-      "ranged_immune": false
+      "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false
     },
     {
       "kind": "crossbowman",
@@ -1637,7 +1728,9 @@
       "attack": 6,
       "range": 17,
       "upkeep": 0,
-      "ranged_immune": false
+      "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false
     },
     {
       "kind": "light_swordsman",
@@ -1649,7 +1742,9 @@
       "attack": 10,
       "range": 1,
       "upkeep": 0,
-      "ranged_immune": false
+      "ranged_immune": false,
+      "can_ride": true,
+      "mounted": false
     },
     {
       "kind": "swordsman",
@@ -1661,7 +1756,9 @@
       "attack": 12,
       "range": 1,
       "upkeep": 0,
-      "ranged_immune": false
+      "ranged_immune": false,
+      "can_ride": true,
+      "mounted": false
     },
     {
       "kind": "knight",
@@ -1677,7 +1774,9 @@
       "attack": 16,
       "range": 1,
       "upkeep": 0,
-      "ranged_immune": false
+      "ranged_immune": false,
+      "can_ride": true,
+      "mounted": true
     }
   ],
   "army": {
@@ -1687,6 +1786,10 @@
     "attack_seconds": 1.5,
     "melee_range": 2,
     "civilian_respawn_seconds": 30,
-    "enemy_block_radius": 50
+    "enemy_block_radius": 50,
+    "horse_hp": 40,
+    "horse_speed": 2.4,
+    "fall_damage": 15,
+    "fall_seconds": 8
   }
 }

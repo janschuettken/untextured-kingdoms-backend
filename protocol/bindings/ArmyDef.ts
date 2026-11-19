@@ -33,4 +33,20 @@ civilian_respawn_seconds: number,
  * Bauen, Ausbauen und Reparieren nur, wenn in diesem Umkreis (Felder) kein feindlicher
  * Soldat oder König steht. 0 = immer erlaubt.
  */
-enemy_block_radius: number, };
+enemy_block_radius: number, 
+/**
+ * Lebenspunkte eines Pferdes. Treffer gegen einen Reiter gehen erst aufs Pferd.
+ */
+horse_hp: number, 
+/**
+ * Tempo zu Pferd (Felder pro Sekunde); wer zu Fuß schneller ist, bleibt so schnell.
+ */
+horse_speed: number, 
+/**
+ * Fällt das Pferd, nimmt der Reiter beim Sturz so viel Schaden …
+ */
+fall_damage: number, 
+/**
+ * … und liegt so viele Sekunden am Boden: kann nicht laufen und nicht kämpfen.
+ */
+fall_seconds: number, };

@@ -109,4 +109,8 @@ storage_inputs: number,
 /**
  * Betriebe: so viel passt je Ergebnis ins eigene Lager. 0 = `transport.building_capacity`.
  */
-storage_outputs: number, levels: Array<BuildingLevel>, };
+storage_outputs: number, 
+/**
+ * Pferdezucht: so viele Pferde passen hinein. 0 = keine Pferde.
+ */
+horse_capacity: number, levels: Array<BuildingLevel>, };

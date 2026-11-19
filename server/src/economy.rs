@@ -22,6 +22,32 @@ fn default_king(speed: f32) -> UnitDef {
         range: 1.2,
         upkeep: 0,
         ranged_immune: true,
+        can_ride: false,
+        mounted: false,
+    }
+}
+
+/// Was eine ältere Balancing-Datei noch nicht kennt (neue Waren, neue Gebäude samt
+/// ihren Rezepten), kommt aus den eingebauten Werten dazu. Vorhandene Werte bleiben.
+fn fill_from_builtin(def: &mut EconomyDef) {
+    let Ok(builtin) = serde_json::from_str::<EconomyDef>(ECONOMY_JSON) else { return };
+    for g in &builtin.goods {
+        if !def.goods.contains(g) {
+            def.goods.push(*g);
+        }
+    }
+    for b in &builtin.buildings {
+        if def.buildings.iter().any(|x| x.kind == b.kind) {
+            continue;
+        }
+        for id in b.levels.iter().flat_map(|l| &l.recipes) {
+            if !def.recipes.iter().any(|r| &r.id == id) {
+                if let Some(r) = builtin.recipes.iter().find(|r| &r.id == id) {
+                    def.recipes.push(r.clone());
+                }
+            }
+        }
+        def.buildings.push(b.clone());
     }
 }
 
@@ -63,6 +89,7 @@ impl Economy {
     /// Liest und prüft die Wirtschaftsdaten.
     pub fn parse(json: &str) -> Result<Economy, String> {
         let mut def: EconomyDef = serde_json::from_str(json).map_err(|e| format!("economy.json: {e}"))?;
+        fill_from_builtin(&mut def);
         // Ältere Balancing-Dateien kennen den König noch nicht: Grundwerte einsetzen.
         if !def.units.iter().any(|u| u.kind == UnitKind::King) {
             def.units.insert(0, default_king(def.movement.king_speed));
@@ -190,6 +217,15 @@ impl Economy {
         }
         if !(army.melee_range >= 0.0 && army.melee_range.is_finite()) {
             return Err("Heer: melee_range darf nicht negativ sein".into());
+        }
+        if army.horse_hp == 0 {
+            return Err("Heer: horse_hp muss mindestens 1 sein".into());
+        }
+        if !(army.horse_speed > 0.0 && army.horse_speed.is_finite()) {
+            return Err("Heer: horse_speed muss größer als 0 sein".into());
+        }
+        if !(army.fall_seconds >= 0.0 && army.fall_seconds.is_finite()) {
+            return Err("Heer: fall_seconds darf nicht negativ sein".into());
         }
         if !(army.enemy_block_radius >= 0.0 && army.enemy_block_radius.is_finite()) {
             return Err("Heer: enemy_block_radius darf nicht negativ sein (0 = aus)".into());
@@ -342,7 +378,7 @@ mod tests {
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 34);
+        assert_eq!(eco.def.buildings.len(), 35);
         assert!(eco.def.buildings.iter().any(|b| b.hub), "ohne Lager kein Transport");
     }
 
@@ -373,6 +409,18 @@ mod tests {
         let again = Economy::parse(&text).unwrap();
         assert_eq!(again.to_json(), text);
         assert!(text.lines().all(|l| l.len() <= 120), "kurze Zeilen");
+    }
+
+    #[test]
+    fn alte_datei_bekommt_neue_gebaeude_dazu() {
+        // Eine Balancing-Datei von vor der Pferdezucht: Zucht, Rezept und Ware kommen dazu.
+        let mut v: serde_json::Value = serde_json::from_str(ECONOMY_JSON).unwrap();
+        v["buildings"].as_array_mut().unwrap().retain(|b| b["kind"] != "horse_farm");
+        v["recipes"].as_array_mut().unwrap().retain(|r| r["building"] != "horse_farm");
+        v["goods"].as_array_mut().unwrap().retain(|g| g != "horse");
+        let eco = Economy::parse(&v.to_string()).unwrap();
+        assert!(eco.building(BuildingKind::HorseFarm).is_some());
+        assert!(eco.def.goods.contains(&protocol::Good::Horse));
     }
 
     #[test]

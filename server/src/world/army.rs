@@ -40,6 +40,16 @@ impl World {
         if room == 0 {
             return Err(Text::new("error.queue_full").arg("max", max));
         }
+        // Ritter kommen beritten: je einer braucht ein freies Pferd aus einer Pferdezucht.
+        let mut room = room;
+        if unit.mounted {
+            let horses = self.horses_available(player);
+            if horses == 0 {
+                return Err(Text::new("error.no_horse"));
+            }
+            room = room.min(horses);
+        }
+        let near = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
         let stock = self.stocks.get_mut(&player).ok_or_else(|| Text::new("error.no_player"))?;
         let mut ordered = 0;
         for _ in 0..count.clamp(1, room) {
@@ -62,6 +72,11 @@ impl World {
             ordered += 1;
         }
         self.dirty_stocks.insert(player);
+        if unit.mounted {
+            for _ in 0..ordered {
+                self.take_horse(player, near);
+            }
+        }
         let b = self.buildings.iter_mut().find(|b| b.id == building_id).expect("eben gefunden");
         if b.training.is_empty() {
             b.training_left = unit.seconds;
@@ -122,7 +137,7 @@ impl World {
                 x.training_left = left;
             }
         }
-        self.refund_training(player, &removed);
+        self.refund_training(player, &removed, (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0));
         Ok(self.buildings.iter().find(|x| x.id == building_id).cloned().unwrap_or(b))
     }
 
@@ -152,14 +167,19 @@ impl World {
     }
 
     /// Kosten nicht fertiger Soldaten zurück in den Vorrat.
-    pub(super) fn refund_training(&mut self, player: u32, kinds: &[UnitKind]) {
+    pub(super) fn refund_training(&mut self, player: u32, kinds: &[UnitKind], near: (f32, f32)) {
         let mut goods: Vec<GoodAmount> = Vec::new();
         let mut taler = 0;
+        let mut horses = 0;
         for k in kinds {
             if let Some(u) = self.economy.unit(*k) {
                 goods.extend(u.cost.iter().copied());
                 taler += u.taler;
+                horses += u.mounted as u32;
             }
+        }
+        for _ in 0..horses {
+            self.return_horse(player, near);
         }
         let Some(stock) = self.stocks.get_mut(&player) else { return };
         // Das kam eben erst aus dem Vorrat, also auch ohne Platz zurück.
@@ -201,7 +221,9 @@ impl World {
         let Some(door) = self.door(b, center) else { return false };
         let id = self.next_unit_id;
         self.next_unit_id += 1;
-        self.units.push(Unit::new(id, b.owner, kind, door));
+        let mut unit = Unit::new(id, b.owner, kind, door);
+        unit.mounted = self.economy.unit(kind).is_some_and(|d| d.mounted);
+        self.units.push(unit);
         // Sammelplatz: Reihen zu dreien vor dem Eingang.
         let (out, side) = match b.rotation % 4 {
             0 => ((0.0, 1.0), (1.0, 0.0)),

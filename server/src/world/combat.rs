@@ -136,6 +136,10 @@ impl World {
                 teams.push(team);
             }
             grid.entry(((u.pos.0 / CELL) as i32, (u.pos.1 / CELL) as i32)).or_default().push(k);
+            // Nach dem Sturz vom Pferd: liegt am Boden und kämpft nicht.
+            if u.down > 0.0 {
+                continue;
+            }
             if u.attack_order.is_some() {
                 ordered.push(k);
             } else if def.attack > 0 && def.range > 0.0 && u.attack_cooldown <= 0.0 && u.path.is_empty() {
@@ -281,8 +285,8 @@ impl World {
         let mut killed_by: HashMap<usize, u32> = HashMap::new();
         for (j, attack, by) in hits {
             let max = self.economy.unit(self.units[j].kind).map_or(0, |d| d.hp);
-            let u = &mut self.units[j];
-            u.damage = u.damage.saturating_add(attack);
+            self.hurt_unit(j, attack);
+            let u = &self.units[j];
             if u.damage >= max {
                 killed_by.entry(j).or_insert(by);
             }

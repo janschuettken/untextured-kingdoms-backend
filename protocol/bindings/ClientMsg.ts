@@ -9,7 +9,7 @@ import type { UnitKind } from "./UnitKind";
 /**
  * Nachrichten vom Client an den Server.
  */
-export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", client_time: number, } | { "type": "move_units", unit_ids: Array<number>, x: number, y: number, } | { "type": "attack", unit_ids: Array<number>, target: AttackTarget, } | { "type": "place_building", kind: BuildingKind, x: number, y: number, rotation: number, 
+export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", client_time: number, } | { "type": "move_units", unit_ids: Array<number>, x: number, y: number, } | { "type": "attack", unit_ids: Array<number>, target: AttackTarget, } | { "type": "mount", unit_ids: Array<number>, } | { "type": "dismount", unit_ids: Array<number>, } | { "type": "place_building", kind: BuildingKind, x: number, y: number, rotation: number, 
 /**
  * Gleich auf dieser Stufe bauen (0 oder 1 = erste Stufe). Kostet alle Stufen bis dahin.
  */

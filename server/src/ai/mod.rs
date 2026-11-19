@@ -667,6 +667,8 @@ impl Computer {
         let floor = self.profile.trade.as_ref().map_or(0, |t| t.taler_reserve);
         let mut taler = stock.taler.saturating_sub(floor);
         let mut goods: HashMap<Good, u32> = stock.goods.iter().map(|g| (g.good, g.amount)).collect();
+        // Freie Pferde in den eigenen Pferdezuchten (Ritter brauchen eins).
+        let mut horses = world.horses_available(self.player);
         for b in barracks {
             let mut len = b.training.len();
             while len < queue_max && stock.army.soldiers + queued < self.profile.army_size {
@@ -678,17 +680,33 @@ impl Computer {
                         d.levels.iter().take(b.level as usize).any(|l| l.trains.contains(&kind))
                     });
                     let paid = taler >= def.taler && def.cost.iter().all(|c| goods.get(&c.good).copied().unwrap_or(0) >= c.amount);
-                    (can && paid).then_some((step, kind, def))
+                    let horse = !def.mounted || horses > 0;
+                    (can && paid && horse).then_some((step, kind, def))
                 });
                 let Some((step, kind, def)) = pick else { break };
                 taler -= def.taler;
                 for c in &def.cost {
                     *goods.entry(c.good).or_default() -= c.amount;
                 }
+                horses -= def.mounted as u32;
                 cmds.push(ClientMsg::TrainUnits { building_id: b.id, kind, count: 1, spread: false });
                 self.next_unit = (self.next_unit + step + 1) % units.len();
                 len += 1;
                 queued += 1;
+            }
+        }
+        // Übrige Pferde: wartende Soldaten, die reiten können, steigen auf (schneller, Pferd fängt Treffer ab).
+        if horses > 0 {
+            let riders: Vec<u32> = world
+                .units
+                .iter()
+                .filter(|u| u.owner == self.player && !u.is_moving() && !u.mounted() && !self.on_campaign(u.id))
+                .filter(|u| world.economy.unit(u.kind).is_some_and(|d| d.can_ride))
+                .take(horses as usize)
+                .map(|u| u.id)
+                .collect();
+            if !riders.is_empty() {
+                cmds.push(ClientMsg::Mount { unit_ids: riders });
             }
         }
     }

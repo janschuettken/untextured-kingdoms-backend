@@ -38,4 +38,12 @@ upkeep: number,
  * Fernkämpfer (Reichweite über `army.melee_range`) können diese Einheit nicht verletzen
  * (der König: nur Nahkämpfer können ihn töten).
  */
-ranged_immune: boolean, };
+ranged_immune: boolean, 
+/**
+ * Kann auf ein Pferd aus der Pferdezucht steigen.
+ */
+can_ride: boolean, 
+/**
+ * Kommt beritten aus der Kaserne (Ritter): die Ausbildung braucht ein Pferd aus einer Pferdezucht.
+ */
+mounted: boolean, };

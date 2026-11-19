@@ -28,6 +28,11 @@ pub enum ClientMsg {
     /// Ziel und greifen an, bis es fällt. Wer dem Ziel nichts anhaben kann (Fernkämpfer gegen
     /// König oder Gebäude) oder ein Verbündeter ist, läuft nur hin.
     Attack { unit_ids: Vec<u32>, target: AttackTarget },
+    /// Einheiten, die reiten können, laufen zur nächsten eigenen Pferdezucht mit freiem
+    /// Pferd und steigen dort auf.
+    Mount { unit_ids: Vec<u32> },
+    /// Reiter steigen ab; das Pferd läuft zurück in die nächste eigene Pferdezucht.
+    Dismount { unit_ids: Vec<u32> },
     /// Gebäude bauen. (x, y) ist das Feld oben links der Grundfläche.
     /// Der Server prüft Untergrund, Platz und Besitz.
     /// `x`, `y` ist die linke obere Ecke der (gedrehten) Grundfläche.
@@ -689,6 +694,10 @@ pub enum UnitActivity {
     Unloading,
     /// Träger/Karren: zurück zum Heimatgebäude.
     Returning,
+    /// Läuft zur Pferdezucht, um aufzusteigen.
+    ToHorse,
+    /// Vom gefallenen Pferd gestürzt: liegt am Boden und kann eine Weile nicht kämpfen.
+    Fallen,
 }
 
 /// Genaueres zu einer beobachteten eigenen Einheit (siehe `WatchUnit`).
@@ -731,6 +740,15 @@ pub struct UnitState {
     /// Lebenspunkte (Höchstwert: `hp` der Einheit in `economy.units`). 0 = hat keine (Träger, Arbeiter).
     #[serde(default)]
     pub hp: u32,
+    /// Sitzt auf einem Pferd.
+    #[serde(default)]
+    pub mounted: bool,
+    /// Lebenspunkte des Pferdes (Höchstwert: `army.horse_hp`), 0 ohne Pferd.
+    #[serde(default)]
+    pub horse_hp: u32,
+    /// Sekunden, die die Einheit nach einem Sturz noch am Boden liegt (0 = steht).
+    #[serde(default)]
+    pub down: f32,
 }
 
 /// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.
@@ -779,6 +797,8 @@ pub enum Good {
     Armor,
     LightArmor,
     Saddle,
+    /// Pferd aus der Pferdezucht. Bleibt in der Zucht, bis eine Einheit aufsteigt.
+    Horse,
 }
 
 /// Menge einer Ware.
@@ -855,6 +875,8 @@ pub enum BuildingKind {
     Orchard,
     PigFarm,
     CattleFarm,
+    /// Pferdezucht: züchtet Pferde aus Getreide; Reiter holen sie hier ab.
+    HorseFarm,
     /// Wagenschuppen: stellt einen Karren für große Ladungen.
     CartShed,
     /// Wohnhaus: Platz für Arbeiter und Träger.
@@ -1010,6 +1032,9 @@ pub struct BuildingDef {
     /// Betriebe: so viel passt je Ergebnis ins eigene Lager. 0 = `transport.building_capacity`.
     #[serde(default)]
     pub storage_outputs: u32,
+    /// Pferdezucht: so viele Pferde passen hinein. 0 = keine Pferde.
+    #[serde(default)]
+    pub horse_capacity: u32,
     pub levels: Vec<BuildingLevel>,
 }
 
@@ -1120,6 +1145,12 @@ pub struct UnitDef {
     /// (der König: nur Nahkämpfer können ihn töten).
     #[serde(default)]
     pub ranged_immune: bool,
+    /// Kann auf ein Pferd aus der Pferdezucht steigen.
+    #[serde(default)]
+    pub can_ride: bool,
+    /// Kommt beritten aus der Kaserne (Ritter): die Ausbildung braucht ein Pferd aus einer Pferdezucht.
+    #[serde(default)]
+    pub mounted: bool,
 }
 
 /// Regeln für das Heer.
@@ -1143,11 +1174,31 @@ pub struct ArmyDef {
     /// Bauen, Ausbauen und Reparieren nur, wenn in diesem Umkreis (Felder) kein feindlicher
     /// Soldat oder König steht. 0 = immer erlaubt.
     pub enemy_block_radius: f32,
+    /// Lebenspunkte eines Pferdes. Treffer gegen einen Reiter gehen erst aufs Pferd.
+    pub horse_hp: u32,
+    /// Tempo zu Pferd (Felder pro Sekunde); wer zu Fuß schneller ist, bleibt so schnell.
+    pub horse_speed: f32,
+    /// Fällt das Pferd, nimmt der Reiter beim Sturz so viel Schaden …
+    pub fall_damage: u32,
+    /// … und liegt so viele Sekunden am Boden: kann nicht laufen und nicht kämpfen.
+    pub fall_seconds: f32,
 }
 
 impl Default for ArmyDef {
     fn default() -> Self {
-        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, attack_seconds: 1.5, melee_range: 2.0, civilian_respawn_seconds: 30.0, enemy_block_radius: 50.0 }
+        ArmyDef {
+            upkeep_seconds: 60.0,
+            unpaid_speed_percent: 60,
+            queue_max: 10,
+            attack_seconds: 1.5,
+            melee_range: 2.0,
+            civilian_respawn_seconds: 30.0,
+            enemy_block_radius: 50.0,
+            horse_hp: 40,
+            horse_speed: 2.4,
+            fall_damage: 15,
+            fall_seconds: 8.0,
+        }
     }
 }
 
