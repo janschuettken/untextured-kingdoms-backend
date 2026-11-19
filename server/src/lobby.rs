@@ -4,7 +4,8 @@
 //!   `localStorage`). Daraus leitet der Server eine öffentliche Id ab, die
 //!   andere sehen dürfen. Ein Konto mit Passwort gibt es (noch) nicht.
 //! - WebSocket `/lobby`: Spiele anlegen, beitreten, Startplatz wählen, starten.
-//! - Jeder ist höchstens in einem Spiel. Wer neu lädt, landet wieder dort.
+//! - Jeder sitzt höchstens in einem wartenden Spiel, kann aber in beliebig vielen
+//!   laufenden mitspielen. Ein laufendes Spiel ohne verbundenen Menschen steht still.
 //! - Ein laufendes Spiel nimmt niemanden mehr auf; nur wer dort einen
 //!   Startplatz hat, kommt (wieder) hinein (siehe `game.rs`).
 //! - Laufende Spiele werden in `SAVES_DIR` (Standard `server/data/games/`)
@@ -225,12 +226,21 @@ impl Hub {
         self.games.lock().unwrap().get(&id).cloned()
     }
 
-    /// Das Spiel, in dem dieser Token einen Platz hat.
+    /// Ein Spiel, in dem dieser Token einen Platz hat (das wartende zuerst).
     pub fn game_of(&self, token: &str) -> Option<Arc<Game>> {
+        self.waiting_game_of(token).or_else(|| {
+            let games: Vec<Arc<Game>> = self.games.lock().unwrap().values().cloned().collect();
+            games.into_iter().find(|g| g.meta.lock().unwrap().slot_of(token).is_some())
+        })
+    }
+
+    /// Das wartende Spiel, in dem dieser Token sitzt (davon gibt es höchstens eins).
+    pub fn waiting_game_of(&self, token: &str) -> Option<Arc<Game>> {
         let games: Vec<Arc<Game>> = self.games.lock().unwrap().values().cloned().collect();
-        games
-            .into_iter()
-            .find(|g| g.meta.lock().unwrap().slot_of(token).is_some())
+        games.into_iter().find(|g| {
+            let meta = g.meta.lock().unwrap();
+            meta.phase == GamePhase::Waiting && meta.slot_of(token).is_some()
+        })
     }
 
     /// Laufendes Spiel, in dem der Token mitspielt: Spiel, Zustand, (Spieler-Nummer, Startfeld).
@@ -411,20 +421,13 @@ impl Hub {
                 .get()
                 .map(|m| m.online_players())
                 .unwrap_or_default();
+            let paused = g.running.get().is_some_and(|m| m.paused());
             let host_name = meta
                 .members()
                 .find(|m| m.token == meta.host)
                 .map(|m| m.name.clone())
                 .unwrap_or_default();
-            summaries.push(GameSummary {
-                id: g.id,
-                map: meta.map_name.clone(),
-                phase: meta.phase,
-                host_name,
-                players: meta.members().count() as u32,
-                max_players: meta.slots.len() as u32,
-            });
-            let slots = meta
+            let slots: Vec<LobbySlot> = meta
                 .slots
                 .iter()
                 .enumerate()
@@ -444,6 +447,17 @@ impl Hub {
                     }),
                 })
                 .collect();
+            summaries.push(GameSummary {
+                id: g.id,
+                map: meta.map_name.clone(),
+                phase: meta.phase,
+                host_name,
+                players: meta.members().count() as u32,
+                max_players: meta.slots.len() as u32,
+                mine: false,
+                paused,
+                slots: slots.clone(),
+            });
             let detail = LobbyGame {
                 id: g.id,
                 map: meta.map_name.clone(),
@@ -458,14 +472,16 @@ impl Hub {
         }
         let conns = self.conns.lock().unwrap();
         for c in conns.values() {
+            let mut games = summaries.clone();
+            for (s, (_, tokens)) in games.iter_mut().zip(&details) {
+                s.mine = tokens.contains(&c.token);
+            }
+            // Der Raum: nur das wartende Spiel, laufende stehen in der Liste.
             let current = details
                 .iter()
-                .find(|(_, tokens)| tokens.contains(&c.token))
+                .find(|(d, tokens)| d.phase == GamePhase::Waiting && tokens.contains(&c.token))
                 .map(|(d, _)| d.clone());
-            let _ = c.tx.try_send(LobbyServerMsg::State {
-                games: summaries.clone(),
-                current,
-            });
+            let _ = c.tx.try_send(LobbyServerMsg::State { games, current });
         }
     }
 
@@ -498,7 +514,7 @@ impl Hub {
     }
 
     fn create(&self, token: &str, name: &str, map_name: &str) -> Reply {
-        if self.game_of(token).is_some() {
+        if self.waiting_game_of(token).is_some() {
             return err("lobby.already_in_game");
         }
         let (text, map) = self.read_map(map_name)?;
@@ -527,7 +543,7 @@ impl Hub {
     }
 
     fn join(&self, token: &str, name: &str, id: u32) -> Reply {
-        if self.game_of(token).is_some() {
+        if self.waiting_game_of(token).is_some() {
             return err("lobby.already_in_game");
         }
         let Some(game) = self.game(id) else {
@@ -544,8 +560,13 @@ impl Hub {
         Ok(())
     }
 
-    fn leave(&self, token: &str) -> Reply {
-        let Some(game) = self.game_of(token) else {
+    /// Spiel verlassen: das mit dieser Id, ohne Id das wartende (sonst irgendeins).
+    fn leave(&self, token: &str, id: Option<u32>) -> Reply {
+        let game = match id {
+            Some(id) => self.game(id).filter(|g| g.meta.lock().unwrap().slot_of(token).is_some()),
+            None => self.game_of(token),
+        };
+        let Some(game) = game else {
             return Ok(());
         };
         let empty = {
@@ -575,7 +596,7 @@ impl Hub {
     }
 
     fn take_slot(&self, token: &str, slot: u32) -> Reply {
-        let Some(game) = self.game_of(token) else {
+        let Some(game) = self.waiting_game_of(token) else {
             return err("lobby.not_in_game");
         };
         let mut meta = game.meta.lock().unwrap();
@@ -592,7 +613,7 @@ impl Hub {
     }
 
     fn set_map(&self, token: &str, map_name: &str) -> Reply {
-        let Some(game) = self.game_of(token) else {
+        let Some(game) = self.waiting_game_of(token) else {
             return err("lobby.not_in_game");
         };
         let (text, map) = self.read_map(map_name)?;
@@ -637,7 +658,7 @@ impl Hub {
 
     /// Gastgeber setzt einen Computergegner auf einen freien Startplatz.
     fn add_computer(&self, token: &str, slot: u32, level: AiLevel, personality: Option<String>) -> Reply {
-        let Some(game) = self.game_of(token) else {
+        let Some(game) = self.waiting_game_of(token) else {
             return err("lobby.not_in_game");
         };
         let mut meta = game.meta.lock().unwrap();
@@ -666,7 +687,7 @@ impl Hub {
 
     /// Gastgeber nimmt einen Computergegner wieder heraus.
     fn remove_computer(&self, token: &str, slot: u32) -> Reply {
-        let Some(game) = self.game_of(token) else {
+        let Some(game) = self.waiting_game_of(token) else {
             return err("lobby.not_in_game");
         };
         let mut meta = game.meta.lock().unwrap();
@@ -690,7 +711,7 @@ impl Hub {
 
     /// Bündnis eines Startplatzes setzen: den eigenen jeder, Computergegner nur der Gastgeber.
     fn set_team(&self, token: &str, slot: u32, team: u8) -> Reply {
-        let Some(game) = self.game_of(token) else {
+        let Some(game) = self.waiting_game_of(token) else {
             return err("lobby.not_in_game");
         };
         let mut meta = game.meta.lock().unwrap();
@@ -713,7 +734,7 @@ impl Hub {
 
     /// Gastgeber: wie Waren zwischen Verbündeten ankommen.
     fn set_trade_mode(&self, token: &str, mode: TradeMode) -> Reply {
-        let Some(game) = self.game_of(token) else {
+        let Some(game) = self.waiting_game_of(token) else {
             return err("lobby.not_in_game");
         };
         let mut meta = game.meta.lock().unwrap();
@@ -728,7 +749,7 @@ impl Hub {
     }
 
     fn start(self: &Arc<Hub>, token: &str) -> Reply {
-        let Some(game) = self.game_of(token) else {
+        let Some(game) = self.waiting_game_of(token) else {
             return err("lobby.not_in_game");
         };
         let m = {
@@ -773,7 +794,7 @@ impl Hub {
             }
             LobbyClientMsg::CreateGame { map } => self.create(token, name, &map),
             LobbyClientMsg::JoinGame { game_id } => self.join(token, name, game_id),
-            LobbyClientMsg::LeaveGame => self.leave(token),
+            LobbyClientMsg::LeaveGame { game_id } => self.leave(token, game_id),
             LobbyClientMsg::TakeSlot { slot } => self.take_slot(token, slot),
             LobbyClientMsg::SetMap { map } => self.set_map(token, &map),
             LobbyClientMsg::StartGame => self.start(token),
@@ -812,6 +833,7 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
     let _ = out_tx.try_send(LobbyServerMsg::Welcome {
         you: public_id(&token),
         maps: hub.store.names(),
+        server_version: crate::VERSION.into(),
     });
     hub.conns.lock().unwrap().insert(
         conn,
@@ -896,8 +918,8 @@ mod tests {
         // Gespeichert und wieder ladbar.
         assert!(hub.load_world(id).is_ok());
         // Alle gehen: Spiel weg, Datei weg.
-        hub.leave(A).unwrap();
-        hub.leave(B).unwrap();
+        hub.leave(A, None).unwrap();
+        hub.leave(B, None).unwrap();
         assert!(hub.game(id).is_none());
         assert!(!hub.save_path(id).exists());
     }
@@ -941,9 +963,9 @@ mod tests {
         );
         assert_eq!(m.computers.lock().unwrap().len(), 1);
         // Bleiben nur Computer übrig, ist das Spiel aus.
-        hub.leave(A).unwrap();
+        hub.leave(A, None).unwrap();
         assert!(hub.game(id).is_some());
-        hub.leave(B).unwrap();
+        hub.leave(B, None).unwrap();
         assert!(hub.game(id).is_none());
     }
 
@@ -967,8 +989,38 @@ mod tests {
         assert!(w.allied(1, 2));
         assert_eq!(w.trade_mode(), TradeMode::Carts);
         drop(w);
-        hub.leave(A).unwrap();
-        hub.leave(B).unwrap();
+        hub.leave(A, None).unwrap();
+        hub.leave(B, None).unwrap();
+    }
+
+    #[test]
+    fn mehrere_laufende_spiele_und_pause_ohne_menschen() {
+        let hub = hub();
+        hub.create(A, "Anna", "zwei-burgen").unwrap();
+        let first = hub.waiting_game_of(A).unwrap().id;
+        hub.join(B, "Bert", first).unwrap();
+        hub.start(A).unwrap();
+        // Läuft das erste, darf Anna ein zweites anlegen und starten.
+        assert!(hub.waiting_game_of(A).is_none());
+        hub.create(A, "Anna", "zwei-burgen").unwrap();
+        let second = hub.waiting_game_of(A).unwrap().id;
+        assert_ne!(first, second);
+        assert!(hub.create(A, "Anna", "zwei-burgen").is_err(), "nur ein wartendes Spiel");
+        hub.join(C, "Carl", second).unwrap();
+        hub.start(A).unwrap();
+        assert!(hub.membership(first, A).is_some());
+        assert!(hub.membership(second, A).is_some());
+        // Niemand verbunden: beide stehen still.
+        let m = hub.game(first).unwrap().running.get().unwrap().clone();
+        assert!(m.paused());
+        // Gezielt das erste verlassen, das zweite bleibt.
+        hub.leave(A, Some(first)).unwrap();
+        assert!(hub.membership(first, A).is_none());
+        assert!(hub.membership(second, A).is_some());
+        hub.leave(B, None).unwrap();
+        hub.leave(A, None).unwrap();
+        hub.leave(C, None).unwrap();
+        assert!(hub.game(first).is_none() && hub.game(second).is_none());
     }
 
     #[test]
