@@ -30,6 +30,8 @@ pub const DIRS: [(i32, i32); 8] = [
 
 /// Kantenlänge eines Blocks in Feldern.
 const CLUSTER: i32 = 16;
+/// Keine Brücke auf diesem Feld.
+pub const NO_DECK: u8 = u8::MAX;
 /// Kein Gebiet (Feld nicht begehbar).
 const NO_REGION: u32 = u32::MAX;
 /// Wie weit das Glätten höchstens vorausschaut (in Wegfeldern).
@@ -69,6 +71,11 @@ pub struct NavGrid {
     pub dirs: Vec<u8>,
     /// Nur das Gelände, ohne Blockaden.
     terrain: Vec<u8>,
+    /// Höhenstufe und Wasser je Feld (aus der Karte, ändern sich nie).
+    level: Vec<u8>,
+    water: Vec<bool>,
+    /// Brücken: Stufe des Brückenbelags über diesem Wasserfeld, sonst [`NO_DECK`].
+    deck: Vec<u8>,
     /// Wie viele Dinge dieses Feld blockieren (Gebäude, Wald, ...).
     blocked: Vec<u8>,
     /// Gebiet je Feld: Block · 256 + Nummer im Block.
@@ -97,57 +104,18 @@ impl NavGrid {
     /// die von Anfang an blockiert sind (Wald, Felsen).
     pub fn build(width: u32, height: u32, levels: &[u8], water: &[bool], blocked: &[bool]) -> NavGrid {
         let (w, h) = (width as i32, height as i32);
-        let inside = |x: i32, y: i32| x >= 0 && y >= 0 && x < w && y < h;
-        let idx = |x: i32, y: i32| (y * w + x) as usize;
-        let straight = |x: i32, y: i32, dx: i32, dy: i32| {
-            let (nx, ny) = (x + dx, y + dy);
-            inside(x, y)
-                && inside(nx, ny)
-                && !water[idx(x, y)]
-                && !water[idx(nx, ny)]
-                && levels[idx(x, y)].abs_diff(levels[idx(nx, ny)]) <= 1
-        };
-
         let n = (width * height) as usize;
-        let mut slope = vec![false; n];
-        for y in 0..h {
-            for x in 0..w {
-                let i = idx(x, y);
-                slope[i] = !water[i]
-                    && [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|&(dx, dy)| {
-                        inside(x + dx, y + dy) && !water[idx(x + dx, y + dy)] && levels[i].abs_diff(levels[idx(x + dx, y + dy)]) == 1
-                    });
-            }
-        }
-        let mut terrain = vec![0u8; n];
-        for y in 0..h {
-            for x in 0..w {
-                let mut bits = 0u8;
-                for (b, &(dx, dy)) in DIRS.iter().enumerate() {
-                    let ok = if dx == 0 || dy == 0 {
-                        straight(x, y, dx, dy)
-                    } else {
-                        // Beide Wege um die Ecke müssen gehen.
-                        straight(x, y, dx, 0)
-                            && straight(x + dx, y, 0, dy)
-                            && straight(x, y, 0, dy)
-                            && straight(x, y + dy, dx, 0)
-                    };
-                    if ok {
-                        bits |= 1 << b;
-                    }
-                }
-                terrain[idx(x, y)] = bits;
-            }
-        }
         let (cw, ch) = ((w + CLUSTER - 1) / CLUSTER, (h + CLUSTER - 1) / CLUSTER);
         // Anfangs-Blockaden über die Blockiert-Ebene, damit sie später per
         // `set_blocked(.., false)` wieder freigegeben werden können.
         let mut nav = NavGrid {
             width,
             height,
-            dirs: terrain.clone(),
-            terrain,
+            dirs: vec![0; n],
+            terrain: vec![0; n],
+            level: levels.to_vec(),
+            water: water.to_vec(),
+            deck: vec![NO_DECK; n],
             blocked: blocked.iter().map(|&b| b as u8).collect(),
             region: vec![NO_REGION; n],
             clusters: vec![Vec::new(); (cw * ch) as usize],
@@ -155,12 +123,20 @@ impl NavGrid {
             ch,
             speed: vec![100; n],
             road: vec![100; n],
-            slope,
+            slope: vec![false; n],
             slope_percent: 100,
             weighted: false,
             max_speed: 100,
             scratch: RefCell::new(Scratch::default()),
         };
+        for y in 0..h {
+            for x in 0..w {
+                let i = nav.idx(x, y);
+                nav.slope[i] = nav.slope_of(x, y);
+                nav.terrain[i] = nav.terrain_bits(x, y);
+            }
+        }
+        nav.dirs = nav.terrain.clone();
         if blocked.iter().any(|&b| b) {
             for y in 0..h {
                 for x in 0..w {
@@ -242,9 +218,14 @@ impl NavGrid {
                 }
             }
         }
-        // Betroffene Blöcke neu einteilen, danach deren Nachbarn neu verknüpfen.
-        let (cx0, cy0) = (((x - 1).max(0)) / CLUSTER, ((y - 1).max(0)) / CLUSTER);
-        let (cx1, cy1) = ((x + 1).min(self.width as i32 - 1) / CLUSTER, (y + 1).min(self.height as i32 - 1) / CLUSTER);
+        self.relabel(x - 1, y - 1, x + 1, y + 1);
+    }
+
+    /// Blöcke, die das Rechteck (Felder, Ecken eingeschlossen) berührt, neu einteilen,
+    /// danach sie und ihre Nachbarn neu verknüpfen.
+    fn relabel(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
+        let (cx0, cy0) = (x0.max(0) / CLUSTER, y0.max(0) / CLUSTER);
+        let (cx1, cy1) = (x1.min(self.width as i32 - 1) / CLUSTER, y1.min(self.height as i32 - 1) / CLUSTER);
         for cy in cy0..=cy1 {
             for cx in cx0..=cx1 {
                 self.label_cluster(cy * self.cw + cx);
@@ -255,6 +236,104 @@ impl NavGrid {
                 self.link_cluster(cy * self.cw + cx);
             }
         }
+    }
+
+    /// Ist das Feld Wasser ohne Brücke?
+    fn wet(&self, i: usize) -> bool {
+        self.water[i] && self.deck[i] == NO_DECK
+    }
+
+    /// Höhenstufe zum Laufen: auf Brücken die des Belags.
+    fn walk_level(&self, i: usize) -> u8 {
+        if self.deck[i] != NO_DECK {
+            self.deck[i]
+        } else {
+            self.level[i]
+        }
+    }
+
+    /// Gerader Schritt nur nach Gelände (ohne Blockaden).
+    fn straight(&self, x: i32, y: i32, dx: i32, dy: i32) -> bool {
+        let (nx, ny) = (x + dx, y + dy);
+        if !self.inside(x, y) || !self.inside(nx, ny) {
+            return false;
+        }
+        let (i, j) = (self.idx(x, y), self.idx(nx, ny));
+        !self.wet(i) && !self.wet(j) && self.walk_level(i).abs_diff(self.walk_level(j)) <= 1
+    }
+
+    /// Verbindungen eines Felds nur nach Gelände.
+    fn terrain_bits(&self, x: i32, y: i32) -> u8 {
+        let mut bits = 0u8;
+        for (b, &(dx, dy)) in DIRS.iter().enumerate() {
+            let ok = if dx == 0 || dy == 0 {
+                self.straight(x, y, dx, dy)
+            } else {
+                // Beide Wege um die Ecke müssen gehen.
+                self.straight(x, y, dx, 0)
+                    && self.straight(x + dx, y, 0, dy)
+                    && self.straight(x, y, 0, dy)
+                    && self.straight(x, y + dy, dx, 0)
+            };
+            if ok {
+                bits |= 1 << b;
+            }
+        }
+        bits
+    }
+
+    /// Liegt das Feld an einer Schräge (Nachbar eine Stufe höher oder tiefer)? Brücken nie.
+    fn slope_of(&self, x: i32, y: i32) -> bool {
+        let i = self.idx(x, y);
+        if self.wet(i) || self.deck[i] != NO_DECK {
+            return false;
+        }
+        [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|&(dx, dy)| {
+            let (nx, ny) = (x + dx, y + dy);
+            self.inside(nx, ny) && !self.water[self.idx(nx, ny)] && self.level[i].abs_diff(self.level[self.idx(nx, ny)]) == 1
+        })
+    }
+
+    /// Brücke legen (`Some(stufe)` je Feld) oder entfernen (`None`). Die Felder
+    /// werden begehbar wie Boden auf dieser Stufe; Nachbarn mit höchstens einer Stufe
+    /// Unterschied sind verbunden.
+    pub fn set_deck(&mut self, cells: &[((i32, i32), Option<u8>)]) {
+        let mut rect: Option<(i32, i32, i32, i32)> = None;
+        for &((x, y), lv) in cells {
+            if !self.inside(x, y) {
+                continue;
+            }
+            let i = self.idx(x, y);
+            self.deck[i] = match lv {
+                Some(l) => l.min(NO_DECK - 1),
+                None => NO_DECK,
+            };
+            rect = Some(match rect {
+                None => (x, y, x, y),
+                Some((a, b, c, d)) => (a.min(x), b.min(y), c.max(x), d.max(y)),
+            });
+        }
+        let Some((x0, y0, x1, y1)) = rect else { return };
+        let (x0, y0, x1, y1) = ((x0 - 1).max(0), (y0 - 1).max(0), (x1 + 1).min(self.width as i32 - 1), (y1 + 1).min(self.height as i32 - 1));
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let i = self.idx(x, y);
+                self.terrain[i] = self.terrain_bits(x, y);
+                self.slope[i] = self.slope_of(x, y);
+                self.update_speed(i);
+            }
+        }
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                self.recompute(x, y);
+            }
+        }
+        self.relabel(x0, y0, x1, y1);
+    }
+
+    /// Liegt auf dem Feld eine Brücke?
+    pub fn has_deck(&self, x: i32, y: i32) -> bool {
+        self.inside(x, y) && self.deck[self.idx(x, y)] != NO_DECK
     }
 
     fn recompute(&mut self, x: i32, y: i32) {

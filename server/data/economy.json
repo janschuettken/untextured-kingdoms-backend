@@ -99,6 +99,44 @@
       ]
     },
     {
+      "kind": "bridge",
+      "category": "road",
+      "w": 1,
+      "h": 1,
+      "height": 0,
+      "no_entrance": true,
+      "on_walls": false,
+      "on_ramps": false,
+      "first_free": false,
+      "hub_goods": [],
+      "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
+      "max_span": 15,
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 2}, {"good": "boards", "amount": 1}],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": [],
+          "max_hp": 400,
+          "workers": 0,
+          "gather_radius": 0,
+          "service_radius": 0,
+          "walkway": false,
+          "stairs": false,
+          "gate_radius": 0,
+          "garrison": 0,
+          "cover_percent": 0,
+          "build_radius": 0,
+          "road_speed_percent": 0,
+          "hub_capacity": 0,
+          "storage_inputs": 0,
+          "storage_outputs": 0
+        }
+      ]
+    },
+    {
       "kind": "house",
       "category": "housing",
       "w": 3,

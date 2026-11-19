@@ -118,7 +118,7 @@ pub fn siege(world: &World, me: u32, target: u32, wave: &[&Unit]) -> Vec<ClientM
             }
         }
     }
-    orders.into_iter().map(|(target, unit_ids)| ClientMsg::Attack { unit_ids, target }).collect()
+    orders.into_iter().map(|(target, unit_ids)| ClientMsg::Attack { unit_ids, target, force: None }).collect()
 }
 
 /// Was die Nahkämpfer als Nächstes einreißen: steht der König unten und ist erreichbar, ihn;

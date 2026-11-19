@@ -1181,7 +1181,7 @@ impl Computer {
             .collect();
         if !defenders.is_empty() {
             debug!("Computer {p}: verteidigt gegen Spieler {}", threat.owner);
-            cmds.push(ClientMsg::Attack { unit_ids: defenders, target: protocol::AttackTarget::Unit { id: threat.id } });
+            cmds.push(ClientMsg::Attack { unit_ids: defenders, target: protocol::AttackTarget::Unit { id: threat.id }, force: None });
         }
         true
     }
