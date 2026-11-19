@@ -74,6 +74,10 @@ pub fn migrate(v: &mut serde_json::Value) {
                 let Some(l) = l.as_object_mut() else { continue };
                 let n = i as u64 + 1;
                 for (k, x) in &moved {
+                    // Format 1: `hub_capacity` 0 in einer Stufe hieß „wie beim Gebäude“.
+                    if k == "hub_capacity" && l.get(k).and_then(Value::as_u64) == Some(0) {
+                        l.remove(k);
+                    }
                     l.entry(k.clone()).or_insert_with(|| x.clone());
                 }
                 if walk_from > 0 && n >= walk_from {

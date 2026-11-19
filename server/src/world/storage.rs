@@ -301,4 +301,28 @@ mod tests {
         assert_eq!(w.hub_total(keep) + w.hub_total(store), all, "Rest im Vorratslager");
         assert!(w.hub_amount(store, Good::Iron) > 0);
     }
+
+    #[test]
+    fn ausgebautes_lager_hat_mehr_platz_kostet_aber_mehr() {
+        let row = "0".repeat(40);
+        let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
+        w.spawn_player(1);
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        let lots: Vec<GoodAmount> = [Good::Wood, Good::Boards, Good::Stone].iter().map(|&good| GoodAmount { good, amount: 200 }).collect();
+        w.admin_give(1, &lots, 0);
+        for kind in [BuildingKind::Storehouse, BuildingKind::Armory] {
+            let def = w.economy.building(kind).unwrap().clone();
+            assert!(def.levels.len() >= 2, "{kind:?} ausbaubar");
+            let sum = |l: &protocol::BuildingLevel| l.cost.iter().map(|c| c.amount).sum::<u32>();
+            assert!(sum(&def.levels[1]) > sum(&def.levels[0]), "{kind:?}: Ausbau teurer als neu bauen");
+            let x = if kind == BuildingKind::Storehouse { 20 } else { 30 };
+            let id = w.place_building(1, kind, x, 2).unwrap().id;
+            let before = w.hub_capacity(id);
+            let total = w.stocks[&1].state().capacity;
+            w.upgrade(1, id).unwrap();
+            assert!(w.hub_capacity(id) > before, "{kind:?}: mehr Platz");
+            assert_eq!(w.stocks[&1].state().capacity, total + w.hub_capacity(id) - before, "Gesamtplatz wächst gleich mit");
+        }
+    }
 }

@@ -633,6 +633,27 @@
           "hub_capacity": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
+        },
+        {
+          "cost": [{"good": "wood", "amount": 30}, {"good": "boards", "amount": 30}],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": [],
+          "max_hp": 600,
+          "workers": 0,
+          "gather_radius": 0,
+          "service_radius": 0,
+          "walkway": false,
+          "stairs": false,
+          "gate_radius": 0,
+          "garrison": 0,
+          "cover_percent": 0,
+          "build_radius": 0,
+          "road_speed_percent": 0,
+          "hub_capacity": 1200,
+          "storage_inputs": 0,
+          "storage_outputs": 0
         }
       ]
     },
@@ -707,6 +728,31 @@
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 200,
+          "storage_inputs": 0,
+          "storage_outputs": 0
+        },
+        {
+          "cost": [
+            {"good": "wood", "amount": 20},
+            {"good": "boards", "amount": 25},
+            {"good": "stone", "amount": 25}
+          ],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": [],
+          "max_hp": 500,
+          "workers": 0,
+          "gather_radius": 0,
+          "service_radius": 0,
+          "walkway": false,
+          "stairs": false,
+          "gate_radius": 0,
+          "garrison": 0,
+          "cover_percent": 0,
+          "build_radius": 0,
+          "road_speed_percent": 0,
+          "hub_capacity": 400,
           "storage_inputs": 0,
           "storage_outputs": 0
         }

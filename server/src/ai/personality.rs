@@ -37,6 +37,9 @@ fn validate(all: &AiPersonalities) -> Result<(), String> {
         if p.aggression > MAX_PERCENT || p.army > MAX_PERCENT {
             return Err(format!("{}: Prozent höchstens {MAX_PERCENT}", p.id));
         }
+        if p.daring > 100 || p.helpfulness > 100 {
+            return Err(format!("{}: Regler gehen von 0 bis 100", p.id));
+        }
         if let Some((k, _)) = p.buildings.iter().find(|(_, &v)| v > MAX_PERCENT) {
             return Err(format!("{}: {k:?} höchstens {MAX_PERCENT} %", p.id));
         }
@@ -77,6 +80,8 @@ pub fn neutral() -> AiPersonality {
         description: Default::default(),
         aggression: 100,
         army: 100,
+        daring: 30,
+        helpfulness: 50,
         buildings: Default::default(),
         units: Default::default(),
         castle: Default::default(),
