@@ -971,26 +971,72 @@ pub enum BuildingCategory {
 }
 
 /// Eine Ausbaustufe. Stufe 1 ist das Bauen selbst.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+///
+/// Alle Werte, die sich mit der Stufe ändern dürfen, stehen hier je Stufe vollständig
+/// (Format 2 der Balancing-Datei). Fehlt ein Wert in einer Stufe, gilt der der Stufe davor.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
 #[ts(export)]
 pub struct BuildingLevel {
     /// Kosten für das Bauen (Stufe 1) bzw. den Ausbau auf diese Stufe.
     pub cost: Vec<GoodAmount>,
     /// Rezepte, die diese Stufe freischaltet (zusätzlich zu den vorigen).
-    #[serde(default)]
     pub recipes: Vec<String>,
     /// So viele Bewohner passen auf dieser Stufe hinein (Wohnhäuser).
-    #[serde(default)]
     pub housing: u32,
-    /// Lager: Gesamtplatz auf dieser Stufe (0 = wie beim Gebäude, `hub_capacity`).
-    #[serde(default)]
-    pub hub_capacity: u32,
     /// Einheiten, die mit dieser Stufe dazukommen (Wagenschuppen: Träger, dann Karren).
-    #[serde(default)]
     pub spawns: Vec<UnitCount>,
     /// Kaserne: Soldaten, die diese Stufe ausbilden kann (zusätzlich zu den vorigen).
-    #[serde(default)]
     pub trains: Vec<UnitKind>,
+    /// Lebenspunkte auf dieser Stufe.
+    pub max_hp: u32,
+    /// Arbeiter, die der Betrieb auf dieser Stufe braucht (sie wohnen in Häusern und essen).
+    pub workers: u32,
+    /// Wie weit um das Gebäude abgebaut wird (Felder vom Rand). 0 = nur unter dem Gebäude.
+    pub gather_radius: u32,
+    /// Wagenschuppen: der Karren fährt nur Betriebe in diesem Umkreis (Felder) an. 0 = überall.
+    pub service_radius: u32,
+    /// Auf dieser Stufe können eigene Einheiten oben auf dem Gebäude laufen (Wehrgang).
+    pub walkway: bool,
+    /// Tor/Turm: auf dieser Stufe führt eine Treppe auf den Wehrgang.
+    pub stairs: bool,
+    /// Tor: im Modus „automatisch“ schließt es, sobald fremde Einheiten so nah (Felder) sind.
+    pub gate_radius: u32,
+    /// So viele Einheiten finden oben Platz. 0 = so viele, wie draufpassen.
+    pub garrison: u32,
+    /// Deckung für Einheiten oben auf dem Gebäude: so viel Prozent der Fernkampf-Schüsse
+    /// auf sie gehen daneben. 0 = keine Deckung.
+    pub cover_percent: u32,
+    /// Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte): die ganze Fläche
+    /// muss in diesem Umkreis liegen (beim Bauen bzw. beim Ausbau auf diese Stufe). 0 = überall.
+    pub build_radius: u32,
+    /// Weg: man läuft hier so viel Prozent schneller. Ob es ein Weg ist, entscheidet Stufe 1 (> 0).
+    pub road_speed_percent: u32,
+    /// Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
+    pub hub_capacity: u32,
+    /// Betriebe: so viel passt je Eingangsware ins eigene Lager. 0 = `transport.building_capacity`.
+    pub storage_inputs: u32,
+    /// Betriebe: so viel passt je Ergebnis ins eigene Lager. 0 = `transport.building_capacity`.
+    pub storage_outputs: u32,
+}
+
+/// Wie ein neues Gebäude beliefert wird (Voreinstellung, der Spieler kann es je Gebäude ändern).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct DeliveryDefaults {
+    /// Träger liefern Eingangswaren (`settings.accept_deliveries`).
+    pub carriers: bool,
+    /// Karren füllen das Eingangslager auf (`settings.cart_deliveries`).
+    pub carts: bool,
+    /// Der Arbeiter trägt selbst (`settings.worker_carries`).
+    pub worker: bool,
+}
+
+impl Default for DeliveryDefaults {
+    fn default() -> Self {
+        DeliveryDefaults { carriers: true, carts: false, worker: true }
+    }
 }
 
 /// Wo ein Gebäude stehen darf: ein Mindestanteil seiner Felder muss einer
@@ -1002,7 +1048,7 @@ pub struct Placement {
     pub min_share_percent: u32,
 }
 
-/// Feste Eigenschaften einer Gebäudeart.
+/// Feste Eigenschaften einer Gebäudeart. Was sich mit der Stufe ändern darf, steht in `levels`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct BuildingDef {
@@ -1011,7 +1057,6 @@ pub struct BuildingDef {
     /// Grundfläche in Feldern.
     pub w: u32,
     pub h: u32,
-    pub max_hp: u32,
     /// Höhe über dem Boden (Welt, 1 = ein Feld) für Pfeile: was darunter fliegt, stößt an.
     /// Je Ausbaustufe kommt ein Stockwerk dazu (nicht bei Befestigungen). 0 = Grundwert je Art.
     #[serde(default)]
@@ -1025,70 +1070,55 @@ pub struct BuildingDef {
     /// Rohstoff-Felder, die dieser Betrieb abbaut (z. B. Wald).
     #[serde(default)]
     pub gathers: Vec<ResourceKind>,
-    /// Wie weit um das Gebäude abgebaut wird (Felder vom Rand). 0 = nur unter dem Gebäude.
-    #[serde(default)]
-    pub gather_radius: u32,
     /// Aufgeben hinterlässt diesen Rohstoff auf der Fläche (Obstplantage → Wald).
     #[serde(default)]
     pub releases_as: Option<ResourceKind>,
-    /// Wagenschuppen: der Karren fährt nur Betriebe in diesem Umkreis (Felder) an. 0 = überall.
-    #[serde(default)]
-    pub service_radius: u32,
     /// Mauern und Türme haben keinen Eingang; alle anderen ein Feld davor, das frei bleiben muss.
     #[serde(default)]
     pub no_entrance: bool,
     /// Bergfried und Vorratslager: hier liegt der gemeinsame Vorrat, Träger liefern hierhin.
     #[serde(default)]
     pub hub: bool,
-    /// Einheiten, die zum Gebäude gehören (Träger, Karren).
-    #[serde(default)]
-    pub spawns: Vec<UnitCount>,
-    /// Mindestens eine Stufe.
-    /// Arbeiter, die der Betrieb braucht (sie wohnen in Häusern und essen).
-    #[serde(default)]
-    pub workers: u32,
-    /// Ab dieser Stufe können eigene Einheiten oben auf dem Gebäude laufen (Wehrgang). 0 = nie.
-    #[serde(default)]
-    pub walkway_from_level: u32,
-    /// Tor: ab dieser Stufe führt eine Treppe im Tor auf den Wehrgang. 0 = nie.
-    #[serde(default)]
-    pub stairs_from_level: u32,
-    /// Tor: im Modus „automatisch“ schließt es, sobald fremde Einheiten so nah (Felder) sind.
-    #[serde(default)]
-    pub gate_radius: u32,
-    /// So viele Einheiten finden oben Platz. 0 = so viele, wie draufpassen.
-    #[serde(default)]
-    pub garrison: u32,
-    /// Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte): die ganze Fläche
-    /// muss in diesem Umkreis liegen. 0 = überall.
-    #[serde(default)]
-    pub build_radius: u32,
     /// Darf direkt auf eigene Mauern gesetzt werden; die Mauer darunter wird abgerissen.
     #[serde(default)]
     pub on_walls: bool,
     /// Darf auf Schrägen stehen (Mauern folgen dem Gelände).
     #[serde(default)]
     pub on_ramps: bool,
-    /// Weg: das Feld bleibt begehbar, und man läuft hier so viel Prozent schneller.
-    /// 0 = kein Weg.
-    #[serde(default)]
-    pub road_speed_percent: u32,
     /// Das erste Gebäude dieser Art je Spieler kostet nichts.
     #[serde(default)]
     pub first_free: bool,
     /// Lager nur für diese Waren (z. B. Waffenkammer). Leer = alle Waren.
     #[serde(default)]
     pub hub_goods: Vec<Good>,
-    /// Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
+    /// Voreinstellung für neue Gebäude: wer liefert (Träger, Karren, Arbeiter selbst).
     #[serde(default)]
-    pub hub_capacity: u32,
-    /// Betriebe: so viel passt je Eingangsware ins eigene Lager. 0 = `transport.building_capacity`.
-    #[serde(default)]
-    pub storage_inputs: u32,
-    /// Betriebe: so viel passt je Ergebnis ins eigene Lager. 0 = `transport.building_capacity`.
-    #[serde(default)]
-    pub storage_outputs: u32,
+    pub delivery: DeliveryDefaults,
+    /// Mindestens eine Stufe.
     pub levels: Vec<BuildingLevel>,
+}
+
+impl BuildingDef {
+    /// Werte der Stufe `level` (beginnt bei 1; außerhalb: nächste vorhandene Stufe).
+    pub fn at(&self, level: u32) -> &BuildingLevel {
+        let i = (level.max(1) as usize - 1).min(self.levels.len().saturating_sub(1));
+        &self.levels[i]
+    }
+
+    /// Ist es ein Weg (das Feld bleibt begehbar)? Entscheidet Stufe 1.
+    pub fn is_road(&self) -> bool {
+        self.levels.first().is_some_and(|l| l.road_speed_percent > 0)
+    }
+
+    /// Hat irgendeine Stufe einen Wehrgang?
+    pub fn any_walkway(&self) -> bool {
+        self.levels.iter().any(|l| l.walkway)
+    }
+
+    /// Größter Wert über alle Stufen (z. B. für Kreise beim Bauen).
+    pub fn max_of(&self, f: impl Fn(&BuildingLevel) -> u32) -> u32 {
+        self.levels.iter().map(f).max().unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
@@ -1134,6 +1164,9 @@ pub struct RecipeDef {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct EconomyDef {
+    /// Aufbau der Datei: 2 = Werte je Gebäudestufe. Ältere Dateien (ohne) werden beim Laden umgewandelt.
+    #[serde(default)]
+    pub format: u32,
     pub goods: Vec<Good>,
     pub buildings: Vec<BuildingDef>,
     pub recipes: Vec<RecipeDef>,
@@ -1201,6 +1234,9 @@ pub struct UnitDef {
     /// (der König: nur Nahkämpfer können ihn töten).
     #[serde(default)]
     pub ranged_immune: bool,
+    /// Sekunden zwischen zwei Schlägen oder Schüssen.
+    #[serde(default)]
+    pub attack_seconds: f32,
     /// Heiler: so viele Lebenspunkte gibt er je Behandlung zurück (alle `army.heal_seconds`). 0 = heilt nicht.
     #[serde(default)]
     pub heal: u32,
@@ -1220,8 +1256,6 @@ pub struct ArmyDef {
     pub unpaid_speed_percent: u32,
     /// So viele Soldaten kann eine Kaserne höchstens in der Warteschlange haben.
     pub queue_max: u32,
-    /// Sekunden zwischen zwei Schlägen oder Schüssen einer Einheit.
-    pub attack_seconds: f32,
     /// Bis zu dieser Reichweite (Felder) zählt ein Angriff als Nahkampf, darüber als Fernkampf.
     pub melee_range: f32,
     /// So viele Sekunden nach dem Tod eines Arbeiters, Trägers oder Karrens kommt Ersatz
@@ -1236,7 +1270,7 @@ pub struct ArmyDef {
 
 impl Default for ArmyDef {
     fn default() -> Self {
-        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, attack_seconds: 1.5, melee_range: 2.0, civilian_respawn_seconds: 30.0, enemy_block_radius: 50.0, heal_seconds: 2.0 }
+        ArmyDef { upkeep_seconds: 60.0, unpaid_speed_percent: 60, queue_max: 10, melee_range: 2.0, civilian_respawn_seconds: 30.0, enemy_block_radius: 50.0, heal_seconds: 2.0 }
     }
 }
 

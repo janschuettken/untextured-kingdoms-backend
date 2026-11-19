@@ -33,6 +33,8 @@
 //! - `GET  /api/economy`  die geltenden Wirtschaftsdaten als JSON
 //! - `GET  /api/economy/file`  nur Admin: die geltenden Daten als Datei `economy.json` (genau im
 //!   Format der Datei im Repo), zum Herunterladen und Committen
+//! - `POST /api/economy/convert`  Daten prüfen und im aktuellen Aufbau zurückgeben (alte
+//!   Balancing-Dateien umwandeln), ohne etwas zu speichern
 //! - `PUT  /api/economy`  nur Admin: neue Daten prüfen, in die Datei schreiben und
 //!   sofort für alle Spiele übernehmen (`economy_changed` an alle Clients)
 //!
@@ -216,6 +218,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/api/rights", post(rights))
         .route("/api/economy", get(load).put(save))
         .route("/api/economy/file", get(download))
+        .route("/api/economy/convert", post(convert))
         .route("/api/ai-personalities", get(load_personalities).put(save_personalities))
         .route("/api/ai-personalities/file", get(download_personalities))
         .route("/api/games/{id}/players", get(players))
@@ -415,6 +418,14 @@ async fn rights(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
 async fn load(State(hub): State<Arc<Hub>>) -> Response {
     // Vollständig (mit allen Standardwerten), damit der Editor jedes Feld vorfindet.
     Json(hub.economy.lock().unwrap().def.clone()).into_response()
+}
+
+/// Prüfen und umwandeln (alte Dateien in den aktuellen Aufbau), nichts speichern.
+async fn convert(body: String) -> Response {
+    match Economy::parse(&body) {
+        Ok(e) => Json(e.def).into_response(),
+        Err(e) => (StatusCode::UNPROCESSABLE_ENTITY, e).into_response(),
+    }
 }
 
 async fn save(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: String) -> Response {

@@ -15,7 +15,11 @@ import type { UnitDef } from "./UnitDef";
 /**
  * Die ganze Wirtschaft als Daten (einzige Quelle: `server/data/economy.json`).
  */
-export type EconomyDef = { goods: Array<Good>, buildings: Array<BuildingDef>, recipes: Array<RecipeDef>, start_stock: Array<GoodAmount>, 
+export type EconomyDef = { 
+/**
+ * Aufbau der Datei: 2 = Werte je Gebäudestufe. Ältere Dateien (ohne) werden beim Laden umgewandelt.
+ */
+format: number, goods: Array<Good>, buildings: Array<BuildingDef>, recipes: Array<RecipeDef>, start_stock: Array<GoodAmount>, 
 /**
  * Steht beim Start schon an der Fahne des Spielers (z. B. der Bergfried).
  */
