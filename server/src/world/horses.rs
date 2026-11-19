@@ -308,7 +308,11 @@ mod tests {
         w.admin_give(1, &knight.cost, 10_000);
         assert_eq!(w.train(1, b, UnitKind::Knight, 1).unwrap_err().key, "error.no_horse");
         let farm = farm_with_horses(&mut w, 1);
+        // Das Pferd in der Zucht zählt zum angezeigten Vorrat (auch wenn es in den Kosten steht).
+        let horses = |w: &World| w.stock_state(1).goods.iter().find(|g| g.good == Good::Horse).map_or(0, |g| g.amount);
+        assert_eq!(horses(&w), 1);
         w.train(1, b, UnitKind::Knight, 1).unwrap();
+        assert_eq!(horses(&w), 0, "genau ein Pferd verbraucht");
         assert_eq!(w.inventories[&farm].amount(Good::Horse), 0);
         // Streichen gibt das Pferd zurück.
         w.cancel_training(1, b).unwrap();
