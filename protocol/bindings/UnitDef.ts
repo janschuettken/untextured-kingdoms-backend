@@ -38,4 +38,8 @@ upkeep: number,
  * Fernkämpfer (Reichweite über `army.melee_range`) können diese Einheit nicht verletzen
  * (der König: nur Nahkämpfer können ihn töten).
  */
-ranged_immune: boolean, };
+ranged_immune: boolean, 
+/**
+ * Sekunden zwischen zwei Schlägen oder Schüssen.
+ */
+attack_seconds: number, };
