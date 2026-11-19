@@ -184,6 +184,12 @@ fn changed(old: &UnitState, new: &UnitState) -> bool {
     old.moving != new.moving
         || old.carrying != new.carrying
         || old.hp != new.hp
+        || old.on_wall != new.on_wall
+        || old.inside != new.inside
+        // Auf- oder abgestiegen, Pferd verletzt, Sturz: sonst sieht man es erst beim nächsten Schritt.
+        || old.mounted != new.mounted
+        || old.horse_hp != new.horse_hp
+        || old.down.ceil() != new.down.ceil()
         || (old.x - new.x).abs() > 0.001
         || (old.y - new.y).abs() > 0.001
 }

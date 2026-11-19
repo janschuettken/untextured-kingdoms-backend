@@ -1259,6 +1259,10 @@ pub struct EconomyDef {
     pub army: ArmyDef,
 }
 
+fn yes() -> bool {
+    true
+}
+
 /// Eine Soldatenart, wie sie die Kaserne ausbildet.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1298,6 +1302,15 @@ pub struct UnitDef {
     /// Kommt beritten aus der Kaserne (Ritter): die Ausbildung braucht ein Pferd aus einer Pferdezucht.
     #[serde(default)]
     pub mounted: bool,
+    /// Greift an, wenn sie zu Fuß steht.
+    #[serde(default = "yes")]
+    pub attack_standing: bool,
+    /// Greift auch im Laufen an (zu Fuß), ohne anzuhalten.
+    #[serde(default)]
+    pub attack_moving: bool,
+    /// Greift zu Pferd an (im Stehen und im Reiten).
+    #[serde(default = "yes")]
+    pub attack_mounted: bool,
     /// Sekunden zwischen zwei Schlägen oder Schüssen.
     #[serde(default)]
     pub attack_seconds: f32,

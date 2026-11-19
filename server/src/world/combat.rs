@@ -29,6 +29,18 @@ const REACH: f32 = 0.5;
 /// Beim Verfolgen: so oft (Sekunden) wird der Weg zum Ziel neu gesucht.
 const CHASE_SECONDS: f32 = 1.0;
 
+/// Darf eine Einheit dieser Art jetzt angreifen? Zu Pferd zählt `attack_mounted`
+/// (im Stehen und im Reiten), zu Fuß `attack_standing` bzw. im Laufen `attack_moving`.
+fn may_attack(def: &protocol::UnitDef, mounted: bool, moving: bool) -> bool {
+    if mounted {
+        def.attack_mounted
+    } else if moving {
+        def.attack_moving
+    } else {
+        def.attack_standing
+    }
+}
+
 /// Bündnis eines Spielers: (true, Bündnis) oder allein (false, Spieler).
 type TeamKey = (bool, u32);
 
@@ -185,7 +197,7 @@ impl World {
             }
             if u.attack_order.is_some() {
                 ordered.push(k);
-            } else if def.attack > 0 && def.range > 0.0 && u.attack_cooldown <= 0.0 && u.path.is_empty() {
+            } else if def.attack > 0 && def.range > 0.0 && u.attack_cooldown <= 0.0 && may_attack(def, u.mounted, !u.path.is_empty()) {
                 fighters.push(k);
             }
         }
@@ -249,12 +261,16 @@ impl World {
             if dist <= reach && level_ok {
                 let (attack, by) = (def.attack, u.owner);
                 let u = &mut self.units[k];
-                // Fernkämpfer schießen nur im Stand: wer gerade noch lief, hält erst an.
+                // Fernkämpfer schießen nur im Stand (außer sie dürfen im Laufen): wer gerade noch lief, hält erst an.
                 let was_moving = !u.path.is_empty();
                 u.path.clear();
                 u.layers.clear();
                 u.target = Some(u.pos);
-                if ranged && was_moving {
+                if ranged && was_moving && !(u.mounted || def.attack_moving) {
+                    continue;
+                }
+                // Darf sie so (zu Fuß im Stand bzw. zu Pferd) überhaupt angreifen? Sonst bleibt sie nur dran.
+                if !may_attack(def, u.mounted, false) {
                     continue;
                 }
                 if u.attack_cooldown <= 0.0 {
