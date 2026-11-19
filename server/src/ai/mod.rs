@@ -223,7 +223,26 @@ impl Computer {
         }
         self.aid(world, &stock, &mut cmds);
         self.rally(world, layout, &mut cmds);
+        // Steht ein Feind zu nah, lehnt der Server Bauen, Ausbauen und Reparieren ab: gar nicht erst schicken.
+        cmds.retain(|c| self.no_enemy_near(world, c));
         cmds
+    }
+
+    fn no_enemy_near(&self, world: &World, cmd: &ClientMsg) -> bool {
+        let at = match cmd {
+            ClientMsg::PlaceBuilding { kind, x, y, .. } => {
+                let (w, h) = world.economy.building(*kind).map_or((1, 1), |d| (d.w, d.h));
+                (*x as f32 + w as f32 / 2.0, *y as f32 + h as f32 / 2.0)
+            }
+            ClientMsg::UpgradeBuilding { building_id } | ClientMsg::RepairBuilding { building_id } => {
+                match world.buildings.iter().find(|b| b.id == *building_id) {
+                    Some(b) => (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0),
+                    None => return true,
+                }
+            }
+            _ => return true,
+        };
+        world.check_no_enemy(self.player, at).is_ok()
     }
 
     /// Ein Befehl wurde abgelehnt (sollte selten sein, er prüft vorher).
@@ -660,7 +679,9 @@ impl Computer {
         if units.is_empty() {
             return;
         }
-        let barracks: Vec<_> = world.buildings.iter().filter(|b| b.owner == self.player && b.kind == BuildingKind::Barracks).collect();
+        // Alles, was ausbildet: Kasernen, Apotheken.
+        let trains = |k: BuildingKind| world.economy.building(k).is_some_and(|d| d.levels.iter().any(|l| !l.trains.is_empty()));
+        let barracks: Vec<_> = world.buildings.iter().filter(|b| b.owner == self.player && trains(b.kind)).collect();
         let mut queued: u32 = barracks.iter().map(|b| b.training.len() as u32).sum();
         let queue_max = (world.economy.def.army.queue_max).min(self.profile.queue_per_barracks) as usize;
         // Mit Markt bleibt ein Rest Taler für den Handel liegen.
@@ -732,7 +753,7 @@ impl Computer {
                 debug!("Computer {p}: Welle gegen {} kehrt um", c.target);
                 if let Some(home) = rally_point(world, p, layout) {
                     if !c.units.is_empty() {
-                        cmds.push(ClientMsg::MoveUnits { unit_ids: c.units.clone(), x: home.0, y: home.1 });
+                        cmds.push(ClientMsg::MoveUnits { unit_ids: c.units.clone(), x: home.0, y: home.1, fast: None });
                     }
                 }
                 self.campaign = None;
@@ -747,7 +768,7 @@ impl Computer {
                     .map(|u| u.id)
                     .collect();
                 if !stuck.is_empty() {
-                    cmds.push(ClientMsg::MoveUnits { unit_ids: stuck, x: c.goal.0, y: c.goal.1 });
+                    cmds.push(ClientMsg::MoveUnits { unit_ids: stuck, x: c.goal.0, y: c.goal.1, fast: None });
                 }
             }
             return;
@@ -787,7 +808,7 @@ impl Computer {
         self.weak_since = None;
         debug!("Computer {p}: greift Spieler {target} an ({} Soldaten, {power:.0} gegen {enemy:.0})", wave.len());
         let units: Vec<u32> = wave.iter().map(|u| u.id).collect();
-        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: goal.0, y: goal.1 });
+        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: goal.0, y: goal.1, fast: None });
         self.campaign = Some(Campaign { target, units, start_power: power, goal, arrived: None });
     }
 
@@ -804,7 +825,7 @@ impl Computer {
             return;
         }
         let c = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
-        cmds.push(ClientMsg::MoveUnits { unit_ids: vec![king.id], x: c.0, y: c.1 });
+        cmds.push(ClientMsg::MoveUnits { unit_ids: vec![king.id], x: c.0, y: c.1, fast: None });
     }
 
     /// Feinde nahe am Bergfried: alle Soldaten am Boden, die nicht mit einer Welle unterwegs
@@ -831,7 +852,7 @@ impl Computer {
             .collect();
         if !defenders.is_empty() {
             debug!("Computer {p}: verteidigt gegen Spieler {}", threat.owner);
-            cmds.push(ClientMsg::MoveUnits { unit_ids: defenders, x: threat.pos.0, y: threat.pos.1 });
+            cmds.push(ClientMsg::MoveUnits { unit_ids: defenders, x: threat.pos.0, y: threat.pos.1, fast: Some(true) });
         }
         true
     }
@@ -860,7 +881,7 @@ impl Computer {
             if done || power < r.start_power * RELIEF_RETREAT {
                 debug!("Computer {p}: Hilfe für Spieler {} kehrt heim", r.ally);
                 if let (Some(home), false) = (rally_point(world, p, layout), r.units.is_empty()) {
-                    cmds.push(ClientMsg::MoveUnits { unit_ids: r.units.clone(), x: home.0, y: home.1 });
+                    cmds.push(ClientMsg::MoveUnits { unit_ids: r.units.clone(), x: home.0, y: home.1, fast: None });
                 }
                 self.relief = None;
                 return;
@@ -873,7 +894,7 @@ impl Computer {
                 .map(|u| u.id)
                 .collect();
             if !idle.is_empty() {
-                cmds.push(ClientMsg::MoveUnits { unit_ids: idle, x: target.0, y: target.1 });
+                cmds.push(ClientMsg::MoveUnits { unit_ids: idle, x: target.0, y: target.1, fast: None });
             }
             return;
         }
@@ -924,7 +945,7 @@ impl Computer {
             units.push(u.id);
         }
         debug!("Computer {p}: hilft Spieler {ally} mit {} Soldaten ({power:.0} gegen {threat:.0})", units.len());
-        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: at.0, y: at.1 });
+        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: at.0, y: at.1, fast: None });
         self.relief = Some(Relief { ally, units, start_power: power, until: self.clock + RELIEF_SECONDS });
     }
 
@@ -1007,7 +1028,7 @@ impl Computer {
             if ranged(u.kind) {
                 if let Some(post) = posts.iter_mut().find(|(_, room)| *room > 0) {
                     post.1 -= 1;
-                    cmds.push(ClientMsg::MoveUnits { unit_ids: vec![u.id], x: post.0 .0, y: post.0 .1 });
+                    cmds.push(ClientMsg::MoveUnits { unit_ids: vec![u.id], x: post.0 .0, y: post.0 .1, fast: None });
                     continue;
                 }
             }
@@ -1016,7 +1037,7 @@ impl Computer {
             }
         }
         if !to_rally.is_empty() {
-            cmds.push(ClientMsg::MoveUnits { unit_ids: to_rally, x: point.0, y: point.1 });
+            cmds.push(ClientMsg::MoveUnits { unit_ids: to_rally, x: point.0, y: point.1, fast: None });
         }
     }
 }

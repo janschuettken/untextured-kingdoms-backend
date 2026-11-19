@@ -5,7 +5,9 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY protocol protocol
 COPY server server
-RUN cargo build --release -p server
+# Commit und Datum für die Anzeige in der Lobby (setzt deploy/update.sh; ohne .git im Image).
+ARG GIT_REV=""
+RUN GIT_REV="$GIT_REV" cargo build --release -p server
 
 # ---------- Laufzeit ----------
 FROM debian:bookworm-slim

@@ -12,12 +12,14 @@ use crate::{economy::Economy, map::GameMap, stock::Stock};
 
 mod army;
 mod diplomacy;
+mod ballistics;
 mod combat;
 mod errand;
 mod enclosure;
 pub use enclosure::castle_closed;
 pub use gate::{is_gate, passage_tiles};
 mod gate;
+mod heal;
 mod market;
 mod gather;
 mod horses;
@@ -89,6 +91,12 @@ pub struct Unit {
     /// Unterwegs zu dieser Pferdezucht, um aufzusteigen.
     #[serde(default)]
     mount_at: Option<u32>,
+    /// Gruppenmarsch: höchstens so schnell (Felder pro Sekunde), damit die Gruppe zusammenbleibt.
+    #[serde(default)]
+    speed_cap: Option<f32>,
+    /// Heiler: Sekunden bis zur nächsten Behandlung.
+    #[serde(default)]
+    heal_cooldown: f32,
 }
 
 impl Unit {
@@ -122,6 +130,8 @@ impl Unit {
             horse_damage: 0,
             down: 0.0,
             mount_at: None,
+            speed_cap: None,
+            heal_cooldown: 0.0,
         }
     }
 
@@ -186,12 +196,16 @@ pub struct World {
     pay_timer: HashMap<u32, f32>,
     /// Spieler, deren Sold am letzten Zahltag nicht gereicht hat.
     unpaid: HashSet<u32>,
+    /// Spieler, deren Soldaten am letzten Zahltag nicht satt wurden.
+    army_hungry: HashSet<u32>,
     /// Neue Betriebe: trägt der Arbeiter selbst? Im Spiel immer ja; Tests für Träger schalten es ab.
     pub(crate) worker_carries_default: bool,
     /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
     hub_goods: HashMap<u32, storage::HubGoods>,
     /// Wie Waren zwischen Verbündeten ankommen.
     trade_mode: protocol::TradeMode,
+    /// Fernkampf: Wurfbahn oder Sichtlinie (Lobby), siehe `ballistics.rs`.
+    shot_mode: protocol::ShotMode,
     /// Spieler, deren König gefallen ist (siehe `combat.rs`).
     eliminated: BTreeSet<u32>,
     /// Bündnis je Spieler; wer fehlt, kämpft allein (eigene Nummer). Siehe `diplomacy.rs`.
@@ -275,8 +289,10 @@ impl World {
             gather_status: HashMap::new(),
             pay_timer: HashMap::new(),
             unpaid: HashSet::new(),
+            army_hungry: HashSet::new(),
             hub_goods: HashMap::new(),
             trade_mode: protocol::TradeMode::default(),
+            shot_mode: protocol::ShotMode::default(),
             eliminated: BTreeSet::new(),
             teams: HashMap::new(),
             winners: None,
@@ -1010,6 +1026,12 @@ impl World {
     /// Liefert false, wenn keine der Einheiten das Ziel erreichen kann; dann
     /// läuft auch keine los. Wer nicht hinkommt, bleibt stehen.
     pub fn order_move(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32)) -> bool {
+        self.order_move_as(player, unit_ids, target, false)
+    }
+
+    /// Wie `order_move`. Eine Gruppe läuft im Tempo ihrer langsamsten Einheit; mit `fast`
+    /// (zweiter Befehl gleich hinterher) läuft jede so schnell sie kann.
+    pub fn order_move_as(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32), fast: bool) -> bool {
         if !target.0.is_finite() || !target.1.is_finite() {
             return false;
         }
@@ -1026,14 +1048,14 @@ impl World {
         for &(x, y) in &shut {
             self.map.nav.set_blocked(x, y, true);
         }
-        let ok = self.order_move_planned(player, unit_ids, target);
+        let ok = self.order_move_planned(player, unit_ids, target, fast);
         for &(x, y) in &shut {
             self.map.nav.set_blocked(x, y, false);
         }
         ok
     }
 
-    fn order_move_planned(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32)) -> bool {
+    fn order_move_planned(&mut self, player: u32, unit_ids: &[u32], target: (f32, f32), fast: bool) -> bool {
         let target = (
             target.0.clamp(0.0, self.map.width as f32 - 0.01),
             target.1.clamp(0.0, self.map.height as f32 - 0.01),
@@ -1095,8 +1117,15 @@ impl World {
         if orders.is_empty() {
             return false;
         }
+        // Gruppe: alle im Tempo der langsamsten (bei nur einer oder `fast`: keine Bremse).
+        let cap = if fast || orders.len() < 2 {
+            None
+        } else {
+            orders.iter().map(|o| self.base_speed(&self.units[o.0])).min_by(f32::total_cmp)
+        };
         for (k, to, wall, (path, layers)) in orders {
             let u = &mut self.units[k];
+            u.speed_cap = cap;
             u.path = path;
             u.layers = layers;
             u.target = Some(to);
@@ -1254,6 +1283,7 @@ impl World {
         self.step_horses(dt);
         self.step_trade(dt);
         self.step_combat(dt);
+        self.step_heal(dt);
         self.balance_hubs();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
@@ -1264,15 +1294,19 @@ impl World {
         let soldier: Vec<f32> = self.units.iter().map(|u| if u.kind.is_soldier() { self.soldier_speed(u.owner, u.kind) } else { 0.0 }).collect();
         let nav = &self.map.nav;
         for (k, unit) in self.units.iter_mut().enumerate() {
-            let speed = match unit.kind {
+            let full = match unit.kind {
                 UnitKind::King => king,
                 UnitKind::Carrier => carrier * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Cart | UnitKind::TradeCart => cart * hungry.get(&unit.owner).copied().unwrap_or(1.0),
                 UnitKind::Worker => worker * hungry.get(&unit.owner).copied().unwrap_or(1.0),
-                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight => soldier[k],
+                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer => soldier[k],
             };
             // Zu Pferd mindestens so schnell wie das Pferd; nach einem Sturz liegt man still.
-            let speed = if unit.down > 0.0 { 0.0 } else if unit.mounted { speed.max(horse) } else { speed };
+            let full = if unit.down > 0.0 { 0.0 } else if unit.mounted { full.max(horse) } else { full };
+            let speed = unit.speed_cap.map_or(full, |c| full.min(c));
+            if unit.path.is_empty() {
+                unit.speed_cap = None;
+            }
             // Auf Wegen schneller (oben auf der Mauer zählt der Boden nicht).
             let road = if unit.on_wall { 1.0 } else { nav.speed_at(unit.pos) };
             let mut budget = speed * road * dt;

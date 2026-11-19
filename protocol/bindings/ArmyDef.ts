@@ -49,4 +49,8 @@ fall_damage: number,
 /**
  * … und liegt so viele Sekunden am Boden: kann nicht laufen und nicht kämpfen.
  */
-fall_seconds: number, };
+fall_seconds: number, 
+/**
+ * Sekunden zwischen zwei Behandlungen eines Heilers.
+ */
+heal_seconds: number, };

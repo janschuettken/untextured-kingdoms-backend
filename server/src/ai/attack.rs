@@ -14,9 +14,12 @@ use protocol::{BuildingKind, UnitKind};
 
 use crate::world::World;
 
-/// Wert eines Soldaten: Leben mal Schaden, Fernkämpfer etwas mehr.
+/// Wert eines Soldaten: Leben mal Schaden, Fernkämpfer etwas mehr; Heiler nach ihrer Heilung.
 pub fn unit_power(world: &World, kind: UnitKind) -> f32 {
     world.economy.unit(kind).map_or(0.0, |d| {
+        if d.attack == 0 && d.heal > 0 {
+            return d.hp as f32 * d.heal as f32 / 100.0;
+        }
         let ranged = if d.range > 2.0 { 1.3 } else { 1.0 };
         d.hp as f32 * d.attack as f32 * ranged / 100.0
     })

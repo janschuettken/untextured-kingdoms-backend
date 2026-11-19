@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use protocol::{BuildingDef, BuildingKind, EconomyDef, GoodAmount, RecipeDef, ResourceKind, UnitDef, UnitKind};
+use protocol::{BuildingDef, BuildingKind, EconomyDef, Good, GoodAmount, RecipeDef, ResourceKind, UnitDef, UnitKind};
 
 /// Kampfwerte des Königs, wenn die Balancing-Datei keine hat. Sein Tempo kommt aus `movement.king_speed`.
 fn default_king(speed: f32) -> UnitDef {
@@ -21,9 +21,12 @@ fn default_king(speed: f32) -> UnitDef {
         attack: 14,
         range: 1.2,
         upkeep: 0,
+        food: 0,
         ranged_immune: true,
         can_ride: false,
         mounted: false,
+        heal: 0,
+        heal_range: 0.0,
     }
 }
 
@@ -48,6 +51,23 @@ fn fill_from_builtin(def: &mut EconomyDef) {
             }
         }
         def.buildings.push(b.clone());
+    }
+}
+
+/// Grundhöhe eines Gebäudes (Welt) bis Oberkante samt Zinnen bzw. Dach.
+fn default_height(kind: protocol::BuildingKind) -> f32 {
+    use protocol::BuildingKind as K;
+    match kind {
+        K::Wall | K::Palisade | K::Staircase => 1.5,
+        K::HighWall => 2.4,
+        K::Gate => 2.6,
+        K::Gatehouse => 3.6,
+        K::Tower => 3.7,
+        K::HighTower => 6.6,
+        K::Keep => 5.2,
+        K::WoodPath | K::StonePath => 0.0,
+        K::Farm | K::Orchard | K::PigFarm | K::CattleFarm => 1.0,
+        _ => 1.8,
     }
 }
 
@@ -89,10 +109,15 @@ impl Economy {
     /// Liest und prüft die Wirtschaftsdaten.
     pub fn parse(json: &str) -> Result<Economy, String> {
         let mut def: EconomyDef = serde_json::from_str(json).map_err(|e| format!("economy.json: {e}"))?;
-        fill_from_builtin(&mut def);
         // Ältere Balancing-Dateien kennen den König noch nicht: Grundwerte einsetzen.
         if !def.units.iter().any(|u| u.kind == UnitKind::King) {
             def.units.insert(0, default_king(def.movement.king_speed));
+        }
+        // Höhe für Pfeile: fehlt sie, Grundwert je Art (passend zu den Modellen im Client).
+        for b in &mut def.buildings {
+            if b.height <= 0.0 && b.road_speed_percent == 0 {
+                b.height = default_height(b.kind);
+            }
         }
         // Zivilisten ohne Werte: Grundwerte (nur Lebenspunkte).
         for (kind, hp) in [(UnitKind::Worker, 30), (UnitKind::Carrier, 30), (UnitKind::Cart, 60), (UnitKind::TradeCart, 60)] {
@@ -100,6 +125,8 @@ impl Economy {
                 def.units.push(UnitDef { kind, hp, ranged_immune: false, attack: 0, range: 0.0, ..default_king(1.0) });
             }
         }
+        add_apothecary(&mut def);
+        fill_from_builtin(&mut def);
         let mut buildings = HashMap::new();
         for (i, b) in def.buildings.iter().enumerate() {
             if buildings.insert(b.kind, i).is_some() {
@@ -230,6 +257,12 @@ impl Economy {
         if !(army.enemy_block_radius >= 0.0 && army.enemy_block_radius.is_finite()) {
             return Err("Heer: enemy_block_radius darf nicht negativ sein (0 = aus)".into());
         }
+        if !(army.heal_seconds > 0.0 && army.heal_seconds.is_finite()) {
+            return Err("Heer: heal_seconds muss größer als 0 sein".into());
+        }
+        if let Some(u) = def.units.iter().find(|u| !(u.heal_range >= 0.0 && u.heal_range.is_finite())) {
+            return Err(format!("Einheit {:?}: heal_range darf nicht negativ sein", u.kind));
+        }
         if !(army.civilian_respawn_seconds >= 0.0 && army.civilian_respawn_seconds.is_finite()) {
             return Err("Heer: civilian_respawn_seconds darf nicht negativ sein (0 = kein Ersatz)".into());
         }
@@ -245,12 +278,28 @@ impl Economy {
     }
 
     /// Wirtschaftsdaten aus einer Datei. Fehlt sie, gelten die eingebauten Werte.
+    /// Gebäude und Einheiten, die es in der Datei noch nicht gibt (die Datei ist älter
+    /// als das Update), kommen aus den eingebauten Werten dazu.
     pub fn load(path: &std::path::Path) -> Result<Economy, String> {
         match std::fs::read_to_string(path) {
-            Ok(text) => Economy::parse(&text),
+            Ok(text) => Economy::parse_with_builtin(&text),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Economy::parse(ECONOMY_JSON),
             Err(e) => Err(format!("{}: {e}", path.display())),
         }
+    }
+
+    /// Wie `parse`, aber was in `json` fehlt (neue Gebäude samt Rezepten, neue Einheiten),
+    /// kommt aus der eingebauten economy.json. Werte in `json` bleiben, wie sie sind.
+    pub fn parse_with_builtin(json: &str) -> Result<Economy, String> {
+        let mut file = Economy::parse(json)?;
+        let builtin = Economy::parse(ECONOMY_JSON).expect("eingebaute economy.json ist gültig");
+        let added = file.def.add_missing_from(&builtin.def);
+        if added.is_empty() {
+            return Ok(file);
+        }
+        tracing::info!("Wirtschaftsdaten: ergänzt aus den eingebauten Werten: {}", added.join(", "));
+        let json = serde_json::to_string(&file.def).map_err(|e| e.to_string())?;
+        Economy::parse(&json)
     }
 
     /// Als JSON im Stil der Datei: kurze Teile auf einer Zeile, sonst eingerückt.
@@ -283,6 +332,40 @@ impl Economy {
 
     pub fn recipe(&self, id: &str) -> Option<&RecipeDef> {
         self.def.recipes.iter().find(|r| r.id == id)
+    }
+}
+
+/// Ältere Balancing-Dateien kennen Apotheke, Heilsalbe und Heiler noch nicht: aus den
+/// eingebauten Werten übernehmen, was fehlt (Salbe kommt dann auch in die Waffenkammer).
+fn add_apothecary(def: &mut EconomyDef) {
+    use protocol::Good;
+    let missing_good = !def.goods.contains(&Good::Salve);
+    let missing_building = !def.buildings.iter().any(|b| b.kind == BuildingKind::Apothecary);
+    let missing_unit = !def.units.iter().any(|u| u.kind == UnitKind::Healer);
+    if !(missing_good || missing_building || missing_unit) {
+        return;
+    }
+    let Ok(base) = serde_json::from_str::<EconomyDef>(ECONOMY_JSON) else { return };
+    if missing_good {
+        def.goods.push(Good::Salve);
+        for b in def.buildings.iter_mut().filter(|b| b.kind == BuildingKind::Armory && !b.hub_goods.is_empty()) {
+            b.hub_goods.push(Good::Salve);
+        }
+    }
+    if missing_building {
+        if let Some(b) = base.buildings.iter().find(|b| b.kind == BuildingKind::Apothecary) {
+            def.buildings.push(b.clone());
+            for r in base.recipes.iter().filter(|r| r.building == BuildingKind::Apothecary) {
+                if !def.recipes.iter().any(|x| x.id == r.id) {
+                    def.recipes.push(r.clone());
+                }
+            }
+        }
+    }
+    if missing_unit {
+        if let Some(u) = base.units.iter().find(|u| u.kind == UnitKind::Healer) {
+            def.units.push(u.clone());
+        }
     }
 }
 
@@ -372,13 +455,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn alte_dateien_bekommen_die_apotheke() {
+        let mut v: serde_json::Value = serde_json::from_str(ECONOMY_JSON).unwrap();
+        v["goods"].as_array_mut().unwrap().retain(|g| g != "salve");
+        v["buildings"].as_array_mut().unwrap().retain(|b| b["kind"] != "apothecary");
+        for b in v["buildings"].as_array_mut().unwrap() {
+            b["hub_goods"].as_array_mut().unwrap().retain(|g| g != "salve");
+        }
+        v["recipes"].as_array_mut().unwrap().retain(|r| r["building"] != "apothecary");
+        v["units"].as_array_mut().unwrap().retain(|u| u["kind"] != "healer");
+        v["market"]["prices"].as_array_mut().unwrap().retain(|p| p["good"] != "salve");
+        let eco = Economy::parse(&v.to_string()).unwrap();
+        assert!(eco.building(BuildingKind::Apothecary).is_some());
+        assert!(eco.unit(UnitKind::Healer).is_some_and(|u| u.heal > 0));
+        assert!(eco.recipe("make_salve").is_some());
+        assert!(eco.building(BuildingKind::Armory).unwrap().hub_goods.contains(&protocol::Good::Salve));
+    }
+
+    #[test]
     fn wirtschaftsdaten_sind_gueltig() {
         let eco = Economy::parse(ECONOMY_JSON).unwrap();
         // Jede Gebäudeart aus dem Protokoll hat Daten (serde kennt alle Varianten).
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 35);
+        assert_eq!(eco.def.buildings.len(), 36);
         assert!(eco.def.buildings.iter().any(|b| b.hub), "ohne Lager kein Transport");
     }
 
@@ -427,5 +528,84 @@ mod tests {
     fn fehler_werden_erkannt() {
         let bad = ECONOMY_JSON.replacen("\"make_crossbow\"]", "\"gibt_es_nicht\"]", 1);
         assert!(Economy::parse(&bad).is_err());
+    }
+}
+
+/// Ergänzt fehlende Teile aus einer anderen Wirtschaft (der eingebauten).
+trait AddMissing {
+    /// Gibt zurück, was dazukam (für das Protokoll).
+    fn add_missing_from(&mut self, builtin: &EconomyDef) -> Vec<String>;
+}
+
+impl AddMissing for EconomyDef {
+    fn add_missing_from(&mut self, builtin: &EconomyDef) -> Vec<String> {
+        let mut added = Vec::new();
+        // Gebäude in der Reihenfolge der eingebauten Liste (so bleibt das Baumenü geordnet).
+        let mut buildings = Vec::new();
+        let mut new_kinds = Vec::new();
+        for b in &builtin.buildings {
+            match self.buildings.iter().position(|o| o.kind == b.kind) {
+                Some(i) => buildings.push(self.buildings[i].clone()),
+                None => {
+                    buildings.push(b.clone());
+                    new_kinds.push(b.kind);
+                    added.push(format!("{:?}", b.kind));
+                }
+            }
+        }
+        // Gebäude, die nur in der Datei stehen, bleiben hinten dran.
+        for b in &self.buildings {
+            if !builtin.buildings.iter().any(|o| o.kind == b.kind) {
+                buildings.push(b.clone());
+            }
+        }
+        self.buildings = buildings;
+        for r in builtin.recipes.iter().filter(|r| new_kinds.contains(&r.building)) {
+            if !self.recipes.iter().any(|o| o.id == r.id) {
+                self.recipes.push(r.clone());
+            }
+        }
+        for u in &builtin.units {
+            if !self.units.iter().any(|o| o.kind == u.kind) {
+                self.units.push(u.clone());
+                added.push(format!("{:?}", u.kind));
+            }
+        }
+        // Waren, die die neuen Teile brauchen.
+        let used: Vec<Good> = self
+            .buildings
+            .iter()
+            .flat_map(|b| b.levels.iter().flat_map(|l| l.cost.iter().map(|g| g.good)))
+            .chain(self.recipes.iter().flat_map(|r| r.inputs.iter().chain(&r.outputs).map(|g| g.good)))
+            .chain(self.units.iter().flat_map(|u| u.cost.iter().map(|g| g.good)))
+            .collect();
+        for g in builtin.goods.iter().filter(|g| used.contains(g)) {
+            if !self.goods.contains(g) {
+                self.goods.push(*g);
+            }
+        }
+        added
+    }
+}
+
+#[cfg(test)]
+mod builtin_tests {
+    use super::*;
+
+    #[test]
+    fn alte_datei_bekommt_neue_gebaeude() {
+        let full = Economy::parse(ECONOMY_JSON).unwrap();
+        let mut old = full.def.clone();
+        old.buildings.retain(|b| !matches!(b.kind, BuildingKind::WoodPath | BuildingKind::StonePath));
+        old.buildings[0].levels[0].cost.clear();
+        let json = serde_json::to_string(&old).unwrap();
+        let merged = Economy::parse_with_builtin(&json).unwrap();
+        assert!(merged.building(BuildingKind::WoodPath).is_some(), "Holzweg ergänzt");
+        assert!(merged.building(BuildingKind::StonePath).is_some(), "Steinweg ergänzt");
+        let kinds: Vec<_> = merged.def.buildings.iter().map(|b| b.kind).collect();
+        let builtin: Vec<_> = full.def.buildings.iter().map(|b| b.kind).collect();
+        assert_eq!(kinds, builtin, "Reihenfolge wie eingebaut");
+        let first = merged.def.buildings.iter().find(|b| b.kind == old.buildings[0].kind).unwrap();
+        assert!(first.levels[0].cost.is_empty(), "eigene Werte bleiben");
     }
 }
