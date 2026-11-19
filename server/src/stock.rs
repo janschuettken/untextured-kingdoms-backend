@@ -170,7 +170,7 @@ impl Stock {
             }
         }
         let capacity = if self.pooled { self.pools.iter().map(|p| p.capacity).sum() } else { self.capacity };
-        StockState { goods, capacity, pools, people: Default::default(), taler: self.taler, army: Default::default(), auto_trade: Vec::new() }
+        StockState { goods, capacity, pools, people: Default::default(), taler: self.taler, army: Default::default(), auto_trade: Vec::new(), limits: Vec::new() }
     }
 }
 

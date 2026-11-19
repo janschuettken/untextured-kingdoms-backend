@@ -242,6 +242,41 @@ impl World {
     }
 
     /// Einstellungen eines eigenen Gebäudes ändern. Rezepte nur, wenn freigeschaltet.
+    /// Grenzen einer Ware für neue Betriebe merken (Ressourcen-Fenster). `None` = unverändert, 0 = aus.
+    pub fn set_good_limit(&mut self, player: u32, good: protocol::Good, stop_at: Option<u32>, keep_in_stock: Option<u32>) -> Result<(), Refusal> {
+        if !self.economy.def.goods.contains(&good) {
+            return Err(Text::new("error.unknown_good"));
+        }
+        let list = self.good_limits.entry(player).or_default();
+        let mut l = list.iter().find(|l| l.good == good).copied().unwrap_or(protocol::GoodLimit { good, stop_at: 0, keep_in_stock: 0 });
+        l.stop_at = stop_at.unwrap_or(l.stop_at);
+        l.keep_in_stock = keep_in_stock.unwrap_or(l.keep_in_stock);
+        list.retain(|x| x.good != good);
+        if l.stop_at > 0 || l.keep_in_stock > 0 {
+            list.push(l);
+            list.sort_by_key(|x| x.good);
+        }
+        self.dirty_stocks.insert(player);
+        Ok(())
+    }
+
+    /// Startgrenzen für einen neuen Betrieb: (Mindestbestand je Eingang, Höchstbestand je Ergebnis)
+    /// aus den gemerkten Grenzen, für alle Rezepte bis zur Stufe `level`.
+    pub(super) fn default_limits(&self, player: u32, def: &protocol::BuildingDef, level: u32) -> (Vec<protocol::GoodAmount>, Vec<protocol::GoodAmount>) {
+        let Some(limits) = self.good_limits.get(&player) else { return (Vec::new(), Vec::new()) };
+        let recipes: Vec<_> = def.levels.iter().take(level.max(1) as usize).flat_map(|l| &l.recipes).filter_map(|r| self.economy.recipe(r)).collect();
+        let (mut keep, mut stop) = (Vec::new(), Vec::new());
+        for l in limits {
+            if l.keep_in_stock > 0 && recipes.iter().any(|r| r.inputs.iter().any(|g| g.good == l.good)) {
+                keep.push(protocol::GoodAmount { good: l.good, amount: l.keep_in_stock });
+            }
+            if l.stop_at > 0 && recipes.iter().any(|r| r.outputs.iter().any(|g| g.good == l.good)) {
+                stop.push(protocol::GoodAmount { good: l.good, amount: l.stop_at });
+            }
+        }
+        (keep, stop)
+    }
+
     pub fn configure(&mut self, player: u32, id: u32, settings: BuildingSettings) -> Result<BuildingState, Refusal> {
         let i = self.own_building(player, id)?;
         let b = &self.buildings[i];
@@ -326,6 +361,23 @@ mod tests {
         let terrain = format!("{}\n", "0".repeat(w)).repeat(h);
         let resources: String = res.iter().map(|r| r.iter().collect::<String>() + "\n").collect();
         format!("spawn {} {}\n[terrain]\n{terrain}[resources]\n{resources}", spawn.0, spawn.1)
+    }
+
+    #[test]
+    fn neue_betriebe_uebernehmen_die_grenzen_je_ware() {
+        let mut w = world(&map(40, 20, (0, 19), &[]));
+        w.admin_give(1, &[GoodAmount { good: Good::Wood, amount: 200 }, GoodAmount { good: Good::Boards, amount: 200 }], 0);
+        w.set_good_limit(1, Good::Boards, Some(50), None).unwrap();
+        w.set_good_limit(1, Good::Wood, None, Some(20)).unwrap();
+        assert_eq!(w.stock_state(1).limits.len(), 2);
+        let saw = w.place_building(1, BuildingKind::Sawmill, 2, 2).unwrap();
+        assert_eq!(saw.settings.stop_at, vec![GoodAmount { good: Good::Boards, amount: 50 }]);
+        assert_eq!(saw.settings.keep_in_stock, vec![GoodAmount { good: Good::Wood, amount: 20 }]);
+        // Ausschalten: neue Betriebe ohne Grenze.
+        w.set_good_limit(1, Good::Boards, Some(0), None).unwrap();
+        let saw = w.place_building(1, BuildingKind::Sawmill, 10, 2).unwrap();
+        assert!(saw.settings.stop_at.is_empty());
+        assert_eq!(saw.settings.keep_in_stock.len(), 1);
     }
 
     #[test]

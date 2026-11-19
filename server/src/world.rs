@@ -226,6 +226,8 @@ pub struct World {
     meal_soonest: HashMap<u32, f32>,
     /// Automatischer Handel je Spieler (siehe `market.rs`).
     auto_trade: HashMap<u32, Vec<protocol::AutoTrade>>,
+    /// Grenzen je Ware für neue Betriebe, je Spieler (Ressourcen-Fenster).
+    good_limits: HashMap<u32, Vec<protocol::GoodLimit>>,
     /// Sekunden seit dem letzten automatischen Handel.
     auto_trade_clock: f32,
     /// Tempo-Faktor je Betrieb, dessen Arbeiter (teils) hungern (siehe `people.rs`).
@@ -334,6 +336,7 @@ impl World {
             meal_soonest: HashMap::new(),
             worker_hunger: HashMap::new(),
             auto_trade: HashMap::new(),
+            good_limits: HashMap::new(),
             auto_trade_clock: 0.0,
             unstaffed: HashSet::new(),
             idle_units: HashSet::new(),
@@ -362,8 +365,9 @@ impl World {
     }
 
     pub fn stock_state(&self, player: u32) -> StockState {
-        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, pools: Vec::new(), people: Default::default(), taler: 0, army: Default::default(), auto_trade: Vec::new() });
+        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, pools: Vec::new(), people: Default::default(), taler: 0, army: Default::default(), auto_trade: Vec::new(), limits: Vec::new() });
         state.auto_trade = self.auto_trade.get(&player).cloned().unwrap_or_default();
+        state.limits = self.good_limits.get(&player).cloned().unwrap_or_default();
         state.people = self.people.get(&player).cloned().unwrap_or_default();
         state.people.next_meal_in = self.meal_soonest.get(&player).copied().unwrap_or(0.0).max(0.0).ceil() as u32;
         state.army = self.army_state(player);
@@ -552,6 +556,7 @@ impl World {
         self.people.remove(&player);
         self.meal_soonest.remove(&player);
         self.auto_trade.remove(&player);
+        self.good_limits.remove(&player);
         ids
     }
 
@@ -656,7 +661,7 @@ impl World {
         }
         self.check_build_radius(player, def.at(level as u32).build_radius, (x, y), (w, h))?;
         if !free {
-            self.check_no_enemy(player, (x as f32 + w as f32 / 2.0, y as f32 + h as f32 / 2.0))?;
+            self.check_no_enemy(player, kind, (x as f32 + w as f32 / 2.0, y as f32 + h as f32 / 2.0))?;
         }
         // Tore und Türme dürfen auf eigene Mauern, alle Gebäude auf eigene Wege;
         // die kommen beim Bauen weg.
@@ -704,16 +709,18 @@ impl World {
             }
         }
 
+        // Grenzen aus dem Ressourcen-Fenster für die Waren, die der Betrieb nutzt.
+        let (keep_in_stock, stop_at) = self.default_limits(player, &def, level as u32);
         let settings = BuildingSettings {
             recipe: def.levels[0].recipes.first().cloned(),
             paused: false,
             accept_deliveries: def.delivery.carriers,
             stores: None,
-            keep_in_stock: Vec::new(),
+            keep_in_stock,
             gate: GateMode::Auto,
             worker_carries: def.delivery.worker && self.worker_carries_default && (self.self_carry.contains(&player) || !self.cart_shed_covers(player, x, y, w, h)),
             cart_deliveries: def.delivery.carts,
-            stop_at: Vec::new(),
+            stop_at,
         };
         let status = if settings.recipe.is_some() { BuildingStatus::Working } else { BuildingStatus::Idle };
         let mut b = BuildingState {
@@ -1004,7 +1011,7 @@ impl World {
         let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
         let old = b.clone();
         self.check_build_radius(player, radius, (old.x, old.y), (old.w, old.h))?;
-        self.check_no_enemy(player, center)?;
+        self.check_no_enemy(player, old.kind, center)?;
         self.pay(player, &cost)?;
         if road {
             self.set_footprint(&old, false);

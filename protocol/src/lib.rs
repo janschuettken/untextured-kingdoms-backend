@@ -114,6 +114,14 @@ pub enum ClientMsg {
     Trade { good: Good, amount: u32, sell: bool },
     /// Automatisch handeln: unter `buy_below` kaufen, über `sell_above` verkaufen (0 = aus).
     SetAutoTrade { good: Good, buy_below: u32, sell_above: u32 },
+    /// Grenzen einer Ware für neue Betriebe merken (`None` = unverändert, 0 = aus).
+    SetGoodLimit {
+        good: Good,
+        #[serde(default)]
+        stop_at: Option<u32>,
+        #[serde(default)]
+        keep_in_stock: Option<u32>,
+    },
     /// Als Admin anmelden (Token aus der Server-Umgebung `ADMIN_TOKEN`).
     AdminLogin { token: String },
     /// Nur Admin: sich selbst Waren ins Lager legen.
@@ -915,6 +923,21 @@ pub struct StockState {
     /// Automatischer Handel am Markt je Ware.
     #[serde(default)]
     pub auto_trade: Vec<AutoTrade>,
+    /// Grenzen je Ware aus dem Ressourcen-Fenster: Startwerte für neue Betriebe.
+    #[serde(default)]
+    pub limits: Vec<GoodLimit>,
+}
+
+/// Grenzen für eine Ware, die neue Betriebe übernehmen: Hersteller pausieren ab
+/// `stop_at` im Vorrat, Verbraucher lassen `keep_in_stock` liegen. 0 = aus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GoodLimit {
+    pub good: Good,
+    #[serde(default)]
+    pub stop_at: u32,
+    #[serde(default)]
+    pub keep_in_stock: u32,
 }
 
 /// Automatischer Handel für eine Ware: kaufen, solange weniger als `buy_below`
@@ -1152,6 +1175,9 @@ pub struct BuildingDef {
     /// Brücke: höchstens so viele Wasserfelder lang (0 = 15).
     #[serde(default)]
     pub max_span: u32,
+    /// Kein Bauen, Ausbauen oder Reparieren, solange ein Feind (Soldat, König) so nah ist (Felder, 0 = aus).
+    #[serde(default = "default_enemy_radius")]
+    pub enemy_radius: f32,
     /// Mindestens eine Stufe.
     pub levels: Vec<BuildingLevel>,
 }
@@ -1610,6 +1636,10 @@ pub struct BuildingState {
     /// Nur Lager: so viel passt insgesamt hinein (belegt = Summe von `inventory`).
     #[serde(default)]
     pub capacity: u32,
+}
+
+fn default_enemy_radius() -> f32 {
+    15.0
 }
 
 fn default_true() -> bool {
