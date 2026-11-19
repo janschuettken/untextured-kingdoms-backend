@@ -20,7 +20,8 @@
     "armor",
     "light_armor",
     "saddle",
-    "salve"
+    "salve",
+    "horse"
   ],
   "buildings": [
     {
@@ -35,6 +36,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 1}],
@@ -71,6 +73,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 1}],
@@ -107,6 +110,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 6}],
@@ -164,6 +168,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 1}],
@@ -221,6 +226,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "blocks", "amount": 3}],
@@ -278,6 +284,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 3}, {"good": "blocks", "amount": 20}],
@@ -314,6 +321,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 5}, {"good": "blocks", "amount": 14}],
@@ -350,6 +358,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 12}, {"good": "wood", "amount": 5}],
@@ -407,6 +416,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -448,6 +458,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 3}],
@@ -505,6 +516,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 6}, {"good": "wood", "amount": 4}],
@@ -543,6 +555,7 @@
       "first_free": true,
       "hub_goods": ["wood", "boards", "stone", "blocks", "iron_ore", "iron", "leather"],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -584,6 +597,7 @@
       "first_free": false,
       "hub_goods": ["wood", "boards", "stone", "blocks", "iron_ore", "iron", "leather"],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 26}],
@@ -642,6 +656,7 @@
       "first_free": true,
       "hub_goods": ["grain", "flour", "bread", "fruit", "meat"],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}, {"good": "boards", "amount": 10}],
@@ -688,6 +703,7 @@
         "salve"
       ],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -753,6 +769,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -853,6 +870,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [],
@@ -890,6 +908,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 10}],
@@ -928,6 +947,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -966,6 +986,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 15}],
@@ -1003,6 +1024,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -1039,6 +1061,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -1075,6 +1098,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -1111,6 +1135,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -1147,6 +1172,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 20}],
@@ -1204,6 +1230,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 20}],
@@ -1261,6 +1288,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -1301,6 +1329,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -1366,6 +1395,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 30}],
@@ -1402,6 +1432,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -1443,6 +1474,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -1479,6 +1511,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -1537,10 +1570,48 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 30}],
           "recipes": ["raise_cattle"],
+          "housing": 0,
+          "spawns": [],
+          "trains": [],
+          "max_hp": 300,
+          "workers": 1,
+          "gather_radius": 0,
+          "service_radius": 0,
+          "walkway": false,
+          "stairs": false,
+          "gate_radius": 0,
+          "garrison": 0,
+          "cover_percent": 0,
+          "build_radius": 0,
+          "road_speed_percent": 0,
+          "hub_capacity": 0,
+          "storage_inputs": 0,
+          "storage_outputs": 0
+        }
+      ]
+    },
+    {
+      "kind": "horse_farm",
+      "category": "military",
+      "w": 6,
+      "h": 6,
+      "height": 1,
+      "no_entrance": false,
+      "on_walls": false,
+      "on_ramps": false,
+      "first_free": false,
+      "hub_goods": [],
+      "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 6,
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 25}],
+          "recipes": ["breed_horse"],
           "housing": 0,
           "spawns": [],
           "trains": [],
@@ -1573,6 +1644,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -1659,6 +1731,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
+      "horse_capacity": 0,
       "levels": [
         {
           "cost": [
@@ -1856,6 +1929,14 @@
       "outputs": [{"good": "salve", "amount": 1}],
       "seconds": 12,
       "unattended_percent": 0
+    },
+    {
+      "id": "breed_horse",
+      "building": "horse_farm",
+      "inputs": [{"good": "grain", "amount": 2}],
+      "outputs": [{"good": "horse", "amount": 1}],
+      "seconds": 45,
+      "unattended_percent": 60
     }
   ],
   "start_stock": [
@@ -1934,6 +2015,8 @@
       "upkeep": 0,
       "food": 0,
       "ranged_immune": true,
+      "can_ride": false,
+      "mounted": false,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -1950,6 +2033,8 @@
       "upkeep": 0,
       "food": 0,
       "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -1966,6 +2051,8 @@
       "upkeep": 0,
       "food": 0,
       "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -1982,6 +2069,8 @@
       "upkeep": 0,
       "food": 0,
       "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -1998,6 +2087,8 @@
       "upkeep": 0,
       "food": 0,
       "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2014,6 +2105,8 @@
       "upkeep": 0,
       "food": 0,
       "ranged_immune": false,
+      "can_ride": true,
+      "mounted": false,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2030,6 +2123,8 @@
       "upkeep": 0,
       "food": 0,
       "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2046,6 +2141,8 @@
       "upkeep": 0,
       "food": 1,
       "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2062,6 +2159,8 @@
       "upkeep": 0,
       "food": 1,
       "ranged_immune": false,
+      "can_ride": true,
+      "mounted": false,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2078,6 +2177,8 @@
       "upkeep": 0,
       "food": 2,
       "ranged_immune": false,
+      "can_ride": true,
+      "mounted": false,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2098,6 +2199,8 @@
       "upkeep": 0,
       "food": 3,
       "ranged_immune": false,
+      "can_ride": true,
+      "mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2114,6 +2217,8 @@
       "upkeep": 0,
       "food": 0,
       "ranged_immune": false,
+      "can_ride": false,
+      "mounted": false,
       "attack_seconds": 1.5,
       "heal": 5,
       "heal_range": 5
@@ -2126,6 +2231,10 @@
     "melee_range": 2,
     "civilian_respawn_seconds": 30,
     "enemy_block_radius": 50,
+    "horse_hp": 40,
+    "horse_speed": 2.4,
+    "fall_damage": 15,
+    "fall_seconds": 8,
     "heal_seconds": 2
   }
 }
