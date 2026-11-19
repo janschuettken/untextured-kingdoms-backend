@@ -8,7 +8,7 @@
 //! - `DELETE /api/maps/{name}` Karte löschen: nur Admins, nicht die letzte. Laufende Spiele haben ihre
 //!   Karte im Spielstand und laufen weiter.
 //! - `GET  /api/maps/generate?width=..&height=..&players=..&seed=..`  Zufallskarte erzeugen
-//!   (optional `farmland forest stone iron hills` in Prozent, `rivers` Anzahl)
+//!   (optional `farmland forest stone iron hills` in Prozent, `forest_size stone_size iron_size` Fleckgröße in Prozent, `rivers` Anzahl)
 //!
 //! `GET /api/games/{id}/map` (die laufende Karte eines Spiels mit aktuellem Stand) liegt in `game.rs`.
 
@@ -180,6 +180,10 @@ struct GenerateParams {
     forest: Option<f32>,
     stone: Option<f32>,
     iron: Option<f32>,
+    /// Fleckgröße in Prozent (50–300, 100 = normal).
+    forest_size: Option<f32>,
+    stone_size: Option<f32>,
+    iron_size: Option<f32>,
     hills: Option<f32>,
     rivers: Option<usize>,
 }
@@ -196,6 +200,9 @@ async fn generate(Query(p): Query<GenerateParams>) -> Response {
     params.forest = pct(p.forest);
     params.stone = pct(p.stone);
     params.iron = pct(p.iron);
+    params.forest_size = pct(p.forest_size);
+    params.stone_size = pct(p.stone_size);
+    params.iron_size = pct(p.iron_size);
     params.hills = pct(p.hills);
     if let Some(r) = p.rivers {
         params.rivers = r.min(crate::mapgen::MAX_RIVERS);

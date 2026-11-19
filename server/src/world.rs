@@ -898,6 +898,9 @@ impl World {
                 self.spawn_transport(&b, s.kind, n);
             }
         }
+        if self.economy.building(b.kind).is_some_and(|d| d.hub) {
+            self.update_capacity(player);
+        }
         Ok(b)
     }
 
