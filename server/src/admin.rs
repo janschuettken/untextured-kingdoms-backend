@@ -20,6 +20,8 @@
 //! - `GET  /api/admin/users`  nur Admin: alle Accounts `[{ id, username, admin, fixed, maps, created, last_login, game }]`
 //!   (`fixed` = steht in `ADMIN_USERS`, bleibt Admin)
 //!   (Zeiten in Unix-Sekunden, `game` = Spiel, in dem der Account gerade einen Platz hat)
+//!   Danach die Gäste ohne Account: `{ guest_id, username, guest: true, created, last_login, game }`
+//! - `POST /api/admin/guests/{id}/impersonate`  nur Admin: als dieser Gast spielen → `{ username, token }`
 //! - `POST /api/admin/users/{id}/impersonate`  nur Admin: als dieser Nutzer anmelden → `{ username, token }`
 //! - `POST /api/admin/users/{id}/admin`  nur Admin: `{ admin: bool }` Admin-Recht setzen (nicht bei sich selbst)
 //! - `POST /api/admin/users/{id}/maps`   nur Admin: `{ allowed: bool }` Karteneditor freischalten (`can_edit_maps`)
@@ -78,6 +80,26 @@ pub struct Admin {
 }
 
 impl Admin {
+    /// Gast (nur Name, kein Passwort) in der Datenbank vermerken oder auffrischen.
+    /// Läuft im Hintergrund; ohne Datenbank passiert nichts.
+    pub fn record_guest(&self, token: &str, name: &str) {
+        let Some(db) = self.db.clone() else { return };
+        let (token, name) = (token.to_string(), name.to_string());
+        tokio::spawn(async move {
+            let r = sqlx::query(
+                "INSERT INTO guests (player_token, name) VALUES ($1, $2) \
+                 ON CONFLICT (player_token) DO UPDATE SET name = EXCLUDED.name, last_seen = now()",
+            )
+            .bind(&token)
+            .bind(&name)
+            .execute(&db)
+            .await;
+            if let Err(e) = r {
+                warn!("Gast speichern: {e}");
+            }
+        });
+    }
+
     pub async fn from_env(db: Option<PgPool>) -> Admin {
         let open = match std::env::var("ADMIN_OPEN") {
             Ok(v) => matches!(v.trim(), "1" | "true" | "yes" | "on"),
@@ -213,6 +235,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/api/admin", get(status).post(login))
         .route("/api/admin/users", get(list_users))
         .route("/api/admin/users/{id}/impersonate", post(impersonate))
+        .route("/api/admin/guests/{id}/impersonate", post(impersonate_guest))
         .route("/api/admin/users/{id}/admin", post(set_admin))
         .route("/api/admin/users/{id}/maps", post(set_maps))
         .route("/api/rights", post(rights))
@@ -263,7 +286,7 @@ fn db_error(e: sqlx::Error) -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, "account.error").into_response()
 }
 
-type UserRow = (i64, String, bool, bool, i64, Option<i64>, String);
+type UserRow = (i64, String, bool, bool, i64, Option<i64>, String, Option<String>, Option<String>);
 
 async fn list_users(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
     let db = match admin_db(&hub, &headers).await {
@@ -272,7 +295,7 @@ async fn list_users(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response
     };
     let rows: Vec<UserRow> = match sqlx::query_as(
         "SELECT id, username, is_admin, can_edit_maps, extract(epoch FROM created_at)::bigint, \
-         extract(epoch FROM last_login)::bigint, player_token FROM accounts ORDER BY lower(username)",
+         extract(epoch FROM last_login)::bigint, player_token, email, avatar FROM accounts ORDER BY lower(username)",
     )
     .fetch_all(&db)
     .await
@@ -282,17 +305,58 @@ async fn list_users(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response
     };
     let list: Vec<_> = rows
         .into_iter()
-        .map(|(id, username, is_admin, maps, created, last_login, token)| {
+        .map(|(id, username, is_admin, maps, created, last_login, token, email, avatar)| {
             // Über ADMIN_USERS ist man immer Admin, egal was in der Tabelle steht.
             let fixed = hub.admin.users.contains(&username.to_lowercase());
             let game = hub.game_of(&token).map(|g| g.id);
             serde_json::json!({
                 "id": id, "username": username, "admin": is_admin || fixed, "fixed": fixed, "maps": maps,
-                "created": created, "last_login": last_login, "game": game,
+                "created": created, "last_login": last_login, "game": game, "email": email, "avatar": avatar,
             })
         })
         .collect();
+    // Gäste ohne Account (wer sich später registriert, steht oben als Account).
+    let guests: Vec<(i64, String, i64, i64, String)> = match sqlx::query_as(
+        "SELECT g.id, g.name, extract(epoch FROM g.created_at)::bigint, extract(epoch FROM g.last_seen)::bigint, \
+         g.player_token FROM guests g WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE a.player_token = g.player_token) \
+         ORDER BY g.last_seen DESC",
+    )
+    .fetch_all(&db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return db_error(e),
+    };
+    let mut list = list;
+    list.extend(guests.into_iter().map(|(id, name, created, seen, token)| {
+        let game = hub.game_of(&token).map(|g| g.id);
+        serde_json::json!({
+            "id": null, "guest_id": id, "guest": true, "username": name, "admin": false, "fixed": false,
+            "maps": false, "created": created, "last_login": seen, "game": game,
+        })
+    }));
     Json(list).into_response()
+}
+
+async fn impersonate_guest(
+    State(hub): State<Arc<Hub>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    let db = match admin_db(&hub, &headers).await {
+        Ok(db) => db,
+        Err(r) => return r,
+    };
+    let row: Option<(String, String)> =
+        match sqlx::query_as("SELECT name, player_token FROM guests WHERE id = $1").bind(id).fetch_optional(&db).await {
+            Ok(r) => r,
+            Err(e) => return db_error(e),
+        };
+    let Some((name, token)) = row else {
+        return (StatusCode::NOT_FOUND, "admin.no_user").into_response();
+    };
+    info!("Admin spielt als Gast {name}");
+    Json(serde_json::json!({ "username": name, "token": token })).into_response()
 }
 
 async fn impersonate(
