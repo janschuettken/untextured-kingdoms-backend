@@ -37,6 +37,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 1}],
@@ -74,6 +75,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 1}],
@@ -149,6 +151,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 6}],
@@ -207,6 +210,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 1}],
@@ -265,6 +269,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "blocks", "amount": 3}],
@@ -323,6 +328,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 3}, {"good": "blocks", "amount": 20}],
@@ -360,6 +366,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 5}, {"good": "blocks", "amount": 14}],
@@ -397,6 +404,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 12}, {"good": "wood", "amount": 5}],
@@ -455,6 +463,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [
@@ -497,6 +506,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 3}],
@@ -555,6 +565,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "stone", "amount": 6}, {"good": "wood", "amount": 4}],
@@ -594,6 +605,7 @@
       "hub_goods": ["wood", "boards", "stone", "blocks", "iron_ore", "iron", "leather"],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [
@@ -636,6 +648,7 @@
       "hub_goods": ["wood", "boards", "stone", "blocks", "iron_ore", "iron", "leather"],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 26}],
@@ -695,6 +708,7 @@
       "hub_goods": ["grain", "flour", "bread", "fruit", "meat"],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}, {"good": "boards", "amount": 10}],
@@ -742,6 +756,7 @@
       ],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [
@@ -808,6 +823,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -909,6 +925,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [],
@@ -947,6 +964,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 10}],
@@ -986,6 +1004,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -1025,6 +1044,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 15}],
@@ -1063,6 +1083,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -1100,6 +1121,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -1137,6 +1159,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -1174,6 +1197,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -1211,6 +1235,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 20}],
@@ -1269,6 +1294,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 20}],
@@ -1327,6 +1353,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [
@@ -1368,6 +1395,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [
@@ -1434,6 +1462,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 13}, {"good": "boards", "amount": 30}],
@@ -1471,6 +1500,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [
@@ -1513,6 +1543,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 16}],
@@ -1550,6 +1581,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}],
@@ -1609,6 +1641,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 30}],
@@ -1646,6 +1679,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 6,
+      "max_span": 0,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 25}],
@@ -1683,6 +1717,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [
@@ -1770,6 +1805,7 @@
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
       "horse_capacity": 0,
+      "max_span": 0,
       "levels": [
         {
           "cost": [
@@ -2055,6 +2091,9 @@
       "ranged_immune": true,
       "can_ride": false,
       "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2073,6 +2112,9 @@
       "ranged_immune": false,
       "can_ride": false,
       "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2091,6 +2133,9 @@
       "ranged_immune": false,
       "can_ride": false,
       "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2109,6 +2154,9 @@
       "ranged_immune": false,
       "can_ride": false,
       "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2127,6 +2175,9 @@
       "ranged_immune": false,
       "can_ride": false,
       "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2145,6 +2196,9 @@
       "ranged_immune": false,
       "can_ride": true,
       "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2163,6 +2217,9 @@
       "ranged_immune": false,
       "can_ride": false,
       "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2181,6 +2238,9 @@
       "ranged_immune": false,
       "can_ride": false,
       "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2199,6 +2259,9 @@
       "ranged_immune": false,
       "can_ride": true,
       "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2217,6 +2280,9 @@
       "ranged_immune": false,
       "can_ride": true,
       "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2239,6 +2305,9 @@
       "ranged_immune": false,
       "can_ride": true,
       "mounted": true,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0
@@ -2257,6 +2326,9 @@
       "ranged_immune": false,
       "can_ride": false,
       "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 5,
       "heal_range": 5
