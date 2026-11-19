@@ -788,7 +788,7 @@ mod tests {
         let mut w = flat(40, 20);
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
         let mill = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap().id;
-        assert!(!w.buildings.iter().find(|b| b.id == mill).unwrap().settings.cart_deliveries, "Standard: aus");
+        assert!(w.buildings.iter().find(|b| b.id == mill).unwrap().settings.cart_deliveries, "Standard: an");
         let s = &mut w.buildings.iter_mut().find(|b| b.id == mill).unwrap().settings;
         s.paused = false;
         s.cart_deliveries = true;

@@ -1131,7 +1131,7 @@ pub struct DeliveryDefaults {
 
 impl Default for DeliveryDefaults {
     fn default() -> Self {
-        DeliveryDefaults { carriers: true, carts: false, worker: true }
+        DeliveryDefaults { carriers: true, carts: true, worker: true }
     }
 }
 
@@ -1588,7 +1588,7 @@ pub struct BuildingSettings {
     /// Höchstbestand im Vorrat: liegt von einem Ergebnis so viel im Vorrat, macht der Betrieb Pause.
     #[serde(default)]
     pub stop_at: Vec<GoodAmount>,
-    /// Karren füllen das Eingangslager auf (auch wenn der Arbeiter selbst trägt). Standard: aus.
+    /// Karren füllen das Eingangslager auf (auch wenn der Arbeiter selbst trägt). Standard: an.
     #[serde(default)]
     pub cart_deliveries: bool,
 }

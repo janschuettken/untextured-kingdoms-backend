@@ -40,6 +40,6 @@ worker_carries: boolean,
  */
 stop_at: Array<GoodAmount>, 
 /**
- * Karren füllen das Eingangslager auf (auch wenn der Arbeiter selbst trägt). Standard: aus.
+ * Karren füllen das Eingangslager auf (auch wenn der Arbeiter selbst trägt). Standard: an.
  */
 cart_deliveries: boolean, };

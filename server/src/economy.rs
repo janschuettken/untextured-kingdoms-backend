@@ -645,7 +645,7 @@ mod tests {
                 assert_eq!(l.stairs, stairs > 0 && n >= stairs, "{:?} Stufe {n}", b.kind);
                 assert_eq!(l.cover_percent, 0, "alte Dateien kennen keine Deckung");
             }
-            assert_eq!(b.delivery, protocol::DeliveryDefaults::default(), "wie bisher: Träger und Arbeiter, keine Karren");
+            assert_eq!(b.delivery, protocol::DeliveryDefaults::default(), "Voreinstellung: Träger, Karren und Arbeiter");
         }
         let old_attack = old["army"]["attack_seconds"].as_f64().unwrap() as f32;
         assert!(eco.def.units.iter().all(|u| u.attack_seconds == old_attack), "jede Einheit bekommt den alten Takt");
