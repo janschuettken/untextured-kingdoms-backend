@@ -237,6 +237,8 @@ fn step(state: &Match, tick: u64) {
             if world.is_eliminated(computer.player) {
                 continue;
             }
+            // Der Computer plant seine Wirtschaft mit selbst tragenden Arbeitern.
+            world.self_carry.insert(computer.player);
             for cmd in computer.think(&world, dt) {
                 if let Err(text) = apply_command(&mut world, &state.ticks, computer.player, cmd) {
                     computer.rejected(&text);

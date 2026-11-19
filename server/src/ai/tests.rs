@@ -54,6 +54,7 @@ fn play_seats(
     let mut rejected = 0;
     for step in 0..(minutes as f32 * 60.0 / dt) as u32 {
         for ai in &mut ais {
+            world.self_carry.insert(ai.player);
             for cmd in ai.think(&world, dt) {
                 if let Err(e) = apply_command(&mut world, &ticks, ai.player, cmd) {
                     println!("Spieler {}: abgelehnt {}", ai.player, e.key);
@@ -111,9 +112,7 @@ fn normaler_computer_baut_mehr() {
     let stock = world.stock_state(1);
     assert!(count(&world, BuildingKind::Woodcutter) >= 4);
     assert!(count(&world, BuildingKind::Barracks) >= 1);
-    // Seit neue Betriebe im Umkreis des Wagenschuppens nicht mehr selbst tragen,
-    // kommt der Computer in 40 Minuten auf etwas weniger Soldaten (vorher 6).
-    assert!(stock.army.soldiers >= 4, "{:?}", stock.army);
+    assert!(stock.army.soldiers >= 6, "{:?}", stock.army);
     assert!(count(&world, BuildingKind::Gate) >= 1, "{:?} {:?}", stock.pools, stock.goods);
 }
 

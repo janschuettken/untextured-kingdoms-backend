@@ -181,6 +181,8 @@ pub struct World {
     unpaid: HashSet<u32>,
     /// Neue Betriebe: trägt der Arbeiter selbst? Im Spiel immer ja; Tests für Träger schalten es ab.
     pub(crate) worker_carries_default: bool,
+    /// Spieler (Computer), bei denen neue Betriebe auch neben dem Wagenschuppen selbst tragen.
+    pub(crate) self_carry: HashSet<u32>,
     /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
     hub_goods: HashMap<u32, storage::HubGoods>,
     /// Wie Waren zwischen Verbündeten ankommen.
@@ -278,6 +280,7 @@ impl World {
             winners: None,
             respawn_clock: HashMap::new(),
             worker_carries_default: true,
+            self_carry: HashSet::new(),
         }
     }
 
@@ -630,7 +633,7 @@ impl World {
             stores: None,
             keep_in_stock: Vec::new(),
             gate: GateMode::Auto,
-            worker_carries: self.worker_carries_default && !self.cart_shed_covers(player, x, y, w, h),
+            worker_carries: self.worker_carries_default && (self.self_carry.contains(&player) || !self.cart_shed_covers(player, x, y, w, h)),
             cart_deliveries: false,
             stop_at: Vec::new(),
         };
