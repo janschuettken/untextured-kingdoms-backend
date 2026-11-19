@@ -555,6 +555,9 @@ impl World {
                 }
             }
         }
+        if placed.is_none() {
+            tracing::warn!("Startgebäude {kind:?} für Spieler {player} passt nicht in die Nähe der Fahne ({sx}, {sy})");
+        }
         placed
     }
 
