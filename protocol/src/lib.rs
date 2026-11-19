@@ -304,8 +304,12 @@ pub enum LobbyClientMsg {
     CreateGame { map: String },
     /// Einem wartenden Spiel beitreten. Laufende Spiele nehmen niemanden auf.
     JoinGame { game_id: u32 },
-    /// Das eigene Spiel verlassen (wartend oder laufend).
-    LeaveGame,
+    /// Ein eigenes Spiel verlassen: das laufende mit dieser Id, ohne Id das wartende.
+    LeaveGame {
+        #[serde(default)]
+        #[ts(optional)]
+        game_id: Option<u32>,
+    },
     /// Startplatz wechseln (nur auf einen freien).
     TakeSlot { slot: u32 },
     /// Nur Gastgeber, nur vor dem Start: andere Karte.
@@ -362,9 +366,11 @@ pub enum AiLevel {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
 pub enum LobbyServerMsg {
-    /// Antwort auf `hello`: die eigene öffentliche Id und die Karten zur Auswahl.
-    Welcome { you: String, maps: Vec<String> },
-    /// Kompletter Stand, kommt bei jeder Änderung neu.
+    /// Antwort auf `hello`: die eigene öffentliche Id, die Karten zur Auswahl und
+    /// die Version des Servers (Commit und Datum).
+    Welcome { you: String, maps: Vec<String>, server_version: String },
+    /// Kompletter Stand, kommt bei jeder Änderung neu. `current` ist das wartende
+    /// Spiel, in dem man sitzt; laufende eigene Spiele stehen in `games` (`mine`).
     State { games: Vec<GameSummary>, current: Option<LobbyGame> },
     Pong { client_time: f64 },
     Rejected { text: Text },
@@ -390,6 +396,12 @@ pub struct GameSummary {
     pub host_name: String,
     pub players: u32,
     pub max_players: u32,
+    /// Man spielt selbst mit (laufende Spiele: man kann weiterspielen).
+    pub mine: bool,
+    /// Läuft, steht aber still: kein Mensch im Spiel (oder Tempo 0).
+    pub paused: bool,
+    /// Wer mitspielt (für den Admin: „Spielen als“ hinter jedem Spieler).
+    pub slots: Vec<LobbySlot>,
 }
 
 /// Das Spiel, in dem man selbst ist, mit allen Startplätzen.
