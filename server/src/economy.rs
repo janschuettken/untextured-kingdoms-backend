@@ -25,6 +25,7 @@ fn default_king(speed: f32) -> UnitDef {
         ranged_immune: true,
         can_ride: false,
         mounted: false,
+        attack_seconds: 1.5,
         heal: 0,
         heal_range: 0.0,
     }
@@ -52,6 +53,89 @@ fn fill_from_builtin(def: &mut EconomyDef) {
         }
         def.buildings.push(b.clone());
     }
+}
+
+/// Aktueller Aufbau der Balancing-Datei.
+pub const FORMAT: u32 = 2;
+
+/// Werte, die je Gebäudestufe gelten. Fehlen sie in einer Stufe, gilt die Stufe davor.
+const LEVEL_FIELDS: [&str; 14] = [
+    "max_hp", "workers", "gather_radius", "service_radius", "walkway", "stairs", "gate_radius", "garrison",
+    "cover_percent", "build_radius", "road_speed_percent", "hub_capacity", "storage_inputs", "storage_outputs",
+];
+
+/// Bringt ältere Balancing-Dateien in den aktuellen Aufbau (Format 2: Werte je Stufe).
+///
+/// Format 1 hatte Lebenspunkte, Arbeiter, Reichweiten usw. einmal je Gebäude, Wehrgang und
+/// Treppe als „ab Stufe“ und einen Angriffstakt für alle Einheiten (`army.attack_seconds`).
+/// Beim Umwandeln bekommt jede Stufe die alten Werte, Wehrgang/Treppe gelten ab ihrer Stufe,
+/// und jede Einheit bekommt den alten Angriffstakt. Alles andere bleibt, wie es war.
+pub fn migrate(v: &mut serde_json::Value) {
+    use serde_json::Value;
+    let Some(root) = v.as_object_mut() else { return };
+    let army_attack = root
+        .get_mut("army")
+        .and_then(Value::as_object_mut)
+        .and_then(|a| a.remove("attack_seconds"))
+        .and_then(|x| x.as_f64());
+    if let Some(units) = root.get_mut("units").and_then(Value::as_array_mut) {
+        for u in units.iter_mut().filter_map(Value::as_object_mut) {
+            let missing = u.get("attack_seconds").and_then(Value::as_f64).is_none_or(|x| x <= 0.0);
+            if missing {
+                u.insert("attack_seconds".into(), Value::from(army_attack.unwrap_or(1.5)));
+            }
+        }
+    }
+    if let Some(buildings) = root.get_mut("buildings").and_then(Value::as_array_mut) {
+        for b in buildings.iter_mut().filter_map(Value::as_object_mut) {
+            let mut moved = serde_json::Map::new();
+            for k in LEVEL_FIELDS {
+                if let Some(x) = b.remove(k) {
+                    moved.insert(k.into(), x);
+                }
+            }
+            let from = |b: &mut serde_json::Map<String, Value>, k: &str| b.remove(k).and_then(|x| x.as_u64()).unwrap_or(0);
+            let walk_from = from(b, "walkway_from_level");
+            let stairs_from = from(b, "stairs_from_level");
+            let base_spawns = b.remove("spawns").and_then(|x| x.as_array().cloned()).unwrap_or_default();
+            let Some(levels) = b.get_mut("levels").and_then(Value::as_array_mut) else { continue };
+            for (i, l) in levels.iter_mut().enumerate() {
+                let Some(l) = l.as_object_mut() else { continue };
+                let n = i as u64 + 1;
+                for (k, x) in &moved {
+                    // Format 1: `hub_capacity` 0 in einer Stufe hieß „wie beim Gebäude“.
+                    if k == "hub_capacity" && l.get(k).and_then(Value::as_u64) == Some(0) {
+                        l.remove(k);
+                    }
+                    l.entry(k.clone()).or_insert_with(|| x.clone());
+                }
+                if walk_from > 0 && n >= walk_from {
+                    l.entry("walkway").or_insert(Value::Bool(true));
+                }
+                if stairs_from > 0 && n >= stairs_from {
+                    l.entry("stairs").or_insert(Value::Bool(true));
+                }
+                if i == 0 && !base_spawns.is_empty() {
+                    let mut all = base_spawns.clone();
+                    if let Some(own) = l.get("spawns").and_then(Value::as_array) {
+                        all.extend(own.iter().cloned());
+                    }
+                    l.insert("spawns".into(), Value::Array(all));
+                }
+            }
+            // Fehlende Werte erbt eine Stufe von der davor.
+            for i in 1..levels.len() {
+                let prev = levels[i - 1].clone();
+                let Some(l) = levels[i].as_object_mut() else { continue };
+                for k in LEVEL_FIELDS {
+                    if let Some(x) = prev.get(k) {
+                        l.entry(k).or_insert_with(|| x.clone());
+                    }
+                }
+            }
+        }
+    }
+    root.insert("format".into(), Value::from(FORMAT));
 }
 
 /// Grundhöhe eines Gebäudes (Welt) bis Oberkante samt Zinnen bzw. Dach.
@@ -84,7 +168,7 @@ impl Economy {
     #[cfg(test)]
     pub fn without_people(mut self) -> Economy {
         for b in &mut self.def.buildings {
-            b.workers = 0;
+            b.levels.iter_mut().for_each(|l| l.workers = 0);
         }
         self.def.population.per_transport = 0;
         self
@@ -94,7 +178,7 @@ impl Economy {
     #[cfg(test)]
     pub fn without_build_radius(mut self) -> Economy {
         for b in &mut self.def.buildings {
-            b.build_radius = 0;
+            b.levels.iter_mut().for_each(|l| l.build_radius = 0);
         }
         self
     }
@@ -108,14 +192,16 @@ impl Economy {
 
     /// Liest und prüft die Wirtschaftsdaten.
     pub fn parse(json: &str) -> Result<Economy, String> {
-        let mut def: EconomyDef = serde_json::from_str(json).map_err(|e| format!("economy.json: {e}"))?;
+        let mut value: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("economy.json: {e}"))?;
+        migrate(&mut value);
+        let mut def: EconomyDef = serde_json::from_value(value).map_err(|e| format!("economy.json: {e}"))?;
         // Ältere Balancing-Dateien kennen den König noch nicht: Grundwerte einsetzen.
         if !def.units.iter().any(|u| u.kind == UnitKind::King) {
             def.units.insert(0, default_king(def.movement.king_speed));
         }
         // Höhe für Pfeile: fehlt sie, Grundwert je Art (passend zu den Modellen im Client).
         for b in &mut def.buildings {
-            if b.height <= 0.0 && b.road_speed_percent == 0 {
+            if b.height <= 0.0 && !b.is_road() {
                 b.height = default_height(b.kind);
             }
         }
@@ -135,7 +221,10 @@ impl Economy {
             if b.levels.is_empty() || b.w == 0 || b.h == 0 {
                 return Err(format!("Gebäude {:?} braucht Größe und mindestens eine Stufe", b.kind));
             }
-            if b.spawns.iter().chain(b.levels.iter().flat_map(|l| &l.spawns)).any(|s| !matches!(s.kind, UnitKind::Carrier | UnitKind::Cart)) {
+            if let Some(n) = b.levels.iter().position(|l| l.max_hp == 0) {
+                return Err(format!("Gebäude {:?} Stufe {}: braucht Lebenspunkte", b.kind, n + 1));
+            }
+            if b.levels.iter().flat_map(|l| &l.spawns).any(|s| !matches!(s.kind, UnitKind::Carrier | UnitKind::Cart)) {
                 return Err(format!("Gebäude {:?}: nur Träger und Karren gehören zu einem Gebäude", b.kind));
             }
         }
@@ -218,6 +307,9 @@ impl Economy {
             if u.hp == 0 {
                 return Err(format!("Einheit {:?}: braucht Lebenspunkte", u.kind));
             }
+            if !(u.attack_seconds > 0.0 && u.attack_seconds.is_finite()) {
+                return Err(format!("Einheit {:?}: Sekunden zwischen zwei Angriffen müssen größer als 0 sein", u.kind));
+            }
         }
         for b in &def.buildings {
             for (n, level) in b.levels.iter().enumerate() {
@@ -238,9 +330,6 @@ impl Economy {
         }
         if army.queue_max == 0 {
             return Err("Heer: queue_max muss mindestens 1 sein".into());
-        }
-        if !(army.attack_seconds > 0.0 && army.attack_seconds.is_finite()) {
-            return Err("Heer: attack_seconds muss größer als 0 sein".into());
         }
         if !(army.melee_range >= 0.0 && army.melee_range.is_finite()) {
             return Err("Heer: melee_range darf nicht negativ sein".into());
@@ -304,7 +393,9 @@ impl Economy {
 
     /// Als JSON im Stil der Datei: kurze Teile auf einer Zeile, sonst eingerückt.
     pub fn to_json(&self) -> String {
-        let mut value = serde_json::to_value(&self.def).expect("serialisierbar");
+        let mut def = self.def.clone();
+        def.format = FORMAT;
+        let mut value = serde_json::to_value(&def).expect("serialisierbar");
         tidy(&mut value);
         let mut out = String::new();
         write_json(&mut out, &value, 0, 0, 0);
@@ -412,7 +503,7 @@ fn tidy(v: &mut serde_json::Value) {
     use serde_json::Value;
     match v {
         Value::Object(m) => {
-            m.retain(|k, x| match x {
+            m.retain(|k, x| LEVEL_FIELDS.contains(&k.as_str()) || match x {
                 Value::Null => false,
                 Value::Array(a) if a.is_empty() => k != "gathers",
                 Value::Bool(false) => k != "hub",
@@ -510,6 +601,64 @@ mod tests {
         let again = Economy::parse(&text).unwrap();
         assert_eq!(again.to_json(), text);
         assert!(text.lines().all(|l| l.len() <= 120), "kurze Zeilen");
+    }
+
+    /// Balancing-Datei im alten Aufbau (Werte einmal je Gebäude), Stand vor Format 2.
+    const FORMAT1: &str = include_str!("../data/tests/economy_format1.json");
+
+    #[test]
+    fn alte_dateien_werden_umgewandelt() {
+        let old: serde_json::Value = serde_json::from_str(FORMAT1).unwrap();
+        let eco = Economy::parse(FORMAT1).unwrap();
+        assert_eq!(eco.def.format, FORMAT);
+        for (b, ob) in eco.def.buildings.iter().zip(old["buildings"].as_array().unwrap()) {
+            let walk = ob["walkway_from_level"].as_u64().unwrap_or(0) as usize;
+            let stairs = ob["stairs_from_level"].as_u64().unwrap_or(0) as usize;
+            for (i, l) in b.levels.iter().enumerate() {
+                let n = i + 1;
+                assert_eq!(l.max_hp as u64, ob["max_hp"].as_u64().unwrap(), "{:?}", b.kind);
+                assert_eq!(l.garrison as u64, ob["garrison"].as_u64().unwrap_or(0), "{:?}", b.kind);
+                assert_eq!(l.workers as u64, ob["workers"].as_u64().unwrap_or(0), "{:?}", b.kind);
+                assert_eq!(l.build_radius as u64, ob["build_radius"].as_u64().unwrap_or(0), "{:?}", b.kind);
+                assert_eq!(l.walkway, walk > 0 && n >= walk, "{:?} Stufe {n}", b.kind);
+                assert_eq!(l.stairs, stairs > 0 && n >= stairs, "{:?} Stufe {n}", b.kind);
+                assert_eq!(l.cover_percent, 0, "alte Dateien kennen keine Deckung");
+            }
+            assert_eq!(b.delivery, protocol::DeliveryDefaults::default(), "wie bisher: Träger und Arbeiter, keine Karren");
+        }
+        let old_attack = old["army"]["attack_seconds"].as_f64().unwrap() as f32;
+        assert!(eco.def.units.iter().all(|u| u.attack_seconds == old_attack), "jede Einheit bekommt den alten Takt");
+        // Umgewandelt gespeichert und wieder geladen: dasselbe.
+        let text = eco.to_json();
+        assert_eq!(Economy::parse(&text).unwrap().to_json(), text);
+    }
+
+    #[test]
+    fn werte_je_stufe_bleiben_beim_speichern_erhalten() {
+        let mut eco = Economy::parse(ECONOMY_JSON).unwrap();
+        let tower = eco.def.buildings.iter_mut().find(|b| b.kind == BuildingKind::Tower).unwrap();
+        assert!(tower.levels.len() >= 2);
+        tower.levels[0].garrison = 8;
+        tower.levels[1].garrison = 0;
+        tower.levels[0].walkway = true;
+        tower.levels[1].walkway = false;
+        tower.levels[1].cover_percent = 60;
+        let again = Economy::parse(&eco.to_json()).unwrap();
+        let t = again.building(BuildingKind::Tower).unwrap();
+        assert_eq!((t.at(1).garrison, t.at(2).garrison), (8, 0), "0 auf Stufe 2 erbt nicht von Stufe 1");
+        assert_eq!((t.at(1).walkway, t.at(2).walkway), (true, false));
+        assert_eq!(t.at(2).cover_percent, 60);
+        assert_eq!(t.at(99).garrison, 0, "über der letzten Stufe gilt die letzte");
+    }
+
+    #[test]
+    fn fehlende_werte_erbt_eine_stufe_von_der_davor() {
+        let mut v: serde_json::Value = serde_json::from_str(ECONOMY_JSON).unwrap();
+        let tower = v["buildings"].as_array_mut().unwrap().iter_mut().find(|b| b["kind"] == "tower").unwrap();
+        tower["levels"][0]["garrison"] = 7.into();
+        tower["levels"][1].as_object_mut().unwrap().remove("garrison");
+        let eco = Economy::parse(&v.to_string()).unwrap();
+        assert_eq!(eco.building(BuildingKind::Tower).unwrap().at(2).garrison, 7);
     }
 
     #[test]

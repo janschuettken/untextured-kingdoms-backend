@@ -17,10 +17,6 @@ unpaid_speed_percent: number,
  */
 queue_max: number, 
 /**
- * Sekunden zwischen zwei Schlägen oder Schüssen einer Einheit.
- */
-attack_seconds: number, 
-/**
  * Bis zu dieser Reichweite (Felder) zählt ein Angriff als Nahkampf, darüber als Fernkampf.
  */
 melee_range: number, 

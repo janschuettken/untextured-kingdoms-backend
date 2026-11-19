@@ -52,6 +52,10 @@ can_ride: boolean,
  */
 mounted: boolean, 
 /**
+ * Sekunden zwischen zwei Schlägen oder Schüssen.
+ */
+attack_seconds: number, 
+/**
  * Heiler: so viele Lebenspunkte gibt er je Behandlung zurück (alle `army.heal_seconds`). 0 = heilt nicht.
  */
 heal: number, 

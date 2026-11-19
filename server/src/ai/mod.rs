@@ -753,7 +753,7 @@ impl Computer {
                 debug!("Computer {p}: Welle gegen {} kehrt um", c.target);
                 if let Some(home) = rally_point(world, p, layout) {
                     if !c.units.is_empty() {
-                        cmds.push(ClientMsg::MoveUnits { unit_ids: c.units.clone(), x: home.0, y: home.1, fast: None });
+                        cmds.push(ClientMsg::MoveUnits { unit_ids: c.units.clone(), x: home.0, y: home.1, fast: None, append: None });
                     }
                 }
                 self.campaign = None;
@@ -768,7 +768,7 @@ impl Computer {
                     .map(|u| u.id)
                     .collect();
                 if !stuck.is_empty() {
-                    cmds.push(ClientMsg::MoveUnits { unit_ids: stuck, x: c.goal.0, y: c.goal.1, fast: None });
+                    cmds.push(ClientMsg::MoveUnits { unit_ids: stuck, x: c.goal.0, y: c.goal.1, fast: None, append: None });
                 }
             }
             return;
@@ -808,7 +808,7 @@ impl Computer {
         self.weak_since = None;
         debug!("Computer {p}: greift Spieler {target} an ({} Soldaten, {power:.0} gegen {enemy:.0})", wave.len());
         let units: Vec<u32> = wave.iter().map(|u| u.id).collect();
-        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: goal.0, y: goal.1, fast: None });
+        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: goal.0, y: goal.1, fast: None, append: None });
         self.campaign = Some(Campaign { target, units, start_power: power, goal, arrived: None });
     }
 
@@ -821,11 +821,11 @@ impl Computer {
             return;
         }
         let Some(keep) = world.buildings.iter().find(|b| b.owner == p && b.kind == BuildingKind::Keep) else { return };
-        if world.economy.building(BuildingKind::Keep).is_none_or(|d| d.garrison == 0) {
+        if world.economy.building(BuildingKind::Keep).is_none_or(|d| d.at(keep.level).garrison == 0) {
             return;
         }
         let c = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
-        cmds.push(ClientMsg::MoveUnits { unit_ids: vec![king.id], x: c.0, y: c.1, fast: None });
+        cmds.push(ClientMsg::MoveUnits { unit_ids: vec![king.id], x: c.0, y: c.1, fast: None, append: None });
     }
 
     /// Feinde nahe am Bergfried: alle Soldaten am Boden, die nicht mit einer Welle unterwegs
@@ -852,7 +852,7 @@ impl Computer {
             .collect();
         if !defenders.is_empty() {
             debug!("Computer {p}: verteidigt gegen Spieler {}", threat.owner);
-            cmds.push(ClientMsg::MoveUnits { unit_ids: defenders, x: threat.pos.0, y: threat.pos.1, fast: Some(true) });
+            cmds.push(ClientMsg::MoveUnits { unit_ids: defenders, x: threat.pos.0, y: threat.pos.1, fast: Some(true), append: None });
         }
         true
     }
@@ -881,7 +881,7 @@ impl Computer {
             if done || power < r.start_power * RELIEF_RETREAT {
                 debug!("Computer {p}: Hilfe für Spieler {} kehrt heim", r.ally);
                 if let (Some(home), false) = (rally_point(world, p, layout), r.units.is_empty()) {
-                    cmds.push(ClientMsg::MoveUnits { unit_ids: r.units.clone(), x: home.0, y: home.1, fast: None });
+                    cmds.push(ClientMsg::MoveUnits { unit_ids: r.units.clone(), x: home.0, y: home.1, fast: None, append: None });
                 }
                 self.relief = None;
                 return;
@@ -894,7 +894,7 @@ impl Computer {
                 .map(|u| u.id)
                 .collect();
             if !idle.is_empty() {
-                cmds.push(ClientMsg::MoveUnits { unit_ids: idle, x: target.0, y: target.1, fast: None });
+                cmds.push(ClientMsg::MoveUnits { unit_ids: idle, x: target.0, y: target.1, fast: None, append: None });
             }
             return;
         }
@@ -945,7 +945,7 @@ impl Computer {
             units.push(u.id);
         }
         debug!("Computer {p}: hilft Spieler {ally} mit {} Soldaten ({power:.0} gegen {threat:.0})", units.len());
-        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: at.0, y: at.1, fast: None });
+        cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: at.0, y: at.1, fast: None, append: None });
         self.relief = Some(Relief { ally, units, start_power: power, until: self.clock + RELIEF_SECONDS });
     }
 
@@ -998,7 +998,7 @@ impl Computer {
         let mut posts: Vec<((f32, f32), usize)> = Vec::new();
         if self.profile.garrison_ranged {
             for b in world.buildings.iter().filter(|b| b.owner == p) {
-                let room = world.economy.building(b.kind).map_or(0, |d| d.garrison as usize);
+                let room = world.economy.building(b.kind).map_or(0, |d| d.at(b.level).garrison as usize);
                 if room == 0 {
                     continue;
                 }
@@ -1028,7 +1028,7 @@ impl Computer {
             if ranged(u.kind) {
                 if let Some(post) = posts.iter_mut().find(|(_, room)| *room > 0) {
                     post.1 -= 1;
-                    cmds.push(ClientMsg::MoveUnits { unit_ids: vec![u.id], x: post.0 .0, y: post.0 .1, fast: None });
+                    cmds.push(ClientMsg::MoveUnits { unit_ids: vec![u.id], x: post.0 .0, y: post.0 .1, fast: None, append: None });
                     continue;
                 }
             }
@@ -1037,7 +1037,7 @@ impl Computer {
             }
         }
         if !to_rally.is_empty() {
-            cmds.push(ClientMsg::MoveUnits { unit_ids: to_rally, x: point.0, y: point.1, fast: None });
+            cmds.push(ClientMsg::MoveUnits { unit_ids: to_rally, x: point.0, y: point.1, fast: None, append: None });
         }
     }
 }
@@ -1097,7 +1097,7 @@ fn in_passage(b: &protocol::BuildingState, x: u32, y: u32) -> bool {
 }
 
 fn is_road(world: &World, kind: BuildingKind) -> bool {
-    world.economy.building(kind).is_some_and(|d| d.road_speed_percent > 0)
+    world.economy.building(kind).is_some_and(|d| d.is_road())
 }
 
 /// Sammelpunkt: ein paar Felder vor dem Eingang des Bergfrieds, auf der Straße.

@@ -73,7 +73,7 @@ impl World {
                 GateMode::Open => true,
                 GateMode::Closed => false,
                 GateMode::Auto => {
-                    let r = self.economy.building(b.kind).map_or(0, |d| d.gate_radius) as f32;
+                    let r = self.economy.building(b.kind).map_or(0, |d| d.at(b.level).gate_radius) as f32;
                     let r = if b.gate_open { r } else { r + REOPEN_EXTRA };
                     let (px, py) = passage(b);
                     let (cx, cy) = (px as f32 + 0.5, py as f32 + 0.5);
@@ -116,7 +116,7 @@ impl World {
         self.dirty_buildings.insert(id);
     }
 
-    fn tile_of(&self, p: (f32, f32)) -> Option<usize> {
+    pub(super) fn tile_of(&self, p: (f32, f32)) -> Option<usize> {
         let (x, y) = (p.0.floor() as i64, p.1.floor() as i64);
         (x >= 0 && y >= 0 && x < self.map.width as i64 && y < self.map.height as i64)
             .then(|| (y as u32 * self.map.width + x as u32) as usize)
@@ -166,7 +166,7 @@ impl World {
         let mut set = HashSet::new();
         for b in self.buildings.iter().filter(|b| self.climbable(b, owner)) {
             let Some(def) = self.economy.building(b.kind) else { continue };
-            if def.walkway_from_level == 0 || b.level < def.walkway_from_level {
+            if !def.at(b.level).walkway {
                 continue;
             }
             for ty in b.y..b.y + b.h {
@@ -185,7 +185,7 @@ impl World {
         id != 0
             && self.buildings.iter().find(|b| b.id == id).is_some_and(|b| {
                 self.climbable(b, owner)
-                    && self.economy.building(b.kind).is_some_and(|d| d.walkway_from_level > 0 && b.level >= d.walkway_from_level)
+                    && self.economy.building(b.kind).is_some_and(|d| d.at(b.level).walkway)
             })
     }
 
@@ -197,7 +197,7 @@ impl World {
         self.buildings
             .iter()
             .filter(|b| self.climbable(b, owner))
-            .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.stairs_from_level > 0 && b.level >= d.stairs_from_level))
+            .filter(|b| self.economy.building(b.kind).is_some_and(|d| d.at(b.level).stairs))
             .map(|b| {
                 let (cx, cy) = passage(b);
                 let feet: Vec<(i64, i64)> = if is_gate(b.kind) {
@@ -678,7 +678,7 @@ mod tests {
         w.order_move(1, &ids, (20.5, 10.5));
         run(&mut w, 60.0);
         let up = w.units.iter().filter(|u| ids.contains(&u.id) && u.on_wall).count();
-        let max = w.economy.building(BuildingKind::HighTower).unwrap().garrison as usize;
+        let max = w.economy.building(BuildingKind::HighTower).unwrap().at(1).garrison as usize;
         assert_eq!(up, max, "nur {max} passen hinauf");
         // Oben stehen alle auf der runden Plattform um die Turmmitte, nicht ineinander.
         let top: Vec<(f32, f32)> = w.units.iter().filter(|u| ids.contains(&u.id) && u.on_wall).map(|u| u.pos).collect();
