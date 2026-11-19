@@ -297,7 +297,9 @@ mod tests {
         w.admin_give(1, &[GoodAmount { good: Good::Iron, amount: base + 50 }], 0);
         w.step(0.05);
         assert_eq!(w.hub_total(keep), base, "Bergfried voll (Gesamtplatz)");
-        let all: u32 = w.stocks[&1].state().goods.iter().map(|g| g.amount).sum();
+        // Nur Waren, die Bergfried oder Vorratslager nehmen (Brot gehört z. B. in den Kornspeicher).
+        let takes = |g: Good| [BuildingKind::Keep, BuildingKind::Storehouse].iter().any(|&k| w.economy.building(k).unwrap().hub_goods.contains(&g));
+        let all: u32 = w.stocks[&1].state().goods.iter().filter(|g| takes(g.good)).map(|g| g.amount).sum();
         assert_eq!(w.hub_total(keep) + w.hub_total(store), all, "Rest im Vorratslager");
         assert!(w.hub_amount(store, Good::Iron) > 0);
     }

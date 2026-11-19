@@ -389,15 +389,16 @@ mod tests {
         assert_eq!(w.train(1, b.id, UnitKind::Spearman, 1).unwrap_err().key, "error.not_enough");
         w.admin_give(1, &[GoodAmount { good: Good::Spear, amount: 3 }], 0);
         let taler = w.stock_state(1).taler;
+        let price = w.economy.unit(UnitKind::Spearman).unwrap().taler;
         let b2 = w.train(1, b.id, UnitKind::Spearman, 5).unwrap();
         assert_eq!(b2.training.len(), 3, "nur so viele, wie Speere da sind");
-        assert_eq!(w.stock_state(1).taler, taler - 30);
+        assert_eq!(w.stock_state(1).taler, taler - 3 * price);
         assert_eq!(w.train(1, b.id, UnitKind::Swordsman, 1).unwrap_err().key, "error.cannot_train", "erst Stufe 2");
         assert_eq!(w.train(2, b.id, UnitKind::Spearman, 1).unwrap_err().key, "error.not_yours");
 
         // Einen streichen: Speer und Taler zurück.
         w.cancel_training(1, b.id).unwrap();
-        assert_eq!(w.stock_state(1).taler, taler - 20);
+        assert_eq!(w.stock_state(1).taler, taler - 2 * price);
         assert_eq!(w.stock_state(1).goods.iter().find(|g| g.good == Good::Spear).unwrap().amount, 1);
 
         for _ in 0..20 * 45 {
@@ -406,7 +407,8 @@ mod tests {
         assert_eq!(soldiers(&w, UnitKind::Spearman), 2);
         assert!(w.barracks(1)[0].training.is_empty());
         let army = w.stock_state(1).army;
-        assert_eq!((army.soldiers, army.upkeep), (2, 2));
+        let upkeep = w.economy.unit(UnitKind::Spearman).unwrap().upkeep;
+        assert_eq!((army.soldiers, army.upkeep), (2, 2 * upkeep));
         // Soldaten stehen außerhalb der Kaserne auf begehbarem Boden und gehorchen.
         for u in w.units.iter().filter(|u| u.kind == UnitKind::Spearman) {
             assert!(w.map.nav.is_open(u.pos.0 as i32, u.pos.1 as i32));
@@ -430,7 +432,8 @@ mod tests {
         assert_eq!(w.train(1, b.id, UnitKind::Spearman, 1).unwrap_err().key, "error.queue_full");
         let before = w.stock_state(1).taler;
         w.demolish(1, b.id).unwrap();
-        assert_eq!(w.stock_state(1).taler, before + 10 * max as u32);
+        let price = w.economy.unit(UnitKind::Spearman).unwrap().taler;
+        assert_eq!(w.stock_state(1).taler, before + price * max as u32);
     }
 
     #[test]
@@ -464,6 +467,9 @@ mod tests {
     #[test]
     fn zahltag_ohne_geld_macht_langsam() {
         let mut w = world();
+        // Der Test braucht Sold; ist er im Balancing 0, setzen wir ihn hier.
+        let spear = w.economy.def.units.iter_mut().find(|u| u.kind == UnitKind::Spearman).unwrap();
+        spear.upkeep = spear.upkeep.max(1);
         let b = w.place_building(1, BuildingKind::Barracks, 10, 10).unwrap();
         w.admin_give(1, &[GoodAmount { good: Good::Spear, amount: 1 }], 0);
         w.train(1, b.id, UnitKind::Spearman, 1).unwrap();

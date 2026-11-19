@@ -637,7 +637,10 @@ mod tests {
     fn werte_je_stufe_bleiben_beim_speichern_erhalten() {
         let mut eco = Economy::parse(ECONOMY_JSON).unwrap();
         let tower = eco.def.buildings.iter_mut().find(|b| b.kind == BuildingKind::Tower).unwrap();
-        assert!(tower.levels.len() >= 2);
+        // Der Test braucht zwei Stufen; hat das Balancing nur eine, kommt hier eine dazu.
+        if tower.levels.len() < 2 {
+            tower.levels.push(tower.levels[0].clone());
+        }
         tower.levels[0].garrison = 8;
         tower.levels[1].garrison = 0;
         tower.levels[0].walkway = true;
@@ -655,6 +658,11 @@ mod tests {
     fn fehlende_werte_erbt_eine_stufe_von_der_davor() {
         let mut v: serde_json::Value = serde_json::from_str(ECONOMY_JSON).unwrap();
         let tower = v["buildings"].as_array_mut().unwrap().iter_mut().find(|b| b["kind"] == "tower").unwrap();
+        let levels = tower["levels"].as_array_mut().unwrap();
+        if levels.len() < 2 {
+            let first = levels[0].clone();
+            levels.push(first);
+        }
         tower["levels"][0]["garrison"] = 7.into();
         tower["levels"][1].as_object_mut().unwrap().remove("garrison");
         let eco = Economy::parse(&v.to_string()).unwrap();

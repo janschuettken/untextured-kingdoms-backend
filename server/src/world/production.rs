@@ -409,7 +409,9 @@ mod tests {
         let mut s = b.settings.clone();
         s.recipe = Some("make_crossbow".into());
         assert_eq!(w.configure(1, b.id, s.clone()).unwrap_err().key, "error.recipe_locked");
-        run(&mut w, 50.0);
+        // Zeit für Anliefern, einen Bogen (Dauer aus dem Balancing) und Abtragen.
+        let bow = w.economy.recipe("make_longbow").unwrap().seconds;
+        run(&mut w, bow + 40.0);
         assert!(w.stocks[&1].amount(Good::Longbow) >= 1);
         // Ohne Holz bleibt er stehen, sobald sein eigener Vorrat verbraucht ist.
         let wood = w.stocks[&1].amount(Good::Wood);
@@ -428,6 +430,10 @@ mod tests {
     fn steinbruch_nur_auf_stein_bauernhof_auf_acker() {
         // Stein 3x3 oben rechts, Acker 7x3 unten links (zu wenig für einen 7x7-Hof).
         let mut w = world(&map(20, 20, (19, 19), &[(14, 0, 3, 3, 'S'), (0, 13, 7, 3, 'A')]));
+        // 21 von 49 Ackerfeldern (43 %) sollen zu wenig sein, egal, was das Balancing verlangt.
+        let mut eco = w.economy.clone();
+        eco.def.buildings.iter_mut().find(|d| d.kind == BuildingKind::Farm).unwrap().placement.as_mut().unwrap().min_share_percent = 50;
+        w.set_economy(eco);
         assert_eq!(w.place_building(1, BuildingKind::Quarry, 0, 0).unwrap_err().key, "error.needs_resource");
         w.place_building(1, BuildingKind::Quarry, 14, 0).unwrap();
         // Mine braucht Eisen, das es hier nicht gibt.

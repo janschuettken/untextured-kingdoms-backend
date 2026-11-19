@@ -932,6 +932,9 @@ mod tests {
         granary(&mut w, 2, 12);
         shed(&mut w, 12, 2, 2);
         w.economy.def.army.civilian_respawn_seconds = 0.0; // entfernte Träger nicht ersetzen
+        // Eine Plantage allein (5 Obst) reicht nicht für eine Fahrt, beide zusammen schon,
+        // egal, welche Mindestladung das Balancing gerade hat.
+        w.economy.def.transport.cart_min_load = 8;
         w.units.retain(|u| u.kind != UnitKind::Carrier);
         let a = w.place_building(1, BuildingKind::Orchard, 24, 2).unwrap();
         let b = w.place_building(1, BuildingKind::Orchard, 32, 2).unwrap();

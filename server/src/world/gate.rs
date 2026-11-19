@@ -597,6 +597,15 @@ mod tests {
         assert!((w.units[k].pos.0 - 15.5).abs() < 0.01, "{:?}", w.units[k].pos);
         // Turm ohne Treppe: kein Aufgang; mit Treppe (Stufe 2) schon.
         let mut w = walled(2, 1);
+        // Der Test braucht einen Turm ohne Treppe auf Stufe 1 und mit Treppe auf Stufe 2,
+        // unabhängig davon, wie viele Stufen das Balancing gerade hat.
+        let t = w.economy.def.buildings.iter_mut().find(|b| b.kind == BuildingKind::Tower).unwrap();
+        t.levels.truncate(1);
+        t.levels[0].stairs = false;
+        let mut l2 = t.levels[0].clone();
+        l2.stairs = true;
+        l2.walkway = true;
+        t.levels.push(l2);
         let k = king(&w);
         let id = w.units[k].id;
         let tower = w.place_building_rotated(1, BuildingKind::Tower, 18, 11, 0, 1).unwrap().id;
@@ -669,7 +678,12 @@ mod tests {
     #[test]
     fn hoher_turm_hat_wenig_platz() {
         let mut w = walled(2, 1);
-        w.place_building_rotated(1, BuildingKind::HighTower, 20, 10, 0, 2).unwrap();
+        // Hinauf geht es über die Treppe im Turm; die setzen wir hier, falls das Balancing keine hat.
+        let ht = w.economy.def.buildings.iter_mut().find(|b| b.kind == BuildingKind::HighTower).unwrap();
+        let top = ht.levels.len() as u8;
+        let l = ht.levels.last_mut().unwrap();
+        (l.stairs, l.walkway) = (true, true);
+        w.place_building_rotated(1, BuildingKind::HighTower, 20, 10, 0, top).unwrap();
         let ids: Vec<u32> = (0..6).map(|i| {
             let id = 900 + i;
             w.units.push(Unit::new(id, 1, UnitKind::King, (14.5 + i as f32, 16.5)));
@@ -678,7 +692,7 @@ mod tests {
         w.order_move(1, &ids, (20.5, 10.5));
         run(&mut w, 60.0);
         let up = w.units.iter().filter(|u| ids.contains(&u.id) && u.on_wall).count();
-        let max = w.economy.building(BuildingKind::HighTower).unwrap().at(1).garrison as usize;
+        let max = w.economy.building(BuildingKind::HighTower).unwrap().at(top as u32).garrison as usize;
         assert_eq!(up, max, "nur {max} passen hinauf");
         // Oben stehen alle auf der runden Plattform um die Turmmitte, nicht ineinander.
         let top: Vec<(f32, f32)> = w.units.iter().filter(|u| ids.contains(&u.id) && u.on_wall).map(|u| u.pos).collect();
