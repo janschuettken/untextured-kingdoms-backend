@@ -1806,7 +1806,7 @@
       "building": "mill",
       "inputs": [{"good": "grain", "amount": 1}],
       "outputs": [{"good": "flour", "amount": 1}],
-      "seconds": 10,
+      "seconds": 5,
       "unattended_percent": 0
     },
     {
