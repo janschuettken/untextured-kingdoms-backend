@@ -1607,7 +1607,7 @@
       "first_free": false,
       "hub_goods": [],
       "delivery": {"carriers": true, "carts": false, "worker": true},
-      "horse_capacity": 6,
+      "horse_capacity": 5,
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 25}],
@@ -1933,7 +1933,7 @@
     {
       "id": "breed_horse",
       "building": "horse_farm",
-      "inputs": [{"good": "grain", "amount": 2}],
+      "inputs": [{"good": "grain", "amount": 2}, {"good": "saddle", "amount": 1}],
       "outputs": [{"good": "horse", "amount": 1}],
       "seconds": 45,
       "unattended_percent": 60
@@ -1949,7 +1949,7 @@
   "start_building": "keep",
   "base_capacity": 600,
   "storehouse_capacity": 600,
-  "demolish_refund_percent": 50,
+  "demolish_refund_percent": 75,
   "move_cost_percent": 25,
   "resource_amounts": [
     {"resource": "forest", "amount": 20},
@@ -2123,7 +2123,7 @@
       "upkeep": 0,
       "food": 0,
       "ranged_immune": false,
-      "can_ride": false,
+      "can_ride": true,
       "mounted": false,
       "attack_seconds": 1.5,
       "heal": 0,
@@ -2188,7 +2188,7 @@
       "cost": [
         {"good": "sword", "amount": 1},
         {"good": "armor", "amount": 1},
-        {"good": "saddle", "amount": 1}
+        {"good": "horse", "amount": 1}
       ],
       "taler": 60,
       "seconds": 45,
