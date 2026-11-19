@@ -21,4 +21,12 @@ personality: string | null,
 /**
  * Bündnis (gleiche Zahl ab 1 = verbündet), 0 = keins.
  */
-team: number, };
+team: number, 
+/**
+ * Computergegner: eigener Wert für „Angriff trotz Unterlegenheit“ (sonst der des Charakters).
+ */
+daring: number | null, 
+/**
+ * Computergegner: eigener Wert für „Hilfsbereitschaft“ (sonst der des Charakters).
+ */
+helpfulness: number | null, };

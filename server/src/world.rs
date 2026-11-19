@@ -79,7 +79,7 @@ pub struct Unit {
 }
 
 impl Unit {
-    fn new(id: u32, owner: u32, kind: UnitKind, pos: (f32, f32)) -> Unit {
+    pub(crate) fn new(id: u32, owner: u32, kind: UnitKind, pos: (f32, f32)) -> Unit {
         Unit {
             id,
             owner,

@@ -310,6 +310,17 @@ pub enum LobbyClientMsg {
     /// Nur vor dem Start: Bündnis eines Startplatzes (0 = keins). Den eigenen darf
     /// jeder setzen, die der Computergegner nur der Gastgeber.
     SetTeam { slot: u32, team: u8 },
+    /// Nur Gastgeber, nur vor dem Start: Regler eines Computergegners (0 bis 100) für dieses
+    /// Spiel. Leer = wie sein Charakter.
+    SetComputerTraits {
+        slot: u32,
+        #[serde(default)]
+        #[ts(optional)]
+        daring: Option<u8>,
+        #[serde(default)]
+        #[ts(optional)]
+        helpfulness: Option<u8>,
+    },
     /// Nur Gastgeber, nur vor dem Start: wie Waren zwischen Verbündeten ankommen.
     SetTradeMode { mode: TradeMode },
 }
@@ -410,6 +421,12 @@ pub struct LobbyMember {
     /// Bündnis (gleiche Zahl ab 1 = verbündet), 0 = keins.
     #[serde(default)]
     pub team: u8,
+    /// Computergegner: eigener Wert für „Angriff trotz Unterlegenheit“ (sonst der des Charakters).
+    #[serde(default)]
+    pub daring: Option<u8>,
+    /// Computergegner: eigener Wert für „Hilfsbereitschaft“ (sonst der des Charakters).
+    #[serde(default)]
+    pub helpfulness: Option<u8>,
 }
 
 /// Ob ein Gegner zu Fuß bis an den eigenen Bergfried kommt (eigene Tore gelten als zu,
@@ -452,6 +469,16 @@ pub struct AiPersonality {
     /// Armeegröße in Prozent der Stufe.
     #[serde(default = "percent_100")]
     pub army: u32,
+    /// Angriff trotz Unterlegenheit, 0 bis 100: 0 = nur, wenn er sich stärker glaubt;
+    /// 100 = ständig, sobald eine Welle bereit ist. Dazwischen greift er umso eher an, je
+    /// länger er schon wartet.
+    #[serde(default = "daring_default")]
+    pub daring: u32,
+    /// Hilfsbereitschaft gegenüber Verbündeten, 0 bis 100: 0 = hilft nie; sonst schickt er
+    /// Truppen (höchstens diesen Anteil seiner freien Soldaten) und Waren, wenn ein
+    /// Verbündeter angegriffen wird.
+    #[serde(default = "helpfulness_default")]
+    pub helpfulness: u32,
     /// Gebäude in Prozent: 100 = wie die Stufe, 0 = baut es nie, 50 = halb so viele,
     /// 200 = doppelt so viele. Steht es nicht in der Bauliste der Stufe, baut er ab 200 eins
     /// (300 zwei, ...). Fehlende Gebäude gelten als 100.
@@ -484,6 +511,14 @@ pub enum CastleLayout {
 
 fn percent_100() -> u32 {
     100
+}
+
+fn daring_default() -> u32 {
+    30
+}
+
+fn helpfulness_default() -> u32 {
+    50
 }
 
 /// Art eines Feldes.
