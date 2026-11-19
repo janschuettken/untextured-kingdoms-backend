@@ -93,6 +93,9 @@ pub enum ClientMsg {
     },
     /// Nur Admin: Spieltempo für alle in Prozent (100 = normal, 25 bis 800, 0 = Pause).
     AdminGameSpeed { percent: u32 },
+    /// Pause drücken (`true`) oder die eigene Pause wieder aufheben. Das Spiel steht,
+    /// solange mindestens ein Spieler Pause gedrückt hat.
+    SetPause { paused: bool },
     /// Sichtbereich des Clients in Feldern (Rechteck, Ecken eingeschlossen).
     /// Der Server schickt Einheiten nur für diesen Bereich (plus Rand) und
     /// immer die eigenen. Ohne diese Nachricht sieht der Client alles.
@@ -185,6 +188,11 @@ pub enum ServerMsg {
     /// Spieltempo in Prozent (100 = normal). Kommt beim Verbinden und nach jeder Änderung.
     GameSpeed {
         percent: u32,
+    },
+    /// Wer gerade Pause gedrückt hat (Spieler-Nummern). Leer = das Spiel läuft.
+    /// Kommt beim Verbinden und nach jeder Änderung.
+    Pauses {
+        players: Vec<u32>,
     },
     /// Die Wirtschaftsdaten wurden im Balancing-Editor geändert und gelten ab sofort.
     EconomyChanged {
