@@ -4,8 +4,8 @@
 //! Seen in den Senken, ebene Startplätze im Kreis, danach werden abgeschnittene
 //! Gebiete mit Rampen (bzw. Furten) angebunden. Zuletzt Ressourcen: Wald in
 //! Gruppen, Stein- und Eisenvorkommen ab 5 × 5 Feldern, Äcker ab 7 × 7.
-//! Flüsse laufen von Rand zu Rand, mit Furten. Mengen, Hügel und Flüsse
-//! stellt [`Params`] ein.
+//! Flüsse laufen von Rand zu Rand, mit Furten und einigen neutralen Brücken.
+//! Mengen, Hügel und Flüsse stellt [`Params`] ein.
 //!
 //! Gleicher Seed, gleiche Karte.
 
@@ -390,7 +390,8 @@ impl Gen {
     /// Einen Fluss quer über die Karte graben: von einem Rand zum gegenüber
     /// liegenden, mit Schlängeln, an Startplätzen vorbei. Unterwegs ab und zu
     /// eine Furt. Liefert die Furten (Ufer links, Ufer rechts).
-    fn river(&mut self, rng: &mut Rng, spawns: &[(i32, i32)], keep_off: f32) -> Vec<((i32, i32), (i32, i32))> {
+    /// Legt einen Fluss an. Liefert die Furten (Ufer-Paare) und den Lauf des Flusses.
+    fn river(&mut self, rng: &mut Rng, spawns: &[(i32, i32)], keep_off: f32) -> (Vec<((i32, i32), (i32, i32))>, Vec<(f32, f32)>) {
         let (w, h) = (self.w as f32, self.h as f32);
         let wiggle = Noise { seed: rng.next() };
         let breadth = Noise { seed: rng.next() };
@@ -459,7 +460,79 @@ impl Gen {
                 }
             }
         }
-        fords
+        (fords, path)
+    }
+
+    /// Brücke quer über den Fluss am Punkt `p` (Fließrichtung `t`): gerade Reihe Wasser
+    /// bis höchstens `MAX_BRIDGE_SPAN`, an beiden Enden begehbares Ufer. Liefert x, y, w, h.
+    fn bridge_at(&self, p: (f32, f32), t: (f32, f32)) -> Option<(i32, i32, i32, i32)> {
+        let (x, y) = (p.0.round() as i32, p.1.round() as i32);
+        if !self.inside(x, y) || self.level[self.idx(x, y)] != WATER {
+            return None;
+        }
+        // Quer zur Fließrichtung, auf das Gitter gerundet.
+        let (dx, dy) = if t.0.abs() >= t.1.abs() { (0, 1) } else { (1, 0) };
+        let max = crate::map::MAX_BRIDGE_SPAN as i32;
+        let wet = |k: i32| {
+            let (cx, cy) = (x + dx * k, y + dy * k);
+            self.inside(cx, cy) && self.level[self.idx(cx, cy)] == WATER
+        };
+        let mut lo = 0;
+        while wet(lo - 1) && -lo <= max {
+            lo -= 1;
+        }
+        let mut hi = 0;
+        while wet(hi + 1) && hi - lo < max {
+            hi += 1;
+        }
+        let len = hi - lo + 1;
+        // Ein einzelnes Feld wäre eher eine Pfütze als ein Fluss (und die Richtung unklar).
+        if len > max || len < 2 {
+            return None;
+        }
+        let a = (x + dx * (lo - 1), y + dy * (lo - 1));
+        let b = (x + dx * (hi + 1), y + dy * (hi + 1));
+        let beyond_a = (a.0 - dx, a.1 - dy);
+        let beyond_b = (b.0 + dx, b.1 + dy);
+        for q in [a, b, beyond_a, beyond_b] {
+            if !self.inside(q.0, q.1) {
+                return None;
+            }
+        }
+        let (ia, ib) = (self.idx(a.0, a.1), self.idx(b.0, b.1));
+        if self.level[ia] == WATER || self.level[ib] == WATER {
+            return None;
+        }
+        // Vom Ufer muss man weiterkommen, und der Belag darf je Feld nur eine Stufe steigen.
+        if !self.step_ok(ia, self.idx(beyond_a.0, beyond_a.1)) || !self.step_ok(ib, self.idx(beyond_b.0, beyond_b.1)) {
+            return None;
+        }
+        if (self.level[ia] - self.level[ib]).abs() as i32 > len + 1 {
+            return None;
+        }
+        let (sx, sy) = (x + dx * lo, y + dy * lo);
+        Some(if dx == 1 { (sx, sy, len, 1) } else { (sx, sy, 1, len) })
+    }
+
+    /// Ressourcen vor beiden Enden der Brücke wegräumen, damit man vom Ufer wegkommt.
+    fn clear_bridge_ends(&mut self, (x, y, w, h): (i32, i32, i32, i32)) {
+        let (dx, dy) = if w > 1 { (1, 0) } else { (0, 1) };
+        let len = w.max(h);
+        let ends = [((x - dx, y - dy), (-dx, -dy)), ((x + dx * len, y + dy * len), (dx, dy))];
+        for ((ex, ey), (ox, oy)) in ends {
+            for k in 0..8 {
+                let (cx, cy) = (ex + ox * k, ey + oy * k);
+                for side in -1..=1 {
+                    let (px, py) = (cx + oy.abs() * side, cy + ox.abs() * side);
+                    if self.inside(px, py) {
+                        let i = self.idx(px, py);
+                        if self.level[i] != WATER {
+                            self.res[i] = b'.';
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn disc(&self, cx: i32, cy: i32, r: f32) -> Vec<(i32, i32)> {
@@ -585,9 +658,14 @@ pub fn generate(p: &Params) -> String {
     let flat = 14.0;
     let blend = 10.0;
     let mut fords = Vec::new();
+    let mut courses = Vec::new();
     for _ in 0..p.rivers.min(MAX_RIVERS) {
-        fords.extend(g.river(&mut rng, &spawns, flat + blend + 6.0));
+        let (f, course) = g.river(&mut rng, &spawns, flat + blend + 6.0);
+        fords.extend(f);
+        courses.push(course);
     }
+    let ford_mids: Vec<(f32, f32)> =
+        fords.iter().map(|&(a, b)| ((a.0 + b.0) as f32 / 2.0, (a.1 + b.1) as f32 / 2.0)).collect();
     for &(sx, sy) in &spawns {
         let lv = g.level[g.idx(sx, sy)].clamp(1, 5);
         for (x, y) in g.disc(sx, sy, flat + blend) {
@@ -672,6 +750,38 @@ pub fn generate(p: &Params) -> String {
         g.open_forest_pockets(s0);
     }
 
+    // Brücken: auf jedem Fluss einige, nicht neben Furten und nicht an Startplätzen.
+    // Eigener Zufall, damit Gelände und Ressourcen bei gleichem Seed gleich bleiben.
+    let mut brng = Rng(p.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xB81D_6E5);
+    let keep_off = flat + blend + 6.0;
+    let mut bridges: Vec<(i32, i32, i32, i32)> = Vec::new();
+    for course in &courses {
+        let mut k = brng.range(25.0, 55.0) as usize;
+        while k + 3 < course.len() {
+            let found = (k..(k + 20).min(course.len() - 3)).find_map(|j| {
+                let (px, py) = course[j];
+                let near = |q: (f32, f32), r: f32| (q.0 - px).hypot(q.1 - py) < r;
+                if spawns.iter().any(|&(sx, sy)| near((sx as f32, sy as f32), keep_off)) || ford_mids.iter().any(|&m| near(m, 25.0)) {
+                    return None;
+                }
+                let (ax, ay) = course[j.saturating_sub(3)];
+                let (bx, by) = course[j + 3];
+                let rect = g.bridge_at((px, py), (bx - ax, by - ay))?;
+                let overlap = bridges.iter().any(|&o| {
+                    let grow = |r: (i32, i32, i32, i32)| (r.0 - 3, r.1 - 3, r.2 + 6, r.3 + 6);
+                    let (a, b) = (grow(o), rect);
+                    a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
+                });
+                (!overlap).then_some(rect)
+            });
+            if let Some(rect) = found {
+                g.clear_bridge_ends(rect);
+                bridges.push(rect);
+            }
+            k += brng.range(70.0, 120.0) as usize;
+        }
+    }
+
     let mut out = String::with_capacity((w + 1) * h * 2 + 512);
     let _ = writeln!(out, "# Zufallskarte {w} x {h} für {} Spieler, Seed {}.", p.players, p.seed);
     let _ = writeln!(
@@ -690,6 +800,9 @@ pub fn generate(p: &Params) -> String {
     let _ = writeln!(out, "# Erzeugt vom Kartengenerator; Format siehe server/maps/zwei-burgen.txt.");
     for (x, y) in &spawns {
         let _ = writeln!(out, "spawn {x} {y}");
+    }
+    for (x, y, bw, bh) in &bridges {
+        let _ = writeln!(out, "bridge {x} {y} {bw} {bh}");
     }
     out.push_str("[terrain]\n");
     for y in 0..h {
@@ -835,6 +948,23 @@ mod tests {
         let wet = generate(&Params { rivers: 4, ..Params::new(256, 256, 2, 5) });
         let water = |t: &str| t.split("[resources]").next().unwrap().matches('~').count();
         assert!(water(&wet) > water(&dry));
+    }
+
+    #[test]
+    fn fluesse_bekommen_bruecken() {
+        let mut total = 0;
+        for seed in 1..6 {
+            let text = generate(&Params { rivers: 2, ..Params::new(256, 256, 2, seed) });
+            let r = GameMap::load(&text);
+            assert!(r.errors.is_empty(), "{seed}: {:?}", r.errors.first());
+            let map = r.map.unwrap();
+            for &(x, y, w, h) in &map.bridges {
+                assert!(w.max(h) <= crate::map::MAX_BRIDGE_SPAN && w.min(h) == 1);
+                assert!(map.nav.has_deck(x as i32, y as i32));
+            }
+            total += map.bridges.len();
+        }
+        assert!(total >= 5, "nur {total} Brücken auf 5 Karten mit je 2 Flüssen");
     }
 
     /// Dauert im Debug-Build einige Sekunden: `cargo test --release -- --ignored`.

@@ -25,6 +25,9 @@ fn default_king(speed: f32) -> UnitDef {
         ranged_immune: true,
         can_ride: false,
         mounted: false,
+        attack_standing: true,
+        attack_moving: false,
+        attack_mounted: true,
         attack_seconds: 1.5,
         heal: 0,
         heal_range: 0.0,
@@ -149,7 +152,7 @@ fn default_height(kind: protocol::BuildingKind) -> f32 {
         K::Tower => 3.7,
         K::HighTower => 6.6,
         K::Keep => 5.2,
-        K::WoodPath | K::StonePath => 0.0,
+        K::WoodPath | K::StonePath | K::Bridge => 0.0,
         K::Farm | K::Orchard | K::PigFarm | K::CattleFarm => 1.0,
         _ => 1.8,
     }
@@ -570,7 +573,7 @@ mod tests {
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 36);
+        assert_eq!(eco.def.buildings.len(), 37);
         assert!(eco.def.buildings.iter().any(|b| b.hub), "ohne Lager kein Transport");
     }
 

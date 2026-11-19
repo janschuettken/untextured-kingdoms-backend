@@ -41,7 +41,14 @@ pub enum ClientMsg {
     /// Angriffsbefehl (Rechtsklick auf einen Feind): die Einheiten laufen hin, verfolgen das
     /// Ziel und greifen an, bis es fällt. Wer dem Ziel nichts anhaben kann (Fernkämpfer gegen
     /// König oder Gebäude) oder ein Verbündeter ist, läuft nur hin.
-    Attack { unit_ids: Vec<u32>, target: AttackTarget },
+    /// `force` (Knopf „Alles angreifen“): auch eigene, verbündete und neutrale Ziele.
+    Attack {
+        unit_ids: Vec<u32>,
+        target: AttackTarget,
+        #[serde(default)]
+        #[ts(optional)]
+        force: Option<bool>,
+    },
     /// Einheiten, die reiten können, laufen zur nächsten eigenen Pferdezucht mit freiem
     /// Pferd und steigen dort auf.
     Mount { unit_ids: Vec<u32> },
@@ -62,6 +69,9 @@ pub enum ClientMsg {
         #[serde(default)]
         level: u8,
     },
+    /// Brücke bauen: `x`, `y`, `w`, `h` ist die Reihe Wasserfelder unter dem Belag
+    /// (eine Seite 1 Feld). Davor und dahinter muss Ufer sein.
+    PlaceBridge { x: u32, y: u32, w: u32, h: u32 },
     /// Eigenes Gebäude abreißen. Ein Teil der Baukosten kommt zurück.
     DemolishBuilding { building_id: u32 },
     /// Eigenes Gebäude auf die nächste Stufe ausbauen.
@@ -992,6 +1002,9 @@ pub enum BuildingKind {
     Gatehouse,
     /// Apotheke: rührt Heilsalbe an und bildet daraus Heiler aus.
     Apothecary,
+    /// Brücke über einen Fluss: eine gerade Reihe Wasserfelder (höchstens `max_span`),
+    /// an beiden Enden Ufer. Kosten der Stufe gelten je Feld.
+    Bridge,
 }
 
 /// Gruppe im Baumenü.
@@ -1136,6 +1149,9 @@ pub struct BuildingDef {
     /// Pferdezucht: so viele Pferde passen hinein. 0 = keine Pferde.
     #[serde(default)]
     pub horse_capacity: u32,
+    /// Brücke: höchstens so viele Wasserfelder lang (0 = 15).
+    #[serde(default)]
+    pub max_span: u32,
     /// Mindestens eine Stufe.
     pub levels: Vec<BuildingLevel>,
 }
@@ -1243,6 +1259,10 @@ pub struct EconomyDef {
     pub army: ArmyDef,
 }
 
+fn yes() -> bool {
+    true
+}
+
 /// Eine Soldatenart, wie sie die Kaserne ausbildet.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1282,6 +1302,15 @@ pub struct UnitDef {
     /// Kommt beritten aus der Kaserne (Ritter): die Ausbildung braucht ein Pferd aus einer Pferdezucht.
     #[serde(default)]
     pub mounted: bool,
+    /// Greift an, wenn sie zu Fuß steht.
+    #[serde(default = "yes")]
+    pub attack_standing: bool,
+    /// Greift auch im Laufen an (zu Fuß), ohne anzuhalten.
+    #[serde(default)]
+    pub attack_moving: bool,
+    /// Greift zu Pferd an (im Stehen und im Reiten).
+    #[serde(default = "yes")]
+    pub attack_mounted: bool,
     /// Sekunden zwischen zwei Schlägen oder Schüssen.
     #[serde(default)]
     pub attack_seconds: f32,

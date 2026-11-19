@@ -15,7 +15,9 @@
 //! ...
 //! [resources]        (optional, gleiche Größe wie [terrain])
 //! ..WW....
+//! bridge 12 4 1 6    (optional: Brücke über die Wasserfelder x y Breite Höhe)
 //! ```
+//! Brücken aus der Datei gehören niemandem (neutral).
 //! Ohne Abschnittsüberschriften ist alles `[terrain]`.
 //!
 //! [`GameMap::load`] sammelt alle Fehler und liefert trotzdem eine Karte,
@@ -36,6 +38,9 @@ pub const MAX_LEVEL: u8 = 9;
 #[cfg(test)]
 pub const DEFAULT_MAP: &str = include_str!("../maps/zwei-burgen.txt");
 
+/// So viele Wasserfelder darf eine Brücke höchstens überspannen.
+pub const MAX_BRIDGE_SPAN: u32 = 15;
+
 /// Größte erlaubte Kartenseite.
 pub const MAX_SIZE: usize = 1024;
 
@@ -53,6 +58,8 @@ pub struct GameMap {
     pub nav: NavGrid,
     /// Startfelder der Spieler.
     pub spawns: Vec<(u32, u32)>,
+    /// Neutrale Brücken aus der Datei (x, y, w, h der Wasserfelder), schon im Laufgitter.
+    pub bridges: Vec<(u32, u32, u32, u32)>,
     /// Kommentarzeilen der Datei (für [`GameMap::to_text`]).
     pub comments: Vec<String>,
 }
@@ -194,6 +201,7 @@ impl GameMap {
         let mut terrain: Vec<&[u8]> = Vec::new();
         let mut res_rows: Vec<(usize, &[u8])> = Vec::new();
         let mut spawns = Vec::new();
+        let mut bridge_lines: Vec<(usize, (u32, u32, u32, u32))> = Vec::new();
         let mut comments = Vec::new();
         let mut in_resources = false;
 
@@ -221,6 +229,14 @@ impl GameMap {
                 match nums[..] {
                     [x, y] => spawns.push((x, y)),
                     _ => errors.push(general(Text::new("map.spawn_args").arg("line", n + 1))),
+                }
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("bridge ") {
+                let nums: Vec<u32> = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                match nums[..] {
+                    [x, y, w, h] => bridge_lines.push((n + 1, (x, y, w, h))),
+                    _ => errors.push(general(Text::new("map.bridge_args").arg("line", n + 1))),
                 }
                 continue;
             }
@@ -380,7 +396,7 @@ impl GameMap {
 
         let blocked: Vec<bool> = resources.iter().map(|&r| resource_blocks(r)).collect();
         let nav = NavGrid::build(width as u32, height as u32, &levels, &water, &blocked);
-        let map = GameMap {
+        let mut map = GameMap {
             width: width as u32,
             height: height as u32,
             tiles,
@@ -389,8 +405,24 @@ impl GameMap {
             corners,
             nav,
             spawns: valid_spawns,
+            bridges: Vec::new(),
             comments,
         };
+        for (line, rect) in bridge_lines {
+            let overlaps = map.bridges.iter().any(|&o| rects_overlap(o, rect));
+            match map.bridge_decks(rect, MAX_BRIDGE_SPAN) {
+                Ok(_) if overlaps => errors.push(issue(rect.0 as i32, rect.1 as i32, Text::new("map.bridge_overlap").arg("line", line))),
+                Ok(decks) => {
+                    map.nav.set_deck(&decks.into_iter().map(|(c, l)| (c, Some(l))).collect::<Vec<_>>());
+                    map.bridges.push(rect);
+                }
+                Err(text) => errors.push(issue(
+                    rect.0.min(map.width.saturating_sub(1)) as i32,
+                    rect.1.min(map.height.saturating_sub(1)) as i32,
+                    text.arg("line", line),
+                )),
+            }
+        }
         warnings.extend(map.reachability_warnings());
         LoadResult { map: Some(map), errors, warnings }
     }
@@ -452,6 +484,64 @@ impl GameMap {
         (top + (bottom - top) * fy) / STEPS_PER_LEVEL as f32
     }
 
+    /// Feld in der Karte und kein Wasser?
+    pub fn is_land(&self, x: i64, y: i64) -> bool {
+        x >= 0 && y >= 0 && x < self.width as i64 && y < self.height as i64 && self.tiles[(y as u32 * self.width + x as u32) as usize] != TileKind::Water
+    }
+
+    /// Läuft die Brücke in x-Richtung? Bei einem Feld die Richtung, in der beide Ufer Land sind.
+    pub fn bridge_along_x(&self, (x, y, w, h): (u32, u32, u32, u32)) -> bool {
+        let (x, y) = (x as i64, y as i64);
+        if w != h {
+            w > h
+        } else {
+            self.is_land(x - 1, y) && self.is_land(x + 1, y)
+        }
+    }
+
+    /// Prüft eine Brücke über die Wasserfelder `(x, y, w, h)` (eine Seite 1 Feld, höchstens
+    /// `max_span` lang, alles Wasser, davor und dahinter Land) und liefert die Stufe des
+    /// Belags je Feld. Der Belag steigt gleichmäßig vom einen Ufer zum anderen, so dürfen
+    /// die Ufer bis zu Länge + 1 Stufen auseinander liegen.
+    pub fn bridge_decks(&self, (x, y, w, h): (u32, u32, u32, u32), max_span: u32) -> Result<Vec<((i32, i32), u8)>, Text> {
+        if w == 0 || h == 0 || (w != 1 && h != 1) {
+            return Err(Text::new("error.bridge_straight"));
+        }
+        let len = w.max(h);
+        if len > max_span {
+            return Err(Text::new("error.bridge_too_long").arg("max", max_span));
+        }
+        if x.checked_add(w).is_none_or(|r| r > self.width) || y.checked_add(h).is_none_or(|b| b > self.height) {
+            return Err(Text::new("error.outside_map"));
+        }
+        let land = |px: i64, py: i64| self.is_land(px, py);
+        let along_x = self.bridge_along_x((x, y, w, h));
+        let (x, y) = (x as i64, y as i64);
+        let (dx, dy) = if along_x { (1, 0) } else { (0, 1) };
+        let cells: Vec<(i64, i64)> = (0..len as i64).map(|k| (x + dx * k, y + dy * k)).collect();
+        if cells.iter().any(|&(cx, cy)| land(cx, cy)) {
+            return Err(Text::new("error.bridge_needs_water"));
+        }
+        let a = (x - dx, y - dy);
+        let b = (x + dx * len as i64, y + dy * len as i64);
+        if !land(a.0, a.1) || !land(b.0, b.1) {
+            return Err(Text::new("error.bridge_no_bank"));
+        }
+        let level = |p: (i64, i64)| self.levels[(p.1 as u32 * self.width + p.0 as u32) as usize] as f32;
+        let (la, lb) = (level(a), level(b));
+        if (la - lb).abs() > len as f32 + 1.0 {
+            return Err(Text::new("error.bridge_steep"));
+        }
+        Ok(cells
+            .iter()
+            .enumerate()
+            .map(|(k, &(cx, cy))| {
+                let t = (k as f32 + 1.0) / (len as f32 + 1.0);
+                ((cx as i32, cy as i32), (la + (lb - la) * t).round() as u8)
+            })
+            .collect())
+    }
+
     /// Die Karte im Dateiformat, mit dem aktuellen Stand (z. B. abgeholzter Wald).
     /// Neue Clients laden sie über `/api/maps/current`.
     pub fn to_text(&self) -> String {
@@ -466,6 +556,9 @@ impl GameMap {
             for (x, y) in &self.spawns {
                 out.push_str(&format!("spawn {x} {y}\n"));
             }
+        }
+        for (x, y, w, h) in &self.bridges {
+            out.push_str(&format!("bridge {x} {y} {w} {h}\n"));
         }
         out.push_str("[terrain]\n");
         for y in 0..h {
@@ -486,6 +579,11 @@ impl GameMap {
         }
         out
     }
+}
+
+/// Überschneiden sich zwei Rechtecke (x, y, w, h)?
+pub fn rects_overlap(a: (u32, u32, u32, u32), b: (u32, u32, u32, u32)) -> bool {
+    a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
 }
 
 impl LoadResult {

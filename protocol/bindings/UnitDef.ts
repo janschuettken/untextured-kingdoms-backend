@@ -52,6 +52,18 @@ can_ride: boolean,
  */
 mounted: boolean, 
 /**
+ * Greift an, wenn sie zu Fuß steht.
+ */
+attack_standing: boolean, 
+/**
+ * Greift auch im Laufen an (zu Fuß), ohne anzuhalten.
+ */
+attack_moving: boolean, 
+/**
+ * Greift zu Pferd an (im Stehen und im Reiten).
+ */
+attack_mounted: boolean, 
+/**
  * Sekunden zwischen zwei Schlägen oder Schüssen.
  */
 attack_seconds: number, 

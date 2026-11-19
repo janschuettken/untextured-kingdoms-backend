@@ -68,10 +68,10 @@ impl World {
         a == b || self.teams.get(&a).is_some_and(|t| self.teams.get(&b) == Some(t))
     }
 
-    /// Darf `attacker` Einheiten oder Gebäude von `target` angreifen? Nie sich selbst
-    /// oder Verbündete.
+    /// Darf `attacker` Einheiten oder Gebäude von `target` angreifen? Nie sich selbst,
+    /// Verbündete oder Neutrales (das geht nur mit „Alles angreifen“).
     pub fn can_attack(&self, attacker: u32, target: u32) -> bool {
-        !self.allied(attacker, target)
+        target != super::NEUTRAL && !self.allied(attacker, target)
     }
 
     /// Waren und Taler an einen Verbündeten schicken.

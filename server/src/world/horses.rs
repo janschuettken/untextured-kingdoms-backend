@@ -320,6 +320,32 @@ mod tests {
     }
 
     #[test]
+    fn angreifen_im_stehen_laufen_reiten_ist_einstellbar() {
+        // Ein Speerträger läuft an einem feindlichen Speerträger vorbei.
+        let run = |moving: bool, mounted: bool, setup: &dyn Fn(&mut protocol::UnitDef)| {
+            let mut w = world();
+            for u in w.economy.def.units.iter_mut().filter(|u| u.kind == UnitKind::Spearman) {
+                setup(u);
+            }
+            w.units.push(Unit::new(700, 1, UnitKind::Spearman, (20.0, 20.0)));
+            w.units.push(Unit::new(701, 2, UnitKind::Spearman, (21.0, 20.0)));
+            let k = w.units.len() - 2;
+            w.units[k].mounted = mounted;
+            if moving {
+                w.units[k].path = vec![(20.0, 30.0)];
+            }
+            w.step_combat(0.05);
+            w.units.iter().find(|u| u.id == 701).unwrap().damage > 0
+        };
+        assert!(run(false, false, &|_| {}), "im Stehen: ja");
+        assert!(!run(true, false, &|_| {}), "im Laufen: nein (Grundeinstellung)");
+        assert!(run(true, false, &|u| u.attack_moving = true), "im Laufen, wenn erlaubt");
+        assert!(!run(false, false, &|u| u.attack_standing = false), "im Stehen abgeschaltet");
+        assert!(run(true, true, &|_| {}), "zu Pferd auch im Reiten");
+        assert!(!run(false, true, &|u| u.attack_mounted = false), "zu Pferd abgeschaltet");
+    }
+
+    #[test]
     fn alter_spielstand_ohne_pferde_laedt() {
         let json = r#"{"id":1,"owner":1,"kind":"knight","pos":[1.0,1.0],"path":[],"target":null,"home":null,"job":null,"carrying":null,"cooldown":0.0,"gather":null}"#;
         let u: Unit = serde_json::from_str(json).unwrap();

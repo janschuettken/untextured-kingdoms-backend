@@ -184,6 +184,12 @@ fn changed(old: &UnitState, new: &UnitState) -> bool {
     old.moving != new.moving
         || old.carrying != new.carrying
         || old.hp != new.hp
+        || old.on_wall != new.on_wall
+        || old.inside != new.inside
+        // Auf- oder abgestiegen, Pferd verletzt, Sturz: sonst sieht man es erst beim nächsten Schritt.
+        || old.mounted != new.mounted
+        || old.horse_hp != new.horse_hp
+        || old.down.ceil() != new.down.ceil()
         || (old.x - new.x).abs() > 0.001
         || (old.y - new.y).abs() > 0.001
 }
@@ -644,6 +650,7 @@ async fn handle_msg(
             }
         }
         msg @ (ClientMsg::PlaceBuilding { .. }
+        | ClientMsg::PlaceBridge { .. }
         | ClientMsg::DemolishBuilding { .. }
         | ClientMsg::ConfigureBuilding { .. }
         | ClientMsg::ReleaseTrees { .. }
@@ -720,8 +727,8 @@ pub fn apply_command(
         ClientMsg::MoveUnits { unit_ids, x, y, fast, append } => {
             world.order_move_full(player_id, &unit_ids, (x, y), fast.unwrap_or(false), append.unwrap_or(false));
         }
-        ClientMsg::Attack { unit_ids, target } => {
-            world.order_attack(player_id, &unit_ids, target);
+        ClientMsg::Attack { unit_ids, target, force } => {
+            world.order_attack_full(player_id, &unit_ids, target, force.unwrap_or(false));
             for event in world.take_events() {
                 send(event);
             }
@@ -746,8 +753,15 @@ pub fn apply_command(
             }
             send(ServerMsg::BuildingPlaced { building });
         }
+        ClientMsg::PlaceBridge { x, y, w, h } => {
+            let building = world.place_bridge(player_id, (x, y, w, h))?;
+            send(ServerMsg::BuildingPlaced { building });
+        }
         ClientMsg::DemolishBuilding { building_id } => {
             world.demolish(player_id, building_id)?;
+            for event in world.take_events() {
+                send(event);
+            }
             send(ServerMsg::BuildingRemoved { building_id });
         }
         ClientMsg::ConfigureBuilding {

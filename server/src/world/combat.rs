@@ -29,6 +29,18 @@ const REACH: f32 = 0.5;
 /// Beim Verfolgen: so oft (Sekunden) wird der Weg zum Ziel neu gesucht.
 const CHASE_SECONDS: f32 = 1.0;
 
+/// Darf eine Einheit dieser Art jetzt angreifen? Zu Pferd zählt `attack_mounted`
+/// (im Stehen und im Reiten), zu Fuß `attack_standing` bzw. im Laufen `attack_moving`.
+fn may_attack(def: &protocol::UnitDef, mounted: bool, moving: bool) -> bool {
+    if mounted {
+        def.attack_mounted
+    } else if moving {
+        def.attack_moving
+    } else {
+        def.attack_standing
+    }
+}
+
 /// Bündnis eines Spielers: (true, Bündnis) oder allein (false, Spieler).
 type TeamKey = (bool, u32);
 
@@ -68,7 +80,14 @@ impl World {
 
     /// Angriffsbefehl: wer dem Ziel schaden kann, verfolgt und greift es an; die
     /// anderen (Fernkämpfer gegen König oder Gebäude, Verbündete) laufen nur hin.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn order_attack(&mut self, player: u32, unit_ids: &[u32], target: AttackTarget) -> bool {
+        self.order_attack_full(player, unit_ids, target, false)
+    }
+
+    /// Wie `order_attack`; `force` (Knopf „Alles angreifen“) erlaubt auch eigene,
+    /// verbündete und neutrale Ziele. Niemand greift sich selbst an.
+    pub fn order_attack_full(&mut self, player: u32, unit_ids: &[u32], target: AttackTarget, force: bool) -> bool {
         let Some((owner, pos)) = self.attack_target_info(target) else { return false };
         let mut movers = Vec::new();
         for k in 0..self.units.len() {
@@ -76,9 +95,11 @@ impl World {
             if u.owner != player || u.is_civilian() || !unit_ids.contains(&u.id) {
                 continue;
             }
-            if self.can_attack(player, owner) && self.can_hurt(u, target) {
+            let itself = target == AttackTarget::Unit { id: u.id };
+            if (force || self.can_attack(player, owner)) && !itself && self.can_hurt(u, target) {
                 let u = &mut self.units[k];
                 u.attack_order = Some(target);
+                u.attack_force = force;
                 u.waypoints.clear();
                 u.chase_timer = 0.0;
                 u.speed_cap = None;
@@ -176,7 +197,7 @@ impl World {
             }
             if u.attack_order.is_some() {
                 ordered.push(k);
-            } else if def.attack > 0 && def.range > 0.0 && u.attack_cooldown <= 0.0 && u.path.is_empty() {
+            } else if def.attack > 0 && def.range > 0.0 && u.attack_cooldown <= 0.0 && may_attack(def, u.mounted, !u.path.is_empty()) {
                 fighters.push(k);
             }
         }
@@ -228,7 +249,7 @@ impl World {
                     (b.owner, self.foot_of(center, u.pos), false, dx.hypot(dy), true, None)
                 }),
             };
-            let Some((owner, pos, on_wall, dist, level_ok, j)) = found.filter(|f| self.can_attack(u.owner, f.0) && self.can_hurt(u, order)) else {
+            let Some((owner, pos, on_wall, dist, level_ok, j)) = found.filter(|f| (u.attack_force || self.can_attack(u.owner, f.0)) && self.can_hurt(u, order)) else {
                 // Ziel gefallen, abgerissen oder nicht (mehr) angreifbar: stehen bleiben.
                 let u = &mut self.units[k];
                 u.attack_order = None;
@@ -240,12 +261,16 @@ impl World {
             if dist <= reach && level_ok {
                 let (attack, by) = (def.attack, u.owner);
                 let u = &mut self.units[k];
-                // Fernkämpfer schießen nur im Stand: wer gerade noch lief, hält erst an.
+                // Fernkämpfer schießen nur im Stand (außer sie dürfen im Laufen): wer gerade noch lief, hält erst an.
                 let was_moving = !u.path.is_empty();
                 u.path.clear();
                 u.layers.clear();
                 u.target = Some(u.pos);
-                if ranged && was_moving {
+                if ranged && was_moving && !(u.mounted || def.attack_moving) {
+                    continue;
+                }
+                // Darf sie so (zu Fuß im Stand bzw. zu Pferd) überhaupt angreifen? Sonst bleibt sie nur dran.
+                if !may_attack(def, u.mounted, false) {
                     continue;
                 }
                 if u.attack_cooldown <= 0.0 {
@@ -498,7 +523,7 @@ impl World {
     }
 
     /// Spieler scheidet aus, ohne schon den Sieg zu prüfen.
-    fn knock_out(&mut self, player: u32, by: Option<u32>) {
+    pub(super) fn knock_out(&mut self, player: u32, by: Option<u32>) {
         if !self.eliminated.insert(player) {
             return;
         }
@@ -516,7 +541,7 @@ impl World {
     }
 
     /// Nur noch ein Bündnis (oder ein Spieler) übrig: Spiel entschieden.
-    fn check_victory(&mut self) {
+    pub(super) fn check_victory(&mut self) {
         if self.winners.is_some() {
             return;
         }

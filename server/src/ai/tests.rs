@@ -93,6 +93,7 @@ fn leichter_computer_baut_wirtschaft_armee_und_mauer() {
         BuildingKind::Barracks,
         BuildingKind::Gate,
         BuildingKind::Palisade,
+        BuildingKind::Wall,
     ]
     .iter()
     .map(|&k| (k, count(&world, k)))
@@ -103,7 +104,8 @@ fn leichter_computer_baut_wirtschaft_armee_und_mauer() {
     assert!(count(&world, BuildingKind::Barracks) >= 1, "{summary:?}");
     assert!(stock.army.soldiers >= 1, "{summary:?} {:?}", stock.army);
     assert!(count(&world, BuildingKind::Gate) >= 1, "{summary:?}");
-    assert!(count(&world, BuildingKind::Palisade) >= 10, "{summary:?}");
+    // Mauer aus Stein, wo der reicht, sonst erst Palisade.
+    assert!(count(&world, BuildingKind::Palisade) + count(&world, BuildingKind::Wall) >= 10, "{summary:?}");
 }
 
 #[test]
