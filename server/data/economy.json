@@ -60,7 +60,7 @@
             {"type": "ranged", "min": 0, "block": 1},
             {"type": "heavy_ranged", "min": 0, "block": 1}
           ],
-          "build_radius": 50,
+          "build_radius": 0,
           "road_speed_percent": 40,
           "hub_capacity": 0,
           "storage_inputs": 0,
@@ -104,7 +104,7 @@
             {"type": "ranged", "min": 0, "block": 1},
             {"type": "heavy_ranged", "min": 0, "block": 1}
           ],
-          "build_radius": 50,
+          "build_radius": 0,
           "road_speed_percent": 80,
           "hub_capacity": 0,
           "storage_inputs": 0,
