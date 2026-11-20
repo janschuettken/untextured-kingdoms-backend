@@ -274,6 +274,7 @@ async fn server_load(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Respons
                 "players_online": m.online_players().len(),
                 "units": m.world.lock().unwrap().units.len(),
                 "load": m.load.lock().unwrap().summary(),
+                "history": m.load.lock().unwrap().history(),
             }))
         })
         .collect();

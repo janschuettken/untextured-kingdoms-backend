@@ -563,6 +563,21 @@ mod tests {
     }
 
     #[test]
+    fn reiter_bleiben_unten_am_wehrgang() {
+        let mut w = walled(2, 2);
+        let id = w.next_unit_id;
+        w.next_unit_id += 1;
+        let mut knight = Unit::new(id, 1, UnitKind::Knight, (4.5, 16.5));
+        knight.mounted = true;
+        w.units.push(knight);
+        assert!(w.order_move(1, &[id], (4.5, 10.5)), "Reiter läuft zum Fuß der Mauer");
+        run(&mut w, 40.0);
+        let u = w.units.iter().find(|u| u.id == id).unwrap();
+        assert!(!u.on_wall, "Reiter bleibt unten");
+        assert!((u.pos.1 - 10.5).abs() > 0.4, "steht neben der Mauer: {:?}", u.pos);
+    }
+
+    #[test]
     fn ohne_treppe_kein_weg_nach_oben_und_abriss_holt_herunter() {
         let mut w = walled(2, 1);
         let k = king(&w);

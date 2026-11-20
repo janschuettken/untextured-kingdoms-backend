@@ -38,6 +38,10 @@ buildings: Array<BuildingState>, } | { "type": "tick",
  */
 tick: number, players_online: number, 
 /**
+ * Gespielte Spielzeit in Sekunden (ohne Pausen, mit Spieltempo); bleibt am Spielende stehen.
+ */
+game_seconds: number, 
+/**
  * Einheiten, die dieser Client sehen soll und die neu im Bild sind
  * oder sich verändert haben. Alle anderen sind unverändert.
  */

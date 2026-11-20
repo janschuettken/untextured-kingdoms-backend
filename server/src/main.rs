@@ -73,6 +73,7 @@ async fn main() {
         .route("/ws", get(game::ws_handler))
         .route("/health", get(|| async { "ok" }))
         .route("/api/games/{id}/map", get(game::current_map))
+        .route("/api/games/{id}/server-load", get(game::current_load))
         .with_state(hub.clone())
         .merge(maps_api::router(hub.clone()))
         .merge(admin::router(hub.clone()))

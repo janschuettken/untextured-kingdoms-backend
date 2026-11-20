@@ -37,6 +37,10 @@ gathers: Array<ResourceKind>,
  */
 releases_as: ResourceKind | null, 
 /**
+ * So viele Spielsekunden nach dem Bau dürfen die Bäume erst als Wald freigegeben werden. 0 = sofort.
+ */
+release_after_seconds: number, 
+/**
  * Mauern und Türme haben keinen Eingang; alle anderen ein Feld davor, das frei bleiben muss.
  */
 no_entrance: boolean, 

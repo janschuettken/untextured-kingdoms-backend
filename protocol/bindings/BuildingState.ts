@@ -55,4 +55,8 @@ road_under: number,
 /**
  * Nur Lager: so viel passt insgesamt hinein (belegt = Summe von `inventory`).
  */
-capacity: number, };
+capacity: number, 
+/**
+ * Obstplantage: noch so viele Spielsekunden, bis die Bäume als Wald freigegeben werden dürfen. 0 = jetzt.
+ */
+mature_in: number, };

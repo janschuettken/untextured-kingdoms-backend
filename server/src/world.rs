@@ -113,6 +113,9 @@ pub struct Unit {
     /// Weitere Ziele nach dem aktuellen (Strg+Rechtsklick), das nächste zuerst.
     #[serde(default)]
     waypoints: Vec<Waypoint>,
+    /// Zuletzt von selbst angegriffene Einheit und wie lange das her ist (für die Anzeige).
+    #[serde(skip)]
+    last_foe: Option<(u32, f32)>,
 }
 
 /// Ein späteres Ziel eines Laufbefehls (siehe `Unit::waypoints`).
@@ -160,6 +163,7 @@ impl Unit {
             hungry: false,
             speed_cap: None,
             waypoints: Vec::new(),
+            last_foe: None,
             heal_cooldown: 0.0,
         }
     }
@@ -267,6 +271,8 @@ pub struct World {
     teams: HashMap<u32, u32>,
     /// Gewinner, sobald das Spiel entschieden ist.
     winners: Option<Vec<u32>>,
+    /// Gespielte Spielzeit in Sekunden (ohne Pausen, mit Spieltempo), bis das Spiel entschieden ist.
+    pub(crate) game_seconds: f64,
     /// Sekunden, seit einem Gebäude ein Arbeiter, Träger oder Karren fehlt (siehe `people.rs`).
     respawn_clock: HashMap<u32, f32>,
     /// Warnungen an Spieler (siehe `alerts.rs`).
@@ -357,6 +363,7 @@ impl World {
             eliminated: BTreeSet::new(),
             teams: HashMap::new(),
             winners: None,
+            game_seconds: 0.0,
             respawn_clock: HashMap::new(),
             alerts: alerts::Alerts::default(),
             worker_carries_default: true,
@@ -771,6 +778,7 @@ impl World {
             progress_seq: 0,
             road_under,
             capacity: 0,
+            mature_in: def.release_after_seconds,
         };
         self.next_building_id += 1;
         if let Some((ex, ey)) = entrance {
@@ -1199,6 +1207,16 @@ impl World {
                 u.owner == player && (!u.is_civilian() || u.trade.is_some()) && unit_ids.contains(&u.id)
             })
             .collect();
+        // Reiter kommen nicht auf Wehrgänge: sie stellen sich unten an den Fuß des Bauwerks.
+        if target_wall && chosen.iter().any(|&k| self.units[k].mounted) {
+            let (riders, walkers): (Vec<usize>, Vec<usize>) = chosen.iter().partition(|&&k| self.units[k].mounted);
+            let rider_ids: Vec<u32> = riders.iter().map(|&k| self.units[k].id).collect();
+            let walker_ids: Vec<u32> = walkers.iter().map(|&k| self.units[k].id).collect();
+            let foot = self.foot_of(target, self.units[riders[0]].pos);
+            let rode = !self.is_walkway(player, foot) && self.order_move_planned(player, &rider_ids, foot, fast, append);
+            let walked = !walker_ids.is_empty() && self.order_move_planned(player, &walker_ids, target, fast, append);
+            return rode || walked;
+        }
         let spots = self.formation(player, unit_ids, target, chosen.len(), target_wall);
         if append {
             // Wer noch unterwegs ist (oder schon Wegpunkte hat), merkt sich das Ziel für später.
@@ -1441,7 +1459,7 @@ impl World {
     }
 
     /// Freies Feld direkt neben dem Gebäude am Punkt `p`, möglichst nah bei `from`.
-    fn foot_of(&self, p: (f32, f32), from: (f32, f32)) -> (f32, f32) {
+    pub(super) fn foot_of(&self, p: (f32, f32), from: (f32, f32)) -> (f32, f32) {
         let i = (p.1 as u32 * self.map.width + p.0 as u32) as usize;
         let Some(b) = self.buildings.iter().find(|b| b.id == self.occupied[i]) else { return p };
         let (x0, y0, x1, y1) = (b.x as i32 - 1, b.y as i32 - 1, (b.x + b.w) as i32, (b.y + b.h) as i32);
@@ -1457,6 +1475,11 @@ impl World {
     }
 
     /// Einen Spieltakt von `dt` Sekunden simulieren.
+    /// Gespielte Spielzeit in Sekunden.
+    pub fn game_seconds(&self) -> f64 {
+        self.game_seconds
+    }
+
     pub fn step(&mut self, dt: f32) {
         self.step_people(dt);
         self.step_production(dt);
@@ -1472,6 +1495,10 @@ impl World {
         self.step_waypoints();
         self.step_heal(dt);
         self.step_alerts(dt);
+        self.step_orchards(dt);
+        if self.winners.is_none() {
+            self.game_seconds += dt as f64;
+        }
         self.balance_hubs();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
@@ -1565,6 +1592,7 @@ impl World {
                 mounted: u.mounted,
                 horse_hp: if u.mounted { self.economy.def.army.horse_hp.saturating_sub(u.horse_damage) } else { 0 },
                 down: u.down,
+                attack_target: u.attack_order.or(u.last_foe.map(|(id, _)| protocol::AttackTarget::Unit { id })),
             })
             .collect()
     }

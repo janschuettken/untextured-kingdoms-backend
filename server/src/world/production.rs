@@ -312,12 +312,27 @@ impl World {
         let Some(r) = self.economy.building(b.kind).and_then(|d| d.releases_as) else {
             return Err(Text::new("error.cannot_release"));
         };
+        if b.mature_in > 0.0 {
+            return Err(Text::new("error.trees_not_grown"));
+        }
         self.remove_building(id);
         let tiles: Vec<usize> = self.footprint(&b).collect();
         for t in tiles {
             self.set_resource(t, r);
         }
         Ok(())
+    }
+
+    /// Obstplantagen: die Bäume wachsen heran, bis sie als Wald freigegeben werden dürfen.
+    pub(super) fn step_orchards(&mut self, dt: f32) {
+        for b in &mut self.buildings {
+            if b.mature_in > 0.0 {
+                b.mature_in = (b.mature_in - dt).max(0.0);
+                if b.mature_in == 0.0 {
+                    self.dirty_buildings.insert(b.id);
+                }
+            }
+        }
     }
 
     fn own_building(&self, player: u32, id: u32) -> Result<usize, Refusal> {
@@ -504,6 +519,14 @@ mod tests {
         let fruit = w.economy.recipe("grow_fruit").unwrap().outputs[0].amount;
         assert_eq!(w.inventories[&b.id].amount(Good::Fruit), fruit, "kein Lager: Obst bleibt im Betrieb");
         assert_eq!(w.release_trees(1, b.id + 99).unwrap_err().key, "error.no_building");
+        // Die Bäume müssen erst heranwachsen.
+        let grow = w.economy.building(BuildingKind::Orchard).unwrap().release_after_seconds;
+        if grow > 26.0 {
+            assert_eq!(w.release_trees(1, b.id).unwrap_err().key, "error.trees_not_grown");
+        }
+        let id = b.id;
+        w.buildings.iter_mut().find(|b| b.id == id).unwrap().mature_in = 0.1;
+        run(&mut w, 0.2);
         w.release_trees(1, b.id).unwrap();
         assert!(w.buildings.is_empty());
         assert_eq!(w.map.resources[0], ResourceKind::Forest);

@@ -51,6 +51,8 @@ pub struct SaveGame {
     auto_trade: HashMap<u32, Vec<protocol::AutoTrade>>,
     #[serde(default)]
     good_limits: HashMap<u32, Vec<protocol::GoodLimit>>,
+    #[serde(default)]
+    game_seconds: f64,
 }
 
 impl World {
@@ -79,6 +81,7 @@ impl World {
             winners: self.winners.clone(),
             auto_trade: self.auto_trade.clone(),
             good_limits: self.good_limits.clone(),
+            game_seconds: self.game_seconds,
         }
     }
 
@@ -121,6 +124,7 @@ impl World {
         w.winners = save.winners;
         w.auto_trade = save.auto_trade;
         w.good_limits = save.good_limits;
+        w.game_seconds = save.game_seconds;
         // Ältere Stände: Herstellungsbetriebe hatten noch keine eigenen Arbeiter.
         for bi in 0..w.buildings.len() {
             let id = w.buildings[bi].id;

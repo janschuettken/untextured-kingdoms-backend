@@ -175,6 +175,9 @@ pub enum ServerMsg {
         #[ts(type = "number")]
         tick: u64,
         players_online: u32,
+        /// Gespielte Spielzeit in Sekunden (ohne Pausen, mit Spieltempo); bleibt am Spielende stehen.
+        #[serde(default)]
+        game_seconds: f64,
         /// Einheiten, die dieser Client sehen soll und die neu im Bild sind
         /// oder sich verändert haben. Alle anderen sind unverändert.
         units: Vec<UnitState>,
@@ -860,6 +863,9 @@ pub struct UnitState {
     /// Sekunden, die die Einheit nach einem Sturz noch am Boden liegt (0 = steht).
     #[serde(default)]
     pub down: f32,
+    /// Wen die Einheit gerade angreift (Angriffsbefehl oder zuletzt selbst gewähltes Ziel).
+    #[serde(default)]
+    pub attack_target: Option<AttackTarget>,
 }
 
 /// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.
@@ -1169,6 +1175,9 @@ pub struct BuildingDef {
     /// Aufgeben hinterlässt diesen Rohstoff auf der Fläche (Obstplantage → Wald).
     #[serde(default)]
     pub releases_as: Option<ResourceKind>,
+    /// So viele Spielsekunden nach dem Bau dürfen die Bäume erst als Wald freigegeben werden. 0 = sofort.
+    #[serde(default)]
+    pub release_after_seconds: f32,
     /// Mauern und Türme haben keinen Eingang; alle anderen ein Feld davor, das frei bleiben muss.
     #[serde(default)]
     pub no_entrance: bool,
@@ -1684,6 +1693,9 @@ pub struct BuildingState {
     /// Nur Lager: so viel passt insgesamt hinein (belegt = Summe von `inventory`).
     #[serde(default)]
     pub capacity: u32,
+    /// Obstplantage: noch so viele Spielsekunden, bis die Bäume als Wald freigegeben werden dürfen. 0 = jetzt.
+    #[serde(default)]
+    pub mature_in: f32,
 }
 
 fn default_enemy_radius() -> f32 {

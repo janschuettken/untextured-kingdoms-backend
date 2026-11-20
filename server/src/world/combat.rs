@@ -23,6 +23,8 @@ use protocol::{AttackTarget, BuildingKind, ServerMsg, Shot, UnitKind};
 use super::{Unit, World};
 
 /// Kantenlänge der Suchzellen in Feldern.
+/// So lange (Sekunden) zeigt der Client nach einem selbst gewählten Schlag noch, wen die Einheit angreift.
+const FOE_SHOWN_SECONDS: f32 = 3.0;
 const CELL: f32 = 8.0;
 /// Halbe Körperbreite: so weit reicht ein Schlag über die Reichweite hinaus.
 const REACH: f32 = 0.5;
@@ -183,6 +185,8 @@ impl World {
             index.insert(u.id, k);
             let Some(def) = self.economy.unit(u.kind) else { continue };
             u.attack_cooldown = (u.attack_cooldown - dt).max(0.0);
+            // Selbst gewähltes Ziel nur kurz anzeigen, solange weiter gekämpft wird.
+            u.last_foe = u.last_foe.map(|(id, age)| (id, age + dt)).filter(|&(_, age)| age < FOE_SHOWN_SECONDS);
             let team = match self.teams.get(&u.owner) {
                 Some(&t) => (true, t),
                 None => (false, u.owner),
@@ -229,6 +233,8 @@ impl World {
                         u.attack_cooldown = def.attack_seconds;
                         hits.push((j, attack, by, ranged));
                     }
+                    let foe = self.units[j].id;
+                    self.units[k].last_foe = Some((foe, 0.0));
                     continue;
                 }
             }
@@ -296,6 +302,8 @@ impl World {
                 continue;
             }
             let (from, from_wall, me) = (u.pos, u.on_wall, u.owner);
+            // Reiter kommen nicht auf Wehrgänge: ein Ziel oben verfolgen sie nur bis zum Fuß.
+            let (pos, on_wall) = if on_wall && u.mounted { (self.foot_of(pos, from), false) } else { (pos, on_wall) };
             let (path, layers) = self.plan(me, from, from_wall, pos, on_wall);
             let u = &mut self.units[k];
             u.chase_timer = CHASE_SECONDS;
@@ -314,6 +322,8 @@ impl World {
                     shots.push(self.make_shot(u, &self.units[j], f, def.range));
                 }
                 self.units[k].attack_cooldown = def.attack_seconds;
+                let foe = self.units[j].id;
+                self.units[k].last_foe = Some((foe, 0.0));
             }
         }
         if !shots.is_empty() {

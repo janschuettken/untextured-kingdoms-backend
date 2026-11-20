@@ -72,6 +72,10 @@ impl World {
         let price = self.economy.def.market.prices.iter().find(|p| p.good == good).copied().ok_or_else(|| Text::new("error.not_traded"))?;
         let stock = self.stocks.get_mut(&player).ok_or_else(|| Text::new("error.no_player"))?;
         if sell {
+            // Verkaufspreis 0: die Ware nimmt der Markt nicht an (z. B. Heilsalbe).
+            if price.sell == 0 {
+                return Err(Text::new("error.not_sellable"));
+            }
             if stock.amount(good) < amount {
                 return Err(Text::new("error.not_enough").arg("good", good_key(good)).arg("need", amount - stock.amount(good)));
             }

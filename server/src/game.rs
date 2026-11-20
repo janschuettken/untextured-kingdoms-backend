@@ -140,6 +140,18 @@ impl TickLoad {
         }
     }
 
+    /// Verlauf der letzten Minute: Schnitt je Sekunde in Prozent des Budgets, älteste zuerst.
+    pub fn history(&self) -> Vec<f32> {
+        let budget_us = 1_000_000.0 / TICK_RATE as f32;
+        let per = TICK_RATE as usize;
+        // Nur volle Sekunden; die gerade angefangene kommt beim nächsten Abruf dazu.
+        let full = self.recent.len() - self.recent.len() % per;
+        let v: Vec<u32> = self.recent.iter().take(full).copied().collect();
+        v.chunks(per)
+            .map(|c| (c.iter().map(|&x| x as f32).sum::<f32>() / c.len() as f32 / budget_us * 1000.0).round() / 10.0)
+            .collect()
+    }
+
     pub fn summary(&self) -> LoadSummary {
         let budget_us = 1_000_000.0 / TICK_RATE as f32;
         let ms = |us: f32| (us / 10.0).round() / 100.0;
@@ -267,6 +279,7 @@ fn changed(old: &UnitState, new: &UnitState) -> bool {
         || old.mounted != new.mounted
         || old.horse_hp != new.horse_hp
         || old.down.ceil() != new.down.ceil()
+        || old.attack_target != new.attack_target
         || (old.x - new.x).abs() > 0.001
         || (old.y - new.y).abs() > 0.001
 }
@@ -347,7 +360,7 @@ fn game_loop(hub: Arc<Hub>, game: Arc<Game>, state: Arc<Match>) {
 }
 
 fn step(state: &Match, tick: u64) {
-    let (units, stocks, paths, infos, castles) = {
+    let (units, stocks, paths, infos, castles, game_seconds) = {
         let mut world = state.world.lock().unwrap();
         let speed = state.effective_speed() as f32 / 100.0;
         let dt = speed / TICK_RATE as f32;
@@ -391,7 +404,7 @@ fn step(state: &Match, tick: u64) {
         } else {
             HashMap::new()
         };
-        (world.snapshot(), world.take_dirty_stocks(), paths, infos, castles)
+        (world.snapshot(), world.take_dirty_stocks(), paths, infos, castles, world.game_seconds())
     };
     let mut clients = state.clients.lock().unwrap();
     let players_online = players_of(&clients).len() as u32;
@@ -439,6 +452,7 @@ fn step(state: &Match, tick: u64) {
         let msg = ServerMsg::Tick {
             tick,
             players_online,
+            game_seconds,
             units: send.clone(),
             gone: gone.clone(),
         };
@@ -464,6 +478,34 @@ pub struct GameQuery {
 
 /// Die laufende Karte eines Spiels im Dateiformat mit aktuellem Stand (z. B. abgeholzter Wald).
 /// Nur für Mitspieler.
+/// Auslastung dieses einen Spiels für seine Spieler (nicht nur Admins): Zahlen und Verlauf.
+pub async fn current_load(
+    State(hub): State<Arc<Hub>>,
+    Path(id): Path<u32>,
+    Query(q): Query<GameQuery>,
+) -> Response {
+    let token = q.token.as_deref().unwrap_or("");
+    let m = match hub.membership(id, token) {
+        Some((_, m, _)) => Some(m),
+        None if q.play_as.is_some() && hub.admin.check(token).await => hub.game(id).and_then(|g| g.running.get().cloned()),
+        None => None,
+    };
+    let Some(m) = m else {
+        return (StatusCode::NOT_FOUND, "Spiel nicht gefunden").into_response();
+    };
+    let (load, history) = {
+        let l = m.load.lock().unwrap();
+        (l.summary(), l.history())
+    };
+    axum::Json(serde_json::json!({
+        "paused": m.paused(),
+        "units": m.world.lock().unwrap().units.len(),
+        "load": load,
+        "history": history,
+    }))
+    .into_response()
+}
+
 pub async fn current_map(
     State(hub): State<Arc<Hub>>,
     Path(id): Path<u32>,
@@ -921,6 +963,19 @@ pub fn apply_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auslastung_verlauf_je_sekunde() {
+        let mut l = TickLoad::new();
+        for _ in 0..TICK_RATE {
+            l.record(Duration::from_millis(10));
+        }
+        for _ in 0..TICK_RATE {
+            l.record(Duration::from_millis(25));
+        }
+        l.record(Duration::from_millis(50)); // angebrochene Sekunde zählt nicht
+        assert_eq!(l.history(), vec![20.0, 50.0]);
+    }
 
     #[test]
     fn auslastung_rechnet_schnitt_spitze_und_zu_langsame() {

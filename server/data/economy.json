@@ -745,6 +745,27 @@
           "hub_capacity": 300,
           "storage_inputs": 0,
           "storage_outputs": 0
+        },
+        {
+          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 25}, {"good": "stone", "amount": 10}],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": [],
+          "max_hp": 700,
+          "workers": 0,
+          "gather_radius": 0,
+          "service_radius": 0,
+          "walkway": false,
+          "stairs": false,
+          "gate_radius": 0,
+          "garrison": 0,
+          "cover_percent": 0,
+          "build_radius": 0,
+          "road_speed_percent": 0,
+          "hub_capacity": 600,
+          "storage_inputs": 0,
+          "storage_outputs": 0
         }
       ]
     },
@@ -1567,6 +1588,7 @@
       "h": 6,
       "height": 1,
       "releases_as": "forest",
+      "release_after_seconds": 600,
       "no_entrance": false,
       "on_walls": false,
       "on_ramps": false,
@@ -1679,7 +1701,7 @@
       "levels": [
         {
           "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 30}],
-          "recipes": ["raise_cattle"],
+          "recipes": ["raise_cattle", "cattle_leather"],
           "housing": 0,
           "spawns": [],
           "trains": [],
@@ -2026,6 +2048,14 @@
       "unattended_percent": 60
     },
     {
+      "id": "cattle_leather",
+      "building": "cattle_farm",
+      "inputs": [{"good": "grain", "amount": 2}],
+      "outputs": [{"good": "meat", "amount": 1}, {"good": "leather", "amount": 2}],
+      "seconds": 30,
+      "unattended_percent": 60
+    },
+    {
       "id": "grow_fruit",
       "building": "orchard",
       "inputs": [],
@@ -2112,7 +2142,7 @@
       {"good": "armor", "buy": 50, "sell": 25},
       {"good": "light_armor", "buy": 24, "sell": 12},
       {"good": "saddle", "buy": 24, "sell": 12},
-      {"good": "salve", "buy": 14, "sell": 7}
+      {"good": "salve", "buy": 14, "sell": 0}
     ]
   },
   "units": [
