@@ -74,12 +74,13 @@ fn builtin_def() -> Option<EconomyDef> {
 
 /// Aktueller Aufbau der Balancing-Datei.
 /// Format 3: Schadensarten und Rüstung (`damage`, `armor`, `horse_armor`, Stufe `armor`).
-pub const FORMAT: u32 = 3;
+/// Format 4: `build_radius` einmal je Gebäude statt je Stufe.
+pub const FORMAT: u32 = 4;
 
 /// Werte, die je Gebäudestufe gelten. Fehlen sie in einer Stufe, gilt die Stufe davor.
-const LEVEL_FIELDS: [&str; 15] = [
+const LEVEL_FIELDS: [&str; 14] = [
     "max_hp", "workers", "gather_radius", "service_radius", "walkway", "stairs", "gate_radius", "garrison",
-    "cover_percent", "build_radius", "road_speed_percent", "hub_capacity", "storage_inputs", "storage_outputs", "armor",
+    "cover_percent", "road_speed_percent", "hub_capacity", "storage_inputs", "storage_outputs", "armor",
 ];
 
 /// Bringt ältere Balancing-Dateien in den aktuellen Aufbau (Format 2: Werte je Stufe).
@@ -127,6 +128,19 @@ pub fn migrate(v: &mut serde_json::Value) {
             let walk_from = from(b, "walkway_from_level");
             let stairs_from = from(b, "stairs_from_level");
             let base_spawns = b.remove("spawns").and_then(|x| x.as_array().cloned()).unwrap_or_default();
+            // Format 3 und älter: `build_radius` je Stufe. Jetzt einmal je Gebäude, der größte Wert gilt.
+            let level_radius = b
+                .get_mut("levels")
+                .and_then(Value::as_array_mut)
+                .map(|ls| {
+                    ls.iter_mut()
+                        .filter_map(|l| l.as_object_mut()?.remove("build_radius")?.as_u64())
+                        .max()
+                })
+                .unwrap_or(None);
+            if let Some(r) = level_radius.filter(|_| !b.contains_key("build_radius")) {
+                b.insert("build_radius".into(), Value::from(r));
+            }
             let Some(levels) = b.get_mut("levels").and_then(Value::as_array_mut) else { continue };
             for (i, l) in levels.iter_mut().enumerate() {
                 let Some(l) = l.as_object_mut() else { continue };
@@ -207,7 +221,7 @@ impl Economy {
     #[cfg(test)]
     pub fn without_build_radius(mut self) -> Economy {
         for b in &mut self.def.buildings {
-            b.levels.iter_mut().for_each(|l| l.build_radius = 0);
+            b.build_radius = 0;
         }
         self
     }
@@ -299,6 +313,9 @@ impl Economy {
             return Err("König: Geschwindigkeit muss größer als 0 sein".into());
         }
         let mv = &def.movement;
+        if !(mv.replan_delay_seconds >= 0.0 && mv.replan_delay_seconds <= 60.0) {
+            return Err("movement.replan_delay_seconds: 0 bis 60".into());
+        }
         if !(mv.spread_distance >= 0.0 && mv.spread_distance <= 3.0 && mv.spread_speed >= 0.0 && mv.spread_speed.is_finite()) {
             return Err("Auseinanderrücken: Abstand 0 bis 3, Tempo nicht negativ".into());
         }
@@ -768,11 +785,11 @@ mod tests {
                 assert_eq!(l.max_hp as u64, ob["max_hp"].as_u64().unwrap(), "{:?}", b.kind);
                 assert_eq!(l.garrison as u64, ob["garrison"].as_u64().unwrap_or(0), "{:?}", b.kind);
                 assert_eq!(l.workers as u64, ob["workers"].as_u64().unwrap_or(0), "{:?}", b.kind);
-                assert_eq!(l.build_radius as u64, ob["build_radius"].as_u64().unwrap_or(0), "{:?}", b.kind);
                 assert_eq!(l.walkway, walk > 0 && n >= walk, "{:?} Stufe {n}", b.kind);
                 assert_eq!(l.stairs, stairs > 0 && n >= stairs, "{:?} Stufe {n}", b.kind);
                 assert_eq!(l.cover_percent, 0, "alte Dateien kennen keine Deckung");
             }
+            assert_eq!(b.build_radius as u64, ob["build_radius"].as_u64().unwrap_or(0), "{:?}", b.kind);
             assert_eq!(b.delivery, protocol::DeliveryDefaults::default(), "Voreinstellung: Träger, Karren und Arbeiter");
         }
         let old_attack = old["army"]["attack_seconds"].as_f64().unwrap() as f32;
@@ -828,6 +845,24 @@ mod tests {
         let eco = Economy::parse(&v.to_string()).unwrap();
         assert!(eco.building(BuildingKind::HorseFarm).is_some());
         assert!(eco.def.goods.contains(&protocol::Good::Horse));
+    }
+
+    #[test]
+    fn bauradius_je_stufe_wird_einer_je_gebaeude() {
+        // Format 3: `build_radius` stand in jeder Stufe. Der größte Wert gilt jetzt für alle Stufen.
+        let mut v: serde_json::Value = serde_json::from_str(ECONOMY_JSON).unwrap();
+        v["format"] = serde_json::Value::from(3);
+        for b in v["buildings"].as_array_mut().unwrap() {
+            let b = b.as_object_mut().unwrap();
+            b.remove("build_radius");
+            for (i, l) in b.get_mut("levels").unwrap().as_array_mut().unwrap().iter_mut().enumerate() {
+                l["build_radius"] = serde_json::Value::from(if i == 0 { 20 } else { 35 });
+            }
+        }
+        let eco = Economy::parse(&v.to_string()).unwrap();
+        let wall = eco.building(BuildingKind::Wall).unwrap();
+        assert_eq!(wall.build_radius, if wall.levels.len() > 1 { 35 } else { 20 });
+        assert!(!eco.to_json().contains("\"build_radius\": 35,\n          \"road"), "nicht mehr je Stufe");
     }
 
     #[test]

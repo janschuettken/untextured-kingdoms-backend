@@ -82,6 +82,8 @@ pub enum ClientMsg {
     ConfigureBuilding { building_id: u32, settings: BuildingSettings },
     /// Obstplantage aufgeben: ihre Bäume werden zu Wald, den man abholzen kann.
     ReleaseTrees { building_id: u32 },
+    /// Sammelpunkt einer eigenen Kaserne setzen (`None` = wieder vor die Tür).
+    SetRallyPoint { building_id: u32, point: Option<(f32, f32)> },
     /// Diese Einheit beobachten: der Server schickt ihren Weg (`UnitPath`). `None` = keine.
     WatchUnit { unit_id: Option<u32> },
     /// Laufkosten aller Felder anfordern (Heatmap). Antwort: `NavCosts`.
@@ -386,6 +388,9 @@ pub enum LobbyClientMsg {
     },
     /// Startplatz wechseln (nur auf einen freien).
     TakeSlot { slot: u32 },
+    /// Nur Gastgeber, nur vor dem Start: wer auf Startplatz `from` sitzt, kommt auf `to`
+    /// (auf der Kartenvorschau gezogen). Ist `to` besetzt, tauschen beide.
+    MoveSlot { from: u32, to: u32 },
     /// Nur Gastgeber, nur vor dem Start: andere Karte.
     SetMap { map: String },
     /// Nur Gastgeber: Spiel starten.
@@ -535,6 +540,54 @@ pub struct LobbyMember {
     /// Computergegner: eigener Wert für „Hilfsbereitschaft“ (sonst der des Charakters).
     #[serde(default)]
     pub helpfulness: Option<u8>,
+    /// Laufendes Spiel: sein König ist gefallen, er ist ausgeschieden.
+    #[serde(default)]
+    pub defeated: bool,
+}
+
+/// Kleine Kartenvorschau für die Lobby (`GET /api/games/{id}/preview`).
+/// Jede Zelle fasst `step` x `step` Felder zusammen (Mitte gezählt).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GamePreview {
+    pub width: u32,
+    pub height: u32,
+    pub step: u32,
+    pub cols: u32,
+    pub rows: u32,
+    /// `cols * rows` Zeichen, Zeile für Zeile: `~` Wasser, `W` Wald, `S` Stein,
+    /// `E` Eisen, `A`/`F` Acker bzw. fruchtbar, sonst die Höhenstufe `0` bis `9`.
+    /// Ressourcen gelten im laufenden Spiel mit dem aktuellen Stand.
+    pub cells: String,
+    /// Laufendes Spiel, nur für Mitspieler und Admins: Gebäude (in Feldern).
+    pub buildings: Vec<PreviewBuilding>,
+    /// Laufendes Spiel: ausgeschiedene Spieler.
+    pub defeated: Vec<u32>,
+    /// Laufendes Spiel, sobald entschieden: die Gewinner.
+    pub winners: Option<Vec<u32>>,
+}
+
+/// Ein Gebäude in der Kartenvorschau.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PreviewBuilding {
+    pub owner: u32,
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+    /// `building`, `wall` (Befestigung), `road` (Weg, Brücke) oder `keep`.
+    pub look: PreviewLook,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PreviewLook {
+    Building,
+    Wall,
+    Road,
+    Keep,
 }
 
 /// Ob ein Gegner zu Fuß bis an den eigenen Bergfried kommt (eigene Tore gelten als zu,
@@ -1158,9 +1211,6 @@ pub struct BuildingLevel {
     pub cover_percent: u32,
     /// Rüstung des Gebäudes auf dieser Stufe je Schadensart. Fehlt eine Art, trifft sie voll.
     pub armor: Vec<Armor>,
-    /// Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte): die ganze Fläche
-    /// muss in diesem Umkreis liegen (beim Bauen bzw. beim Ausbau auf diese Stufe). 0 = überall.
-    pub build_radius: u32,
     /// Weg: man läuft hier so viel Prozent schneller. Ob es ein Weg ist, entscheidet Stufe 1 (> 0).
     pub road_speed_percent: u32,
     /// Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
@@ -1227,6 +1277,10 @@ pub struct BuildingDef {
     /// So viele Spielsekunden nach dem Bau dürfen die Bäume erst als Wald freigegeben werden. 0 = sofort.
     #[serde(default)]
     pub release_after_seconds: f32,
+    /// Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte), gilt für alle Stufen:
+    /// die ganze Fläche muss in diesem Umkreis liegen (beim Bauen und beim Ausbau). 0 = überall.
+    #[serde(default)]
+    pub build_radius: u32,
     /// Mauern und Türme haben keinen Eingang; alle anderen ein Feld davor, das frei bleiben muss.
     #[serde(default)]
     pub no_entrance: bool,
@@ -1530,6 +1584,15 @@ pub struct MovementDef {
     /// So schnell rücken sie dabei (Felder pro Sekunde).
     #[serde(default = "default_spread_speed")]
     pub spread_speed: f32,
+    /// Weg-Neuberechnung nach Bauen/Abreißen: wird ein Weg versperrt, sucht die Einheit sofort
+    /// neu. Alle anderen (kürzere Wege durch neue Lücken, Wartende) erst so viele Sekunden nach
+    /// der letzten Änderung, höchstens nach der doppelten Zeit. 0 = immer sofort.
+    #[serde(default = "default_replan_delay")]
+    pub replan_delay_seconds: f32,
+}
+
+fn default_replan_delay() -> f32 {
+    5.0
 }
 
 fn default_spread_distance() -> f32 {
@@ -1620,6 +1683,7 @@ impl Default for MovementDef {
             slope_speed_percent: default_slope_speed(),
             spread_distance: default_spread_distance(),
             spread_speed: default_spread_speed(),
+            replan_delay_seconds: default_replan_delay(),
         }
     }
 }
@@ -1758,6 +1822,9 @@ pub struct BuildingState {
     /// Obstplantage: noch so viele Spielsekunden, bis die Bäume als Wald freigegeben werden dürfen. 0 = jetzt.
     #[serde(default)]
     pub mature_in: f32,
+    /// Nur Kaserne: Sammelpunkt (Feldkoordinaten). Neue Soldaten laufen hierhin. `None` = vor die Tür.
+    #[serde(default)]
+    pub rally: Option<(f32, f32)>,
 }
 
 fn default_enemy_radius() -> f32 {

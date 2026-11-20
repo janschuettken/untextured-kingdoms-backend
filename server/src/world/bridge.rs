@@ -58,7 +58,7 @@ impl World {
         if banks.iter().any(|&(bx, by)| !self.map.nav.is_open(bx, by) && !self.map.nav.has_deck(bx, by)) {
             return Err(Text::new("error.bridge_no_bank"));
         }
-        self.check_build_radius(player, def.at(1).build_radius, (x, y), (w, h))?;
+        self.check_build_radius(player, def.build_radius, (x, y), (w, h))?;
         self.check_no_enemy(player, def.kind, (x as f32 + w as f32 / 2.0, y as f32 + h as f32 / 2.0))?;
         Ok(decks)
     }
@@ -115,6 +115,7 @@ impl World {
             road_under: 0,
             capacity: 0,
             mature_in: 0.0,
+            rally: None,
         };
         self.next_building_id += 1;
         self.set_footprint(&b, true);

@@ -41,6 +41,11 @@ releases_as: ResourceKind | null,
  */
 release_after_seconds: number, 
 /**
+ * Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte), gilt für alle Stufen:
+ * die ganze Fläche muss in diesem Umkreis liegen (beim Bauen und beim Ausbau). 0 = überall.
+ */
+build_radius: number, 
+/**
  * Mauern und Türme haben keinen Eingang; alle anderen ein Feld davor, das frei bleiben muss.
  */
 no_entrance: boolean, 
