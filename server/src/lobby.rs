@@ -44,6 +44,7 @@ use crate::{
     game::{self, Match},
     map::GameMap,
     maps_api::MapStore,
+    preview,
     world::{SaveGame, World},
 };
 
@@ -109,6 +110,8 @@ pub struct Meta {
     pub trade_mode: TradeMode,
     /// Fernkampf: Wurfbahn oder Sichtlinie.
     pub shot_mode: protocol::ShotMode,
+    /// Kartenvorschau für die Lobby, solange das Spiel wartet.
+    pub preview: Arc<protocol::GamePreview>,
 }
 
 impl Meta {
@@ -151,6 +154,14 @@ pub struct Game {
     pub meta: Mutex<Meta>,
     /// Gesetzt, sobald das Spiel gestartet ist.
     pub running: OnceLock<Arc<Match>>,
+}
+
+impl Game {
+    /// Vorschau der gewählten Karte (wartendes Spiel).
+    pub fn waiting_preview(&self) -> Option<Arc<protocol::GamePreview>> {
+        let meta = self.meta.lock().unwrap();
+        (meta.phase == GamePhase::Waiting).then(|| meta.preview.clone())
+    }
 }
 
 /// Datei eines laufenden Spiels (`SAVES_DIR/<id>.json`).
@@ -378,6 +389,7 @@ impl Hub {
                         slots: file.slots,
                         trade_mode: world.trade_mode(),
                         shot_mode: world.shot_mode(),
+                        preview: Arc::new(preview::of_map(&map)),
                     };
                     let computers = meta.computers();
                     let game = Arc::new(Game {
@@ -438,6 +450,12 @@ impl Hub {
                 .map(|m| m.online_players())
                 .unwrap_or_default();
             let paused = g.running.get().is_some_and(|m| m.paused());
+            // Reihenfolge: erst `meta`, dann die Welt (siehe `Hub::games`).
+            let defeated: Vec<u32> = g
+                .running
+                .get()
+                .map(|m| m.world.lock().unwrap().eliminated())
+                .unwrap_or_default();
             let host_name = meta
                 .members()
                 .find(|m| m.token == meta.host)
@@ -462,6 +480,7 @@ impl Hub {
                         team: m.team,
                         daring: m.daring,
                         helpfulness: m.helpfulness,
+                        defeated: defeated.contains(&(i as u32 + 1)),
                     }),
                 })
                 .collect();
@@ -551,6 +570,7 @@ impl Hub {
             slots,
             trade_mode: TradeMode::default(),
             shot_mode: protocol::ShotMode::default(),
+            preview: Arc::new(preview::of_map(&map)),
         };
         let game = Arc::new(Game {
             id,
@@ -632,6 +652,30 @@ impl Hub {
         Ok(())
     }
 
+    /// Gastgeber zieht einen Spieler (Mensch oder Computer) auf einen anderen Startplatz;
+    /// sitzt dort schon jemand, tauschen beide.
+    fn move_slot(&self, token: &str, from: u32, to: u32) -> Reply {
+        let Some(game) = self.waiting_game_of(token) else {
+            return err("lobby.not_in_game");
+        };
+        let mut meta = game.meta.lock().unwrap();
+        if meta.host != token {
+            return err("lobby.not_host");
+        }
+        if meta.phase != GamePhase::Waiting {
+            return err("lobby.game_running");
+        }
+        let (from, to) = (from as usize, to as usize);
+        if from >= meta.slots.len() || to >= meta.slots.len() {
+            return err("lobby.bad_slot");
+        }
+        if meta.slots[from].is_none() {
+            return err("lobby.slot_empty");
+        }
+        meta.slots.swap(from, to);
+        Ok(())
+    }
+
     fn set_map(&self, token: &str, map_name: &str) -> Reply {
         let Some(game) = self.waiting_game_of(token) else {
             return err("lobby.not_in_game");
@@ -672,6 +716,7 @@ impl Hub {
         meta.map_text = text;
         meta.width = map.width;
         meta.height = map.height;
+        meta.preview = Arc::new(preview::of_map(&map));
         meta.spawns = map.spawns;
         Ok(())
     }
@@ -855,6 +900,7 @@ impl Hub {
             LobbyClientMsg::JoinGame { game_id } => self.join(token, name, game_id),
             LobbyClientMsg::LeaveGame { game_id } => self.leave(token, game_id),
             LobbyClientMsg::TakeSlot { slot } => self.take_slot(token, slot),
+            LobbyClientMsg::MoveSlot { from, to } => self.move_slot(token, from, to),
             LobbyClientMsg::SetMap { map } => self.set_map(token, &map),
             LobbyClientMsg::StartGame => self.start(token),
             LobbyClientMsg::AddComputer { slot, level, personality } => self.add_computer(token, slot, level, personality),
@@ -1086,6 +1132,46 @@ mod tests {
         hub.leave(A, None).unwrap();
         hub.leave(C, None).unwrap();
         assert!(hub.game(first).is_none() && hub.game(second).is_none());
+    }
+
+    #[test]
+    fn gastgeber_verschiebt_spieler() {
+        let hub = hub();
+        hub.create(A, "Anna", "zwei-burgen").unwrap();
+        let id = hub.game_of(A).unwrap().id;
+        hub.join(B, "Bert", id).unwrap();
+        hub.add_computer(A, 2, AiLevel::Easy, None).unwrap();
+        let tokens = || -> Vec<Option<String>> {
+            let g = hub.game(id).unwrap();
+            let meta = g.meta.lock().unwrap();
+            meta.slots.iter().map(|s| s.as_ref().map(|m| m.token.clone())).collect()
+        };
+        assert!(hub.move_slot(B, 1, 3).is_err(), "nur der Gastgeber");
+        assert!(hub.move_slot(A, 3, 0).is_err(), "leerer Platz");
+        assert!(hub.move_slot(A, 0, 9).is_err(), "gibt es nicht");
+        // Auf einen freien Platz.
+        hub.move_slot(A, 1, 3).unwrap();
+        assert_eq!(tokens()[3].as_deref(), Some(B));
+        assert!(tokens()[1].is_none());
+        // Auf einen besetzten: tauschen (auch mit dem Computer).
+        hub.move_slot(A, 0, 2).unwrap();
+        let t = tokens();
+        assert_eq!(t[2].as_deref(), Some(A));
+        assert!(t[0].as_deref().is_some_and(|c| c.starts_with("computer:")));
+        // Vorschau der wartenden Karte ist da.
+        let p = hub.game(id).unwrap().waiting_preview().unwrap();
+        assert_eq!((p.width, p.height), (256, 256));
+        hub.start(A).unwrap();
+        assert!(hub.move_slot(A, 2, 1).is_err(), "läuft schon");
+        let (_, m, (pid, _)) = hub.membership(id, A).unwrap();
+        assert_eq!(pid, 3);
+        let w = m.world.lock().unwrap();
+        let p = preview::of_world(&w, true);
+        assert!(p.buildings.iter().any(|b| b.owner == 3 && b.look == protocol::PreviewLook::Keep));
+        assert!(p.defeated.is_empty());
+        drop(w);
+        hub.leave(A, None).unwrap();
+        hub.leave(B, None).unwrap();
     }
 
     #[test]
