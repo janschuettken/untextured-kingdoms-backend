@@ -82,6 +82,8 @@ pub enum ClientMsg {
     ConfigureBuilding { building_id: u32, settings: BuildingSettings },
     /// Obstplantage aufgeben: ihre Bäume werden zu Wald, den man abholzen kann.
     ReleaseTrees { building_id: u32 },
+    /// Sammelpunkt einer eigenen Kaserne setzen (`None` = wieder vor die Tür).
+    SetRallyPoint { building_id: u32, point: Option<(f32, f32)> },
     /// Diese Einheit beobachten: der Server schickt ihren Weg (`UnitPath`). `None` = keine.
     WatchUnit { unit_id: Option<u32> },
     /// Laufkosten aller Felder anfordern (Heatmap). Antwort: `NavCosts`.
@@ -1531,6 +1533,15 @@ pub struct MovementDef {
     /// So schnell rücken sie dabei (Felder pro Sekunde).
     #[serde(default = "default_spread_speed")]
     pub spread_speed: f32,
+    /// Weg-Neuberechnung nach Bauen/Abreißen: wird ein Weg versperrt, sucht die Einheit sofort
+    /// neu. Alle anderen (kürzere Wege durch neue Lücken, Wartende) erst so viele Sekunden nach
+    /// der letzten Änderung, höchstens nach der doppelten Zeit. 0 = immer sofort.
+    #[serde(default = "default_replan_delay")]
+    pub replan_delay_seconds: f32,
+}
+
+fn default_replan_delay() -> f32 {
+    5.0
 }
 
 fn default_spread_distance() -> f32 {
@@ -1621,6 +1632,7 @@ impl Default for MovementDef {
             slope_speed_percent: default_slope_speed(),
             spread_distance: default_spread_distance(),
             spread_speed: default_spread_speed(),
+            replan_delay_seconds: default_replan_delay(),
         }
     }
 }
@@ -1759,6 +1771,9 @@ pub struct BuildingState {
     /// Obstplantage: noch so viele Spielsekunden, bis die Bäume als Wald freigegeben werden dürfen. 0 = jetzt.
     #[serde(default)]
     pub mature_in: f32,
+    /// Nur Kaserne: Sammelpunkt (Feldkoordinaten). Neue Soldaten laufen hierhin. `None` = vor die Tür.
+    #[serde(default)]
+    pub rally: Option<(f32, f32)>,
 }
 
 fn default_enemy_radius() -> f32 {

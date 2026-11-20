@@ -2387,7 +2387,8 @@
     "worker_speed": 1.2,
     "slope_speed_percent": 80,
     "spread_distance": 0.5,
-    "spread_speed": 1
+    "spread_speed": 1,
+    "replan_delay_seconds": 5
   },
   "population": {
     "food": ["bread", "meat", "fruit"],

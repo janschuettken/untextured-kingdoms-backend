@@ -78,6 +78,8 @@ pub struct NavGrid {
     deck: Vec<u8>,
     /// Wie viele Dinge dieses Feld blockieren (Gebäude, Wald, ...).
     blocked: Vec<u8>,
+    /// Felder, die seit dem letzten Abholen blockiert wurden (für die Weg-Neuberechnung).
+    pub newly_blocked: Vec<(i32, i32)>,
     /// Gebiet je Feld: Block · 256 + Nummer im Block.
     region: Vec<u32>,
     /// Gebiete je Block.
@@ -117,6 +119,7 @@ impl NavGrid {
             water: water.to_vec(),
             deck: vec![NO_DECK; n],
             blocked: blocked.iter().map(|&b| b as u8).collect(),
+            newly_blocked: Vec::new(),
             region: vec![NO_REGION; n],
             clusters: vec![Vec::new(); (cw * ch) as usize],
             cw,
@@ -210,6 +213,9 @@ impl NavGrid {
         self.blocked[i] = if on { self.blocked[i].saturating_add(1) } else { self.blocked[i].saturating_sub(1) };
         if before == (self.blocked[i] > 0) {
             return; // An den Verbindungen ändert sich nichts.
+        }
+        if on {
+            self.newly_blocked.push((x, y));
         }
         for ny in y - 1..=y + 1 {
             for nx in x - 1..=x + 1 {

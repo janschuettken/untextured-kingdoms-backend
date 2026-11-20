@@ -313,6 +313,9 @@ impl Economy {
             return Err("König: Geschwindigkeit muss größer als 0 sein".into());
         }
         let mv = &def.movement;
+        if !(mv.replan_delay_seconds >= 0.0 && mv.replan_delay_seconds <= 60.0) {
+            return Err("movement.replan_delay_seconds: 0 bis 60".into());
+        }
         if !(mv.spread_distance >= 0.0 && mv.spread_distance <= 3.0 && mv.spread_speed >= 0.0 && mv.spread_speed.is_finite()) {
             return Err("Auseinanderrücken: Abstand 0 bis 3, Tempo nicht negativ".into());
         }

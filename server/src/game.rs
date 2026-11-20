@@ -778,6 +778,7 @@ async fn handle_msg(
         | ClientMsg::DemolishBuilding { .. }
         | ClientMsg::ConfigureBuilding { .. }
         | ClientMsg::ReleaseTrees { .. }
+        | ClientMsg::SetRallyPoint { .. }
         | ClientMsg::MoveBuilding { .. }
         | ClientMsg::UpgradeBuilding { .. }
         | ClientMsg::TrainUnits { .. }
@@ -902,6 +903,10 @@ pub fn apply_command(
             for event in world.take_events() {
                 send(event);
             }
+        }
+        ClientMsg::SetRallyPoint { building_id, point } => {
+            let building = world.set_rally_point(player_id, building_id, point)?;
+            send(ServerMsg::BuildingChanged { building });
         }
         ClientMsg::MoveBuilding {
             building_id,

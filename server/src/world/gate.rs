@@ -92,7 +92,8 @@ impl World {
         for (bi, open) in changes {
             self.set_gate_open(bi, open);
         }
-        self.replan_all();
+        // Tore gehen einzeln auf und zu: gleich neu planen, damit Wartende sofort durchgehen.
+        self.replan_now();
     }
 
     fn set_gate_open(&mut self, bi: usize, open: bool) {
