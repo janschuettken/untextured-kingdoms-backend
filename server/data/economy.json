@@ -56,7 +56,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 50,
           "road_speed_percent": 40,
           "hub_capacity": 0,
@@ -97,7 +100,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 50,
           "road_speed_percent": 80,
           "hub_capacity": 0,
@@ -138,7 +144,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -179,7 +188,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -201,7 +213,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -787,7 +802,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -809,7 +827,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 1200,
@@ -851,7 +872,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 300,
@@ -877,7 +901,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 600,
@@ -932,7 +959,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 200,
@@ -958,7 +988,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 400,
@@ -999,7 +1032,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1021,7 +1057,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1043,7 +1082,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1065,7 +1107,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1107,7 +1152,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1149,7 +1197,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1192,7 +1243,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1235,7 +1289,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1277,7 +1334,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1318,7 +1378,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1359,7 +1422,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1400,7 +1466,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1441,7 +1510,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1463,7 +1535,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1504,7 +1579,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1526,7 +1604,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1571,7 +1652,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1616,7 +1700,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1642,7 +1729,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1683,7 +1773,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1728,7 +1821,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1770,7 +1866,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1811,7 +1910,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1833,7 +1935,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1875,7 +1980,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1916,7 +2024,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 5,
@@ -1961,7 +2072,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -1987,7 +2101,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -2009,7 +2126,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
@@ -2054,7 +2174,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "build_radius": 0,
           "road_speed_percent": 0,
           "hub_capacity": 0,
