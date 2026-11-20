@@ -222,6 +222,7 @@ mod tests {
         let mut w = flat();
         w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
         let saw = w.place_building(1, BuildingKind::Sawmill, 25, 2).unwrap();
+        w.test_granary(1); // sonst verdirbt das Essen
         assert_eq!(w.units.iter().filter(|u| u.kind == UnitKind::Carrier).count(), 0);
         let worker = w.units.iter().position(|u| u.kind == UnitKind::Worker && u.home == Some(saw.id)).unwrap();
         let (wood, boards) = (w.stocks[&1].amount(Good::Wood), w.stocks[&1].amount(Good::Boards));

@@ -300,6 +300,7 @@ mod tests {
         w.place_building(1, BuildingKind::House, 10, 2).unwrap();
         w.place_building(1, BuildingKind::Sawmill, 2, 2).unwrap();
         w.place_building(1, BuildingKind::Woodcutter, 2, 10).unwrap();
+        w.test_granary(1); // sonst verdirbt das Essen
         let bread = |w: &World| w.stock_state(1).goods.iter().find(|g| g.good == Good::Bread).map_or(0, |g| g.amount);
         let before = bread(&w);
         let taler = w.stock_state(1).taler;

@@ -594,6 +594,20 @@ impl World {
     /// Rampe, kein Wasser, keinen Wald oder Fels, und darf weder ein anderes
     /// Gebäude noch eine Einheit überdecken.
     #[cfg(test)]
+    /// Tests: einen Kornspeicher irgendwo frei hinstellen (von unten rechts gesucht), damit Essen
+    /// nicht verdirbt (`spoil_unstored_food`). Bricht ab, wenn nirgends Platz ist.
+    #[cfg(test)]
+    pub(crate) fn test_granary(&mut self, player: u32) -> u32 {
+        for y in (0..self.map.height).rev() {
+            for x in (0..self.map.width).rev() {
+                if let Ok(b) = self.place_building(player, BuildingKind::Granary, x, y) {
+                    return b.id;
+                }
+            }
+        }
+        panic!("kein Platz für einen Kornspeicher");
+    }
+
     pub fn place_building(&mut self, player: u32, kind: BuildingKind, x: u32, y: u32) -> Result<BuildingState, Refusal> {
         self.place_building_rotated(player, kind, x, y, 0, 1)
     }
@@ -1496,6 +1510,7 @@ impl World {
         self.step_heal(dt);
         self.step_alerts(dt);
         self.step_orchards(dt);
+        self.spoil_unstored_food();
         if self.winners.is_none() {
             self.game_seconds += dt as f64;
         }

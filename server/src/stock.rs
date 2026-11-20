@@ -27,7 +27,7 @@ pub struct Pool {
 }
 
 impl Pool {
-    fn accepts(&self, good: Good) -> bool {
+    pub fn accepts(&self, good: Good) -> bool {
         self.goods.as_ref().is_none_or(|g| g.contains(&good))
     }
 }
@@ -100,6 +100,11 @@ impl Stock {
 
     pub fn amount(&self, good: Good) -> u32 {
         self.goods.get(&good).map_or(0, |b| b.iter().map(|b| b.amount).sum())
+    }
+
+    /// Vorrat eines Spielers: Gibt es überhaupt ein Lager, das diese Ware nimmt?
+    pub fn has_place_for(&self, good: Good) -> bool {
+        !self.pooled || self.pools.iter().any(|p| p.accepts(good))
     }
 
     /// Ware einlagern, höchstens bis zur Kapazität. Liefert, was wirklich hineinpasst.

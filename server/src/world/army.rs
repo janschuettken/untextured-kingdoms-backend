@@ -511,6 +511,7 @@ mod tests {
         }
         w.units.push(Unit::new(50_001, 1, UnitKind::Spearman, (20.5, 20.5)));
         w.units.push(Unit::new(50_002, 1, UnitKind::Spearman, (21.5, 20.5)));
+        w.test_granary(1); // sonst verdirbt das Essen
         assert_eq!(w.stock_state(1).army.food, 4);
         // Erst alles Essen weg, dann genau 5 hinein.
         for g in w.economy.def.population.food.clone() {

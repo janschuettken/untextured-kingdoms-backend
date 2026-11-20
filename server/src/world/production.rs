@@ -411,6 +411,7 @@ mod tests {
         w.place_building(1, BuildingKind::CartShed, 8, 5).unwrap();
         let before = w.stocks[&1].amount(Good::Wood);
         let b = w.place_building(1, BuildingKind::Woodcutter, 2, 2).unwrap();
+        w.test_granary(1); // sonst verdirbt das Essen
         let wood_after_build = w.stocks[&1].amount(Good::Wood);
         let cost = w.economy.building(BuildingKind::Woodcutter).unwrap().levels[0].cost.iter().find(|c| c.good == Good::Wood).map_or(0, |c| c.amount);
         assert_eq!(wood_after_build, before - cost);
@@ -471,6 +472,7 @@ mod tests {
         w.place_building(1, BuildingKind::CartShed, 4, 5).unwrap();
         w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 50 }, GoodAmount { good: Good::Stone, amount: 50 }], 0);
         w.place_building(1, BuildingKind::Armory, 16, 6).unwrap(); // Platz für Bögen
+        w.place_building(1, BuildingKind::Granary, 16, 1).unwrap(); // sonst verdirbt das Essen
         assert_eq!(b.settings.recipe.as_deref(), Some("make_longbow"));
         // Armbrust erst ab Stufe 2.
         let mut s = b.settings.clone();

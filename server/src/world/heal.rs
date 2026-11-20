@@ -1,7 +1,9 @@
 //! Heiler aus der Apotheke: Wer `heal` hat, behandelt alle `army.heal_seconds` den am
 //! schwersten Verwundeten in Reichweite (`heal_range`), egal ob eigene oder verbündete
-//! Einheit, König und Zivilisten eingeschlossen, nur sich selbst nicht. Heilen geht auch
-//! im Laufen und über die Ebenen hinweg (vom Wehrgang hinunter und umgekehrt).
+//! Einheit, König und Zivilisten eingeschlossen, nur sich selbst nicht. Heilen geht über die
+//! Ebenen hinweg (vom Wehrgang hinunter und umgekehrt). Wann geheilt wird, steuern dieselben
+//! Haken wie beim Angriff: `attack_standing` (im Stand), `attack_moving` (im Laufen) und
+//! `attack_mounted` (zu Pferd).
 
 use protocol::{Heal, ServerMsg};
 
@@ -17,7 +19,9 @@ impl World {
             let Some(def) = self.economy.unit(u.kind) else { continue };
             if def.heal > 0 && def.heal_range > 0.0 {
                 u.heal_cooldown = (u.heal_cooldown - dt).max(0.0);
-                if u.heal_cooldown <= 0.0 {
+                // Nach einem Sturz liegt der Heiler am Boden und heilt nicht.
+                let allowed = u.down <= 0.0 && super::combat::may_attack(def, u.mounted, !u.path.is_empty());
+                if u.heal_cooldown <= 0.0 && allowed {
                     healers.push((k, def.heal, def.heal_range));
                 }
             }
@@ -97,6 +101,30 @@ mod tests {
         assert_eq!(w.units[near].damage, 0, "in Reichweite wieder heil");
         assert_eq!(w.units[far].damage, 30, "zu weit weg");
         assert!(w.take_events().iter().any(|e| matches!(e, protocol::ServerMsg::Heals { .. })));
+    }
+
+    #[test]
+    fn heiler_folgt_den_angriffs_haken() {
+        let mut w = world();
+        for d in w.economy.def.units.iter_mut().filter(|d| d.kind == UnitKind::Healer) {
+            d.attack_standing = true;
+            d.attack_moving = false;
+        }
+        let h = put(&mut w, 1, UnitKind::Healer, (10.5, 10.5));
+        let near = put(&mut w, 1, UnitKind::Spearman, (12.5, 10.5));
+        w.units[near].damage = 30;
+        // Läuft gerade: heilt nicht.
+        w.units[h].path = vec![(10.5, 20.5)];
+        for _ in 0..200 {
+            w.step_heal(0.05);
+        }
+        assert_eq!(w.units[near].damage, 30, "im Laufen nicht erlaubt");
+        // Steht: heilt.
+        w.units[h].path.clear();
+        for _ in 0..200 {
+            w.step_heal(0.05);
+        }
+        assert!(w.units[near].damage < 30, "im Stand erlaubt");
     }
 
     #[test]

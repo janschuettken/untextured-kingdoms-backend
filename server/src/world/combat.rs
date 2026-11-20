@@ -28,9 +28,9 @@ use protocol::{AttackTarget, BuildingKind, ServerMsg, Shot, UnitKind};
 
 use super::{Unit, World};
 
-/// Kantenlänge der Suchzellen in Feldern.
 /// So lange (Sekunden) zeigt der Client nach einem selbst gewählten Schlag noch, wen die Einheit angreift.
 const FOE_SHOWN_SECONDS: f32 = 3.0;
+/// Kantenlänge der Suchzellen in Feldern.
 const CELL: f32 = 8.0;
 /// Halbe Körperbreite: so weit reicht ein Schlag über die Reichweite hinaus.
 const REACH: f32 = 0.5;
@@ -39,7 +39,7 @@ const CHASE_SECONDS: f32 = 1.0;
 
 /// Darf eine Einheit dieser Art jetzt angreifen? Zu Pferd zählt `attack_mounted`
 /// (im Stehen und im Reiten), zu Fuß `attack_standing` bzw. im Laufen `attack_moving`.
-fn may_attack(def: &protocol::UnitDef, mounted: bool, moving: bool) -> bool {
+pub(super) fn may_attack(def: &protocol::UnitDef, mounted: bool, moving: bool) -> bool {
     if mounted {
         def.attack_mounted
     } else if moving {

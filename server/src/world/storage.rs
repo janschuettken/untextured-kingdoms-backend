@@ -53,6 +53,21 @@ impl World {
             .or_else(|| self.nearest_hub(owner, p, good))
     }
 
+    /// Nahrung (`population.food`) ohne Lager, das sie nimmt (kein Kornspeicher), verdirbt:
+    /// der Bestand fällt auf 0. Andere Waren bleiben, auch ohne Lager.
+    pub(super) fn spoil_unstored_food(&mut self) {
+        let food = self.economy.def.population.food.clone();
+        for (&player, stock) in self.stocks.iter_mut() {
+            for &good in &food {
+                let have = stock.amount(good);
+                if have > 0 && !stock.has_place_for(good) {
+                    stock.take_all(&[GoodAmount { good, amount: have }]);
+                    self.dirty_stocks.insert(player);
+                }
+            }
+        }
+    }
+
     /// Bestand je Lager an den Gesamtvorrat angleichen.
     pub(super) fn balance_hubs(&mut self) {
         // (Id, Besitzer, Waren, die es nehmen darf: Auswahl des Spielers und Art des Lagers)
@@ -209,6 +224,25 @@ mod tests {
         w.demolish(1, store).unwrap();
         w.step(0.05);
         assert_eq!(w.hub_amount(keep, Good::Iron), 5);
+    }
+
+    #[test]
+    fn ohne_kornspeicher_verdirbt_nahrung() {
+        let row = "0".repeat(40);
+        let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
+        let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
+        w.spawn_player(1);
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.stocks.get_mut(&1).unwrap().add_unlimited(Good::Bread, 30);
+        w.stocks.get_mut(&1).unwrap().add_unlimited(Good::Iron, 5);
+        w.step(0.05);
+        assert_eq!(w.stocks[&1].amount(Good::Bread), 0, "Bergfried nimmt kein Essen");
+        assert_eq!(w.stocks[&1].amount(Good::Iron), 5, "andere Waren bleiben");
+        // Mit Kornspeicher bleibt das Essen.
+        w.place_building(1, BuildingKind::Granary, 20, 2).unwrap();
+        w.stocks.get_mut(&1).unwrap().add(Good::Bread, 10);
+        w.step(0.05);
+        assert_eq!(w.stocks[&1].amount(Good::Bread), 10);
     }
 
     #[test]
