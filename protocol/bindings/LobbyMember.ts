@@ -29,4 +29,8 @@ daring: number | null,
 /**
  * Computergegner: eigener Wert für „Hilfsbereitschaft“ (sonst der des Charakters).
  */
-helpfulness: number | null, };
+helpfulness: number | null, 
+/**
+ * Laufendes Spiel: sein König ist gefallen, er ist ausgeschieden.
+ */
+defeated: boolean, };

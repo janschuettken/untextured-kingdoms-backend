@@ -386,6 +386,9 @@ pub enum LobbyClientMsg {
     },
     /// Startplatz wechseln (nur auf einen freien).
     TakeSlot { slot: u32 },
+    /// Nur Gastgeber, nur vor dem Start: wer auf Startplatz `from` sitzt, kommt auf `to`
+    /// (auf der Kartenvorschau gezogen). Ist `to` besetzt, tauschen beide.
+    MoveSlot { from: u32, to: u32 },
     /// Nur Gastgeber, nur vor dem Start: andere Karte.
     SetMap { map: String },
     /// Nur Gastgeber: Spiel starten.
@@ -535,6 +538,54 @@ pub struct LobbyMember {
     /// Computergegner: eigener Wert für „Hilfsbereitschaft“ (sonst der des Charakters).
     #[serde(default)]
     pub helpfulness: Option<u8>,
+    /// Laufendes Spiel: sein König ist gefallen, er ist ausgeschieden.
+    #[serde(default)]
+    pub defeated: bool,
+}
+
+/// Kleine Kartenvorschau für die Lobby (`GET /api/games/{id}/preview`).
+/// Jede Zelle fasst `step` x `step` Felder zusammen (Mitte gezählt).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GamePreview {
+    pub width: u32,
+    pub height: u32,
+    pub step: u32,
+    pub cols: u32,
+    pub rows: u32,
+    /// `cols * rows` Zeichen, Zeile für Zeile: `~` Wasser, `W` Wald, `S` Stein,
+    /// `E` Eisen, `A`/`F` Acker bzw. fruchtbar, sonst die Höhenstufe `0` bis `9`.
+    /// Ressourcen gelten im laufenden Spiel mit dem aktuellen Stand.
+    pub cells: String,
+    /// Laufendes Spiel, nur für Mitspieler und Admins: Gebäude (in Feldern).
+    pub buildings: Vec<PreviewBuilding>,
+    /// Laufendes Spiel: ausgeschiedene Spieler.
+    pub defeated: Vec<u32>,
+    /// Laufendes Spiel, sobald entschieden: die Gewinner.
+    pub winners: Option<Vec<u32>>,
+}
+
+/// Ein Gebäude in der Kartenvorschau.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PreviewBuilding {
+    pub owner: u32,
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+    /// `building`, `wall` (Befestigung), `road` (Weg, Brücke) oder `keep`.
+    pub look: PreviewLook,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PreviewLook {
+    Building,
+    Wall,
+    Road,
+    Keep,
 }
 
 /// Ob ein Gegner zu Fuß bis an den eigenen Bergfried kommt (eigene Tore gelten als zu,
