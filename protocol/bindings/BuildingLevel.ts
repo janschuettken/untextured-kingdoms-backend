@@ -73,11 +73,6 @@ cover_percent: number,
  */
 armor: Array<Armor>, 
 /**
- * Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte): die ganze Fläche
- * muss in diesem Umkreis liegen (beim Bauen bzw. beim Ausbau auf diese Stufe). 0 = überall.
- */
-build_radius: number, 
-/**
  * Weg: man läuft hier so viel Prozent schneller. Ob es ein Weg ist, entscheidet Stufe 1 (> 0).
  */
 road_speed_percent: number, 

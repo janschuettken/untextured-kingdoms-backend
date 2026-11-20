@@ -1158,9 +1158,6 @@ pub struct BuildingLevel {
     pub cover_percent: u32,
     /// Rüstung des Gebäudes auf dieser Stufe je Schadensart. Fehlt eine Art, trifft sie voll.
     pub armor: Vec<Armor>,
-    /// Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte): die ganze Fläche
-    /// muss in diesem Umkreis liegen (beim Bauen bzw. beim Ausbau auf diese Stufe). 0 = überall.
-    pub build_radius: u32,
     /// Weg: man läuft hier so viel Prozent schneller. Ob es ein Weg ist, entscheidet Stufe 1 (> 0).
     pub road_speed_percent: u32,
     /// Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
@@ -1227,6 +1224,10 @@ pub struct BuildingDef {
     /// So viele Spielsekunden nach dem Bau dürfen die Bäume erst als Wald freigegeben werden. 0 = sofort.
     #[serde(default)]
     pub release_after_seconds: f32,
+    /// Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte), gilt für alle Stufen:
+    /// die ganze Fläche muss in diesem Umkreis liegen (beim Bauen und beim Ausbau). 0 = überall.
+    #[serde(default)]
+    pub build_radius: u32,
     /// Mauern und Türme haben keinen Eingang; alle anderen ein Feld davor, das frei bleiben muss.
     #[serde(default)]
     pub no_entrance: bool,

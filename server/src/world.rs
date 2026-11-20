@@ -704,7 +704,7 @@ impl World {
         }
         // Das Startgebäude (der Bergfried) steht noch vor jedem Bergfried: kein Bauradius.
         if !free {
-            self.check_build_radius(player, def.at(level as u32).build_radius, (x, y), (w, h))?;
+            self.check_build_radius(player, def.build_radius, (x, y), (w, h))?;
         }
         if !free {
             self.check_no_enemy(player, kind, (x as f32 + w as f32 / 2.0, y as f32 + h as f32 / 2.0))?;
@@ -1054,7 +1054,7 @@ impl World {
         };
         let cost = next.cost.clone();
         let spawns = next.spawns.clone();
-        let (old_hp, new_hp, radius, road) = (def.at(b.level).max_hp, next.max_hp, next.build_radius, def.is_road());
+        let (old_hp, new_hp, radius, road) = (def.at(b.level).max_hp, next.max_hp, def.build_radius, def.is_road());
         let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
         let old = b.clone();
         self.check_build_radius(player, radius, (old.x, old.y), (old.w, old.h))?;
@@ -1974,13 +1974,13 @@ mod tests {
         w.admin_give(1, &[GoodAmount { good: protocol::Good::Stone, amount: 500 }, GoodAmount { good: protocol::Good::Wood, amount: 500 }], 0);
         assert_eq!(w.place_building(1, BuildingKind::Wall, 10, 10).unwrap_err().key, "error.outside_build_radius", "ohne Bergfried");
         w.place_building(1, BuildingKind::Keep, 4, 4).unwrap();
-        let r = w.economy.building(BuildingKind::Wall).unwrap().at(1).build_radius;
+        let r = w.economy.building(BuildingKind::Wall).unwrap().build_radius;
         assert!(r > 0);
         w.place_building(1, BuildingKind::Wall, 10, 10).unwrap();
         assert_eq!(w.place_building(1, BuildingKind::Wall, 7 + r, 7).unwrap_err().key, "error.outside_build_radius");
         w.place_building(1, BuildingKind::Wall, 5 + r, 7).unwrap();
         // Ohne eigenen Umkreis (0) dürfen Gebäude beliebig weit weg.
-        assert_eq!(w.economy.building(BuildingKind::House).unwrap().at(1).build_radius, 0);
+        assert_eq!(w.economy.building(BuildingKind::House).unwrap().build_radius, 0);
         w.place_building(1, BuildingKind::House, 10 + r, 2).unwrap();
     }
 
@@ -2010,9 +2010,7 @@ mod tests {
         let mut v: serde_json::Value = serde_json::from_str(crate::economy::ECONOMY_JSON).unwrap();
         for b in v["buildings"].as_array_mut().unwrap() {
             if b["kind"] == "keep" {
-                for l in b["levels"].as_array_mut().unwrap() {
-                    l["build_radius"] = 30.into();
-                }
+                b["build_radius"] = 30.into();
             }
         }
         let eco = Economy::parse(&v.to_string()).unwrap().without_people();
