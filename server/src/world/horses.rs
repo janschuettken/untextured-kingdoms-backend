@@ -171,13 +171,13 @@ impl World {
         }
     }
 
-    /// Treffer gegen eine Einheit: zu Pferd erst aufs Pferd. Liefert `true`, wenn das
-    /// Pferd dabei fällt (der Reiter stürzt, nimmt Schaden und bleibt liegen).
-    pub(super) fn hurt_unit(&mut self, k: usize, attack: u32) -> bool {
+    /// Treffer gegen eine Einheit: zu Pferd und mit `horse` aufs Pferd, sonst auf die Einheit.
+    /// Liefert `true`, wenn das Pferd dabei fällt (der Reiter stürzt, nimmt Schaden und bleibt liegen).
+    pub(super) fn hurt_unit(&mut self, k: usize, attack: u32, horse: bool) -> bool {
         let army = &self.economy.def.army;
         let (horse_hp, fall_damage, fall_seconds) = (army.horse_hp.max(1), army.fall_damage, army.fall_seconds);
         let u = &mut self.units[k];
-        if !u.mounted {
+        if !u.mounted || !horse {
             u.damage = u.damage.saturating_add(attack);
             return false;
         }
@@ -275,9 +275,9 @@ mod tests {
         w.units.push(Unit::new(600, 1, UnitKind::Swordsman, (20.0, 20.0)));
         let k = w.units.len() - 1;
         w.units[k].mounted = true;
-        assert!(!w.hurt_unit(k, army.horse_hp - 1));
+        assert!(!w.hurt_unit(k, army.horse_hp - 1, true));
         assert_eq!(w.units[k].damage, 0, "Treffer gehen erst aufs Pferd");
-        assert!(w.hurt_unit(k, 5));
+        assert!(w.hurt_unit(k, 5, true));
         let u = &w.units[k];
         assert!(!u.mounted);
         assert_eq!(u.damage, army.fall_damage);

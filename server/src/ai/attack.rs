@@ -96,7 +96,8 @@ pub fn siege(world: &World, me: u32, target: u32, wave: &[&Unit]) -> Vec<ClientM
     for &u in &free {
         let reach = world.economy.unit(u.kind).map_or(0.0, |d| d.range);
         let is_ranged = ranged(u);
-        let immune = |f: &Unit| is_ranged && world.economy.unit(f.kind).is_some_and(|d| d.ranged_immune);
+        let udef = world.economy.unit(u.kind);
+        let immune = |f: &Unit| udef.is_none_or(|d| !world.can_damage(d, f));
         // Fernkämpfer: alles in Reichweite (auch oben auf der Mauer). Nahkämpfer: wer am Boden nahe steht.
         let near = foes
             .iter()

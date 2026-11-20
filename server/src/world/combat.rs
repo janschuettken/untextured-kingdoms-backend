@@ -4,8 +4,14 @@
 //! Einheit in Reichweite an (auch Zivilisten), solange sie stehen. Mit einem
 //! Angriffsbefehl (`order_attack`) verfolgen sie ein Ziel, bis es fällt; Nahkämpfer
 //! reißen so auch Gebäude, Mauern und Tore ein. Fernkämpfer (Reichweite
-//! über `army.melee_range`) können Einheiten mit `ranged_immune` (dem König)
-//! nichts anhaben. Nahkampf geht nur auf derselben Ebene (Boden oder Wehrgang).
+//! über `army.melee_range`) schießen nicht auf Gebäude. Nahkampf geht nur auf derselben
+//! Ebene (Boden oder Wehrgang).
+//!
+//! Schaden: jede Einheit hat Schadenswerte je Art (`damage`), Einheiten, Pferde und Gebäude
+//! (je Stufe) eine Rüstung je Art. Ein Treffer richtet (X − min) × (1 − block) an, mit der Art,
+//! die am meisten durchkommt (siehe `Economy::hit_damage`). Wen die Rüstung ganz schützt
+//! (block 1, z. B. der König gegen Fernkampf), den greift man damit gar nicht erst an.
+//! Treffer gegen Reiter gehen zu `army.horse_hit_percent` aufs Pferd, sonst auf den Reiter.
 //!
 //! Fällt ein König, scheidet sein Spieler aus: alles, was ihm gehört, verschwindet.
 //! Bleibt nur noch ein Spieler oder ein Bündnis übrig, ist das Spiel entschieden.
@@ -126,8 +132,9 @@ impl World {
         }
     }
 
-    /// Kann diese Einheit dem Ziel überhaupt schaden? Fernkämpfer nichts gegen `ranged_immune`
-    /// (den König) und nichts gegen Gebäude; Zivilisten nie.
+    /// Kann diese Einheit dem Ziel überhaupt schaden? Nicht, wenn dessen Rüstung jeden ihrer
+    /// Schadenswerte ganz abwehrt (König gegen Fernkampf); Fernkämpfer nichts gegen Gebäude;
+    /// Zivilisten nie.
     fn can_hurt(&self, u: &Unit, target: AttackTarget) -> bool {
         let Some(def) = self.economy.unit(u.kind) else { return false };
         if def.attack == 0 || def.range <= 0.0 {
@@ -135,14 +142,23 @@ impl World {
         }
         let ranged = self.economy.is_ranged(def.range);
         match target {
-            AttackTarget::Building { .. } => !ranged,
-            AttackTarget::Unit { id } => self
-                .units
-                .iter()
-                .find(|t| t.id == id)
-                .and_then(|t| self.economy.unit(t.kind))
-                .is_some_and(|t| !(ranged && t.ranged_immune)),
+            AttackTarget::Building { id } => {
+                !ranged
+                    && self
+                        .buildings
+                        .iter()
+                        .find(|b| b.id == id)
+                        .and_then(|b| self.economy.building(b.kind).map(|d| self.economy.hit_damage(def, &d.at(b.level).armor)))
+                        .is_some_and(|y| y > 0)
+            }
+            AttackTarget::Unit { id } => self.units.iter().find(|t| t.id == id).is_some_and(|t| self.can_damage(def, t)),
         }
+    }
+
+    /// Richtet diese Einheitenart gegen das Ziel etwas aus (gegen Reiter: an Pferd oder Reiter)?
+    pub(crate) fn can_damage(&self, attacker: &protocol::UnitDef, t: &Unit) -> bool {
+        let Some(tdef) = self.economy.unit(t.kind) else { return false };
+        self.economy.hit_damage(attacker, &tdef.armor) > 0 || (t.mounted && self.economy.hit_damage(attacker, &tdef.horse_armor) > 0)
     }
 
     /// Deckung (Prozent) für eine Einheit: oben auf einem Gebäude dessen `cover_percent`, sonst 0.
@@ -160,7 +176,7 @@ impl World {
             .min(100)
     }
 
-    /// Geht ein Schuss wegen Deckung daneben? (`percent` von 100)
+    /// Zufall mit `percent` von 100 (Deckung: geht der Schuss daneben? Reiter: trifft es das Pferd?)
     fn misses(&mut self, percent: u32) -> bool {
         if percent == 0 {
             return false;
@@ -208,9 +224,10 @@ impl World {
         if teams.len() < 2 && ordered.is_empty() {
             return;
         }
-        // (Ziel, Schaden, Angreifer, Fernkampf)
-        let mut hits: Vec<(usize, u32, u32, bool)> = Vec::new();
-        let mut building_hits: Vec<(u32, u32)> = Vec::new();
+        // (Ziel, Angreifer (Index), Spieler des Angreifers, Fernkampf)
+        let mut hits: Vec<(usize, usize, u32, bool)> = Vec::new();
+        // (Gebäude, Angreifer (Index))
+        let mut building_hits: Vec<(u32, usize)> = Vec::new();
         let mut shots: Vec<Shot> = Vec::new();
         // Angriffsbefehle: hingehen, verfolgen, zuschlagen.
         for k in ordered {
@@ -223,7 +240,7 @@ impl World {
             // abwehren, dann weiter zum Gebäude.
             if matches!(order, AttackTarget::Building { .. }) {
                 if let Some((j, _)) = self.nearest_foe(k, &grid, true) {
-                    let (attack, by) = (def.attack, u.owner);
+                    let by = u.owner;
                     let u = &mut self.units[k];
                     u.path.clear();
                     u.layers.clear();
@@ -231,7 +248,7 @@ impl World {
                     u.chase_timer = 0.0;
                     if u.attack_cooldown <= 0.0 {
                         u.attack_cooldown = def.attack_seconds;
-                        hits.push((j, attack, by, ranged));
+                        hits.push((j, k, by, ranged));
                     }
                     let foe = self.units[j].id;
                     self.units[k].last_foe = Some((foe, 0.0));
@@ -265,7 +282,7 @@ impl World {
                 continue;
             };
             if dist <= reach && level_ok {
-                let (attack, by) = (def.attack, u.owner);
+                let by = u.owner;
                 let u = &mut self.units[k];
                 // Fernkämpfer schießen nur im Stand (außer sie dürfen im Laufen): wer gerade noch lief, hält erst an.
                 let was_moving = !u.path.is_empty();
@@ -283,12 +300,12 @@ impl World {
                     u.attack_cooldown = def.attack_seconds;
                     match (order, j) {
                         (AttackTarget::Unit { .. }, Some((j, flight))) => {
-                            hits.push((j, attack, by, ranged));
+                            hits.push((j, k, by, ranged));
                             if let Some(f) = flight {
                                 shots.push(self.make_shot(&self.units[k], &self.units[j], f, def.range));
                             }
                         }
-                        (AttackTarget::Building { id }, _) => building_hits.push((id, attack)),
+                        (AttackTarget::Building { id }, _) => building_hits.push((id, k)),
                         _ => {}
                     }
                 }
@@ -317,7 +334,7 @@ impl World {
             let u = &self.units[k];
             let def = self.economy.unit(u.kind).expect("oben geprüft");
             if let Some((j, flight)) = self.nearest_foe(k, &grid, false) {
-                hits.push((j, def.attack, u.owner, self.economy.is_ranged(def.range)));
+                hits.push((j, k, u.owner, self.economy.is_ranged(def.range)));
                 if let Some(f) = flight {
                     shots.push(self.make_shot(u, &self.units[j], f, def.range));
                 }
@@ -331,7 +348,14 @@ impl World {
         }
         // Gebäude: Schaden, bei 0 eingerissen.
         let mut building_alerts = Vec::new();
-        for (id, attack) in building_hits {
+        for (id, k) in building_hits {
+            let Some(adef) = self.economy.unit(self.units[k].kind) else { continue };
+            let attack = self
+                .buildings
+                .iter()
+                .find(|b| b.id == id)
+                .and_then(|b| self.economy.building(b.kind).map(|d| self.economy.hit_damage(adef, &d.at(b.level).armor)))
+                .unwrap_or(0);
             let Some(b) = self.buildings.iter_mut().find(|b| b.id == id) else { continue };
             if attack > 0 && b.hp > 0 {
                 building_alerts.push((b.owner, b.kind, (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0)));
@@ -350,21 +374,29 @@ impl World {
         for (owner, kind, at) in building_alerts {
             self.alert_building_attacked(owner, kind, at);
         }
-        // Deckung: Schüsse auf Einheiten oben auf Gebäuden gehen teils daneben.
+        // Deckung: Schüsse auf Einheiten oben auf Gebäuden gehen teils daneben (vor der Rüstung).
+        // Dann trifft es bei Reitern das Pferd oder den Reiter, und dessen Rüstung zählt.
+        let horse_percent = self.economy.def.army.horse_hit_percent.min(100);
         let mut landed = Vec::with_capacity(hits.len());
-        for (j, attack, by, ranged) in hits {
+        for (j, k, by, ranged) in hits {
             let cover = if ranged { self.cover_of(&self.units[j]) } else { 0 };
-            if !self.misses(cover) {
-                landed.push((j, attack, by));
+            if self.misses(cover) {
+                continue;
+            }
+            let horse = self.units[j].mounted && self.misses(horse_percent);
+            let (Some(adef), Some(tdef)) = (self.economy.unit(self.units[k].kind), self.economy.unit(self.units[j].kind)) else { continue };
+            let attack = self.economy.hit_damage(adef, if horse { &tdef.horse_armor } else { &tdef.armor });
+            if attack > 0 {
+                landed.push((j, attack, by, horse));
             }
         }
         if landed.is_empty() {
             return;
         }
         let mut killed_by: HashMap<usize, u32> = HashMap::new();
-        for (j, attack, by) in landed {
+        for (j, attack, by, horse) in landed {
             let max = self.economy.unit(self.units[j].kind).map_or(0, |d| d.hp);
-            self.hurt_unit(j, attack);
+            self.hurt_unit(j, attack, horse);
             let u = &self.units[j];
             if u.damage >= max {
                 killed_by.entry(j).or_insert(by);
@@ -427,7 +459,7 @@ impl World {
                     if t.kind.is_civilian() && self.inside(t) {
                         continue;
                     }
-                    if (ranged && tdef.ranged_immune) || (!ranged && t.on_wall != u.on_wall) {
+                    if (!ranged && t.on_wall != u.on_wall) || !self.can_damage(def, t) {
                         continue;
                     }
                     let d = (t.pos.0 - u.pos.0).hypot(t.pos.1 - u.pos.1);
@@ -595,13 +627,116 @@ mod tests {
                 UnitKind::Knight => (140, 16, 1.0, false),
                 _ => continue,
             };
-            (u.hp, u.attack, u.range, u.ranged_immune, u.attack_seconds) = (hp, attack, range, immune, 1.5);
+            (u.hp, u.attack, u.range, u.attack_seconds) = (hp, attack, range, 1.5);
+            // Ohne Schadensliste zählt `attack`; Rüstung nur beim König (gegen Fernkampf).
+            u.damage.clear();
+            u.horse_armor.clear();
+            u.armor = if immune {
+                [protocol::DamageType::Ranged, protocol::DamageType::HeavyRanged].map(|kind| protocol::Armor { kind, min: 0, block: 1.0 }).to_vec()
+            } else {
+                Vec::new()
+            };
+        }
+        // Gebäude ohne Rüstung (die eigenen Tests dazu setzen sie selbst).
+        for b in &mut eco.def.buildings {
+            b.levels.iter_mut().for_each(|l| l.armor.clear());
         }
         let mut w = World::new(map, eco);
         w.spawn_player(1);
         w.spawn_player(2);
         w.take_events();
         w
+    }
+
+    fn armor(list: &[(protocol::DamageType, u32, f32)]) -> Vec<protocol::Armor> {
+        list.iter().map(|&(kind, min, block)| protocol::Armor { kind, min, block }).collect()
+    }
+
+    /// Schaden, den ein Schwertkämpfer (12, ohne Liste: schwerer Nahkampf) in `seconds` an einem
+    /// Speerträger mit dieser Rüstung anrichtet.
+    fn damage_on_spearman(a: Vec<protocol::Armor>, seconds: f32) -> u32 {
+        let mut w = world();
+        w.units.retain(|u| u.kind != UnitKind::King);
+        if let Some(d) = w.economy.def.units.iter_mut().find(|u| u.kind == UnitKind::Spearman) {
+            d.armor = a;
+            d.attack = 0;
+            d.hp = 100_000;
+        }
+        w.units.push(Unit::new(20_001, 2, UnitKind::Spearman, (50.0, 50.0)));
+        w.units.push(Unit::new(20_002, 1, UnitKind::Swordsman, (51.0, 50.0)));
+        run(&mut w, seconds);
+        w.units.iter().find(|u| u.id == 20_001).unwrap().damage
+    }
+
+    #[test]
+    fn ruestung_zieht_mindestwert_ab_und_wehrt_anteil_ab() {
+        use protocol::DamageType as D;
+        let open = damage_on_spearman(Vec::new(), 15.0);
+        assert!(open > 0 && open % 12 == 0, "ohne Rüstung voller Schaden: {open}");
+        let hits = open / 12;
+        // (12 − 2) × (1 − 0,5) = 5 je Treffer.
+        assert_eq!(damage_on_spearman(armor(&[(D::HeavyMelee, 2, 0.5)]), 15.0), hits * 5);
+        // Rüstung gegen eine andere Art hilft nicht.
+        assert_eq!(damage_on_spearman(armor(&[(D::Melee, 5, 0.9)]), 15.0), open);
+        // Fast alles abgewehrt: Mindestschaden 1 je Treffer; ganz abgewehrt: nichts.
+        assert_eq!(damage_on_spearman(armor(&[(D::HeavyMelee, 20, 0.0)]), 15.0), hits);
+        assert_eq!(damage_on_spearman(armor(&[(D::HeavyMelee, 0, 1.0)]), 15.0), 0);
+    }
+
+    #[test]
+    fn die_staerkste_schadensart_zaehlt() {
+        use protocol::DamageType as D;
+        let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap();
+        let mut knight = eco.unit(UnitKind::Knight).unwrap().clone();
+        knight.damage = vec![protocol::Damage { kind: D::HeavyMelee, value: 16 }, protocol::Damage { kind: D::Siege, value: 12 }];
+        let wall = armor(&[(D::HeavyMelee, 0, 0.5), (D::Siege, 0, 0.0)]);
+        assert_eq!(eco.hit_damage(&knight, &wall), 12, "gegen die Mauer zählt Belagerung");
+        assert_eq!(eco.hit_damage(&knight, &[]), 16, "sonst der schwere Nahkampf");
+    }
+
+    #[test]
+    fn treffer_auf_reiter_nach_anteil_aufs_pferd() {
+        for (percent, horse_hit, rider_hit) in [(100, true, false), (0, false, true)] {
+            let mut w = world();
+            w.units.retain(|u| u.kind != UnitKind::King);
+            w.economy.def.army.horse_hit_percent = percent;
+            w.economy.def.army.horse_hp = 100_000;
+            if let Some(d) = w.economy.def.units.iter_mut().find(|u| u.kind == UnitKind::Knight) {
+                (d.attack, d.hp) = (0, 100_000);
+            }
+            let mut knight = Unit::new(20_001, 2, UnitKind::Knight, (50.0, 50.0));
+            knight.mounted = true;
+            w.units.push(knight);
+            w.units.push(Unit::new(20_002, 1, UnitKind::Swordsman, (51.0, 50.0)));
+            run(&mut w, 10.0);
+            let k = w.units.iter().find(|u| u.id == 20_001).unwrap();
+            assert_eq!(k.horse_damage > 0, horse_hit, "{percent} %: Pferd");
+            assert_eq!(k.damage > 0, rider_hit, "{percent} %: Reiter");
+        }
+    }
+
+    #[test]
+    fn mauer_ruestung_haelt_nahkampf_auf() {
+        use protocol::DamageType as D;
+        let hit_keep = |a: Vec<protocol::Armor>| {
+            let mut w = world();
+            let keep = w.buildings.iter().find(|b| b.owner == 2 && b.kind == BuildingKind::Keep).unwrap().clone();
+            if let Some(d) = w.economy.def.buildings.iter_mut().find(|b| b.kind == BuildingKind::Keep) {
+                d.levels.iter_mut().for_each(|l| l.armor = a.clone());
+            }
+            w.units.retain(|u| !(u.owner == 2 && u.kind == UnitKind::King));
+            let s = 30_000;
+            w.units.push(Unit::new(s, 1, UnitKind::Swordsman, (keep.x as f32 - 0.6, keep.y as f32 + 1.0)));
+            let ok = w.order_attack(1, &[s], protocol::AttackTarget::Building { id: keep.id });
+            run(&mut w, 15.0);
+            let hp = w.buildings.iter().find(|b| b.id == keep.id).unwrap().hp;
+            (ok && w.units.iter().any(|u| u.id == s && u.attack_order.is_some()), keep.hp - hp)
+        };
+        let (_, open) = hit_keep(Vec::new());
+        let (_, half) = hit_keep(armor(&[(D::HeavyMelee, 0, 0.5)]));
+        assert!(open > 0 && half * 2 == open, "halbe Abwehr: halber Schaden ({half} von {open})");
+        let (attacks, none) = hit_keep(armor(&[(D::HeavyMelee, 0, 1.0)]));
+        assert!(!attacks && none == 0, "ganz abgewehrt: gar kein Angriff");
     }
 
     fn king(w: &World, p: u32) -> Option<&Unit> {

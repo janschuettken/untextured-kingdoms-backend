@@ -31,7 +31,7 @@ civilian_respawn_seconds: number,
  */
 enemy_block_radius: number, 
 /**
- * Lebenspunkte eines Pferdes. Treffer gegen einen Reiter gehen erst aufs Pferd.
+ * Lebenspunkte eines Pferdes. Treffer gegen einen Reiter gehen zu `horse_hit_percent` aufs Pferd.
  */
 horse_hp: number, 
 /**
@@ -57,4 +57,12 @@ alert_radius: number,
 /**
  * Nach einer Warnung kommt dieselbe Art frühestens nach so vielen Sekunden wieder.
  */
-alert_seconds: number, };
+alert_seconds: number, 
+/**
+ * Mindestschaden je Treffer, wenn die Rüstung fast alles abfängt (nicht bei voller Abwehr).
+ */
+min_damage: number, 
+/**
+ * Treffer gegen einen Reiter gehen zu so viel Prozent aufs Pferd, sonst auf den Reiter.
+ */
+horse_hit_percent: number, };

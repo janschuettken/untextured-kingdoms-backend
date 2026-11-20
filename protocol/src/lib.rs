@@ -920,6 +920,53 @@ pub enum Good {
     Salve,
 }
 
+/// Schadensart eines Angriffs. Jede Rüstung wehrt jede Art unterschiedlich gut ab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum DamageType {
+    /// Normaler Nahkampf (Speerträger, König).
+    Melee,
+    /// Schwerer Nahkampf (Schwertkämpfer, Ritter).
+    HeavyMelee,
+    /// Normaler Fernkampf (Bogen).
+    Ranged,
+    /// Schwerer Fernkampf (Armbrust).
+    HeavyRanged,
+    /// Belagerung (Belagerungsgeräte; der Ritter reißt so Mauern ein).
+    Siege,
+    /// Feuer (kommt noch: brennende Gebäude, Feuerpfeile).
+    Fire,
+}
+
+impl DamageType {
+    pub const ALL: [DamageType; 6] =
+        [DamageType::Melee, DamageType::HeavyMelee, DamageType::Ranged, DamageType::HeavyRanged, DamageType::Siege, DamageType::Fire];
+}
+
+/// Ein Schadenswert einer Einheit: so viel Schaden `value` dieser Art je Treffer.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Damage {
+    #[serde(rename = "type")]
+    pub kind: DamageType,
+    #[serde(default)]
+    pub value: u32,
+}
+
+/// Rüstung gegen eine Schadensart: erst wird `min` abgezogen, vom Rest wehrt sie den Anteil
+/// `block` ab (0 = nichts, 1 = alles, immun). Schaden = (X − min) × (1 − block).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Armor {
+    #[serde(rename = "type")]
+    pub kind: DamageType,
+    #[serde(default)]
+    pub min: u32,
+    #[serde(default)]
+    pub block: f32,
+}
+
 /// Menge einer Ware.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1109,6 +1156,8 @@ pub struct BuildingLevel {
     /// Deckung für Einheiten oben auf dem Gebäude: so viel Prozent der Fernkampf-Schüsse
     /// auf sie gehen daneben. 0 = keine Deckung.
     pub cover_percent: u32,
+    /// Rüstung des Gebäudes auf dieser Stufe je Schadensart. Fehlt eine Art, trifft sie voll.
+    pub armor: Vec<Armor>,
     /// Höchstabstand zum eigenen Bergfried (Felder, ab dessen Mitte): die ganze Fläche
     /// muss in diesem Umkreis liegen (beim Bauen bzw. beim Ausbau auf diese Stufe). 0 = überall.
     pub build_radius: u32,
@@ -1336,9 +1385,20 @@ pub struct UnitDef {
     pub speed: f32,
     #[serde(default)]
     pub hp: u32,
-    /// Schaden je Treffer (für den Kampf, kommt noch).
+    /// Größter Schaden je Treffer (aus `damage`; nur wenn `damage` leer ist, zählt dieser Wert
+    /// selbst, als Nah- oder Fernkampf je nach Reichweite).
     #[serde(default)]
     pub attack: u32,
+    /// Schaden je Treffer nach Art. Gegen ein Ziel zählt die Art, die nach dessen Rüstung
+    /// am meisten anrichtet.
+    #[serde(default)]
+    pub damage: Vec<Damage>,
+    /// Rüstung der Einheit je Schadensart. Fehlt eine Art, trifft sie voll.
+    #[serde(default)]
+    pub armor: Vec<Armor>,
+    /// Rüstung des Pferdes, wenn die Einheit reitet.
+    #[serde(default)]
+    pub horse_armor: Vec<Armor>,
     /// Reichweite in Feldern, 1 = Nahkampf (für den Kampf, kommt noch).
     #[serde(default)]
     pub range: f32,
@@ -1348,10 +1408,6 @@ pub struct UnitDef {
     /// Essen je Zahltag (Einheiten aus `population.food`). Fehlt es, laufen die Soldaten langsamer.
     #[serde(default)]
     pub food: u32,
-    /// Fernkämpfer (Reichweite über `army.melee_range`) können diese Einheit nicht verletzen
-    /// (der König: nur Nahkämpfer können ihn töten).
-    #[serde(default)]
-    pub ranged_immune: bool,
     /// Kann auf ein Pferd aus der Pferdezucht steigen.
     #[serde(default)]
     pub can_ride: bool,
@@ -1397,7 +1453,7 @@ pub struct ArmyDef {
     /// Bauen, Ausbauen und Reparieren nur, wenn in diesem Umkreis (Felder) kein feindlicher
     /// Soldat oder König steht. 0 = immer erlaubt.
     pub enemy_block_radius: f32,
-    /// Lebenspunkte eines Pferdes. Treffer gegen einen Reiter gehen erst aufs Pferd.
+    /// Lebenspunkte eines Pferdes. Treffer gegen einen Reiter gehen zu `horse_hit_percent` aufs Pferd.
     pub horse_hp: u32,
     /// Tempo zu Pferd (Felder pro Sekunde); wer zu Fuß schneller ist, bleibt so schnell.
     pub horse_speed: f32,
@@ -1411,6 +1467,10 @@ pub struct ArmyDef {
     pub alert_radius: f32,
     /// Nach einer Warnung kommt dieselbe Art frühestens nach so vielen Sekunden wieder.
     pub alert_seconds: f32,
+    /// Mindestschaden je Treffer, wenn die Rüstung fast alles abfängt (nicht bei voller Abwehr).
+    pub min_damage: u32,
+    /// Treffer gegen einen Reiter gehen zu so viel Prozent aufs Pferd, sonst auf den Reiter.
+    pub horse_hit_percent: u32,
 }
 
 impl Default for ArmyDef {
@@ -1429,6 +1489,8 @@ impl Default for ArmyDef {
             heal_seconds: 2.0,
             alert_radius: 80.0,
             alert_seconds: 30.0,
+            min_damage: 1,
+            horse_hit_percent: 70,
         }
     }
 }

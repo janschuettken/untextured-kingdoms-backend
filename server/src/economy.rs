@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use protocol::{BuildingDef, BuildingKind, EconomyDef, Good, GoodAmount, RecipeDef, ResourceKind, UnitDef, UnitKind};
+use protocol::{BuildingDef, BuildingKind, Damage, DamageType, EconomyDef, Good, GoodAmount, RecipeDef, ResourceKind, UnitDef, UnitKind};
 
 /// Kampfwerte des Königs, wenn die Balancing-Datei keine hat. Sein Tempo kommt aus `movement.king_speed`.
 fn default_king(speed: f32) -> UnitDef {
@@ -19,10 +19,16 @@ fn default_king(speed: f32) -> UnitDef {
         speed,
         hp: 300,
         attack: 14,
+        damage: Vec::new(),
+        // Nur Nahkämpfer können ihn töten.
+        armor: vec![
+            protocol::Armor { kind: DamageType::Ranged, min: 0, block: 1.0 },
+            protocol::Armor { kind: DamageType::HeavyRanged, min: 0, block: 1.0 },
+        ],
+        horse_armor: Vec::new(),
         range: 1.2,
         upkeep: 0,
         food: 0,
-        ranged_immune: true,
         can_ride: false,
         mounted: false,
         attack_standing: true,
@@ -67,12 +73,13 @@ fn builtin_def() -> Option<EconomyDef> {
 }
 
 /// Aktueller Aufbau der Balancing-Datei.
-pub const FORMAT: u32 = 2;
+/// Format 3: Schadensarten und Rüstung (`damage`, `armor`, `horse_armor`, Stufe `armor`).
+pub const FORMAT: u32 = 3;
 
 /// Werte, die je Gebäudestufe gelten. Fehlen sie in einer Stufe, gilt die Stufe davor.
-const LEVEL_FIELDS: [&str; 14] = [
+const LEVEL_FIELDS: [&str; 15] = [
     "max_hp", "workers", "gather_radius", "service_radius", "walkway", "stairs", "gate_radius", "garrison",
-    "cover_percent", "build_radius", "road_speed_percent", "hub_capacity", "storage_inputs", "storage_outputs",
+    "cover_percent", "build_radius", "road_speed_percent", "hub_capacity", "storage_inputs", "storage_outputs", "armor",
 ];
 
 /// Bringt ältere Balancing-Dateien in den aktuellen Aufbau (Format 2: Werte je Stufe).
@@ -94,6 +101,17 @@ pub fn migrate(v: &mut serde_json::Value) {
             let missing = u.get("attack_seconds").and_then(Value::as_f64).is_none_or(|x| x <= 0.0);
             if missing {
                 u.insert("attack_seconds".into(), Value::from(army_attack.unwrap_or(1.5)));
+            }
+            // Format 2: `ranged_immune` (König) wird zur Rüstung, die Fernkampf ganz abwehrt.
+            // Ausdrücklich nicht immun: neutrale Einträge, damit nicht die eingebaute Rüstung kommt.
+            let immune = u.remove("ranged_immune").and_then(|x| x.as_bool());
+            if let Some(immune) = immune.filter(|_| !u.contains_key("armor")) {
+                let king = u.get("kind").and_then(Value::as_str) == Some("king");
+                let block = if immune { 1 } else { 0 };
+                if immune || king {
+                    let entry = |t: &str| serde_json::json!({"type": t, "block": block});
+                    u.insert("armor".into(), Value::Array(vec![entry("ranged"), entry("heavy_ranged")]));
+                }
             }
         }
     }
@@ -204,6 +222,7 @@ impl Economy {
     /// Liest und prüft die Wirtschaftsdaten.
     pub fn parse(json: &str) -> Result<Economy, String> {
         let mut value: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("economy.json: {e}"))?;
+        let old_format = value.get("format").and_then(serde_json::Value::as_u64).unwrap_or(1) < 3;
         migrate(&mut value);
         let mut def: EconomyDef = serde_json::from_value(value).map_err(|e| format!("economy.json: {e}"))?;
         // Ältere Balancing-Dateien kennen den König noch nicht: Grundwerte einsetzen.
@@ -219,11 +238,15 @@ impl Economy {
         // Zivilisten ohne Werte: Grundwerte (nur Lebenspunkte).
         for (kind, hp) in [(UnitKind::Worker, 30), (UnitKind::Carrier, 30), (UnitKind::Cart, 60), (UnitKind::TradeCart, 60)] {
             if !def.units.iter().any(|u| u.kind == kind) {
-                def.units.push(UnitDef { kind, hp, ranged_immune: false, attack: 0, range: 0.0, ..default_king(1.0) });
+                def.units.push(UnitDef { kind, hp, armor: Vec::new(), attack: 0, range: 0.0, ..default_king(1.0) });
             }
         }
         add_apothecary(&mut def);
         fill_from_builtin(&mut def);
+        if old_format {
+            add_armor_from_builtin(&mut def);
+        }
+        fill_damage(&mut def);
         let mut buildings = HashMap::new();
         for (i, b) in def.buildings.iter().enumerate() {
             if buildings.insert(b.kind, i).is_some() {
@@ -324,6 +347,22 @@ impl Economy {
             }
             if !(u.attack_seconds > 0.0 && u.attack_seconds.is_finite()) {
                 return Err(format!("Einheit {:?}: Sekunden zwischen zwei Angriffen müssen größer als 0 sein", u.kind));
+            }
+        }
+        let armor_ok = |a: &[protocol::Armor]| {
+            a.iter().enumerate().all(|(i, x)| (0.0..=1.0).contains(&x.block) && !a[..i].iter().any(|y| y.kind == x.kind))
+        };
+        for u in &def.units {
+            if !(armor_ok(&u.armor) && armor_ok(&u.horse_armor)) {
+                return Err(format!("Einheit {:?}: Rüstung braucht Abwehr zwischen 0 und 1, jede Schadensart nur einmal", u.kind));
+            }
+            if u.damage.iter().enumerate().any(|(i, d)| u.damage[..i].iter().any(|e| e.kind == d.kind)) {
+                return Err(format!("Einheit {:?}: jede Schadensart nur einmal", u.kind));
+            }
+        }
+        for b in &def.buildings {
+            if let Some(n) = b.levels.iter().position(|l| !armor_ok(&l.armor)) {
+                return Err(format!("Gebäude {:?} Stufe {}: Rüstung braucht Abwehr zwischen 0 und 1, jede Schadensart nur einmal", b.kind, n + 1));
             }
         }
         for b in &def.buildings {
@@ -437,6 +476,38 @@ impl Economy {
         self.def.units.iter().find(|u| u.kind == kind)
     }
 
+    /// Schadenswerte einer Einheit nach Art. Ohne Liste zählt `attack` (Nah- oder Fernkampf
+    /// je nach Reichweite).
+    pub fn damage_of(&self, def: &UnitDef) -> Vec<Damage> {
+        if !def.damage.is_empty() {
+            return def.damage.clone();
+        }
+        if def.attack == 0 {
+            return Vec::new();
+        }
+        vec![Damage { kind: default_damage_type(def.kind, self.is_ranged(def.range)), value: def.attack }]
+    }
+
+    /// Schaden `x` der Art `kind` gegen diese Rüstung: Y = (X − min) × (1 − block), gerundet.
+    /// Wehrt die Rüstung nicht alles ab, bleibt mindestens `army.min_damage`.
+    pub fn damage_against(&self, x: u32, kind: DamageType, armor: &[protocol::Armor]) -> u32 {
+        if x == 0 {
+            return 0;
+        }
+        let Some(a) = armor.iter().find(|a| a.kind == kind) else { return x };
+        let block = a.block.clamp(0.0, 1.0);
+        if block >= 1.0 {
+            return 0;
+        }
+        let y = (x.saturating_sub(a.min) as f32 * (1.0 - block)).round() as u32;
+        y.max(self.def.army.min_damage.min(x))
+    }
+
+    /// Schaden eines Treffers dieser Einheit gegen diese Rüstung: die Art, die am meisten anrichtet.
+    pub fn hit_damage(&self, attacker: &UnitDef, armor: &[protocol::Armor]) -> u32 {
+        self.damage_of(attacker).iter().map(|d| self.damage_against(d.value, d.kind, armor)).max().unwrap_or(0)
+    }
+
     /// Zählt ein Angriff mit dieser Reichweite als Fernkampf?
     pub fn is_ranged(&self, range: f32) -> bool {
         range > self.def.army.melee_range
@@ -444,6 +515,63 @@ impl Economy {
 
     pub fn recipe(&self, id: &str) -> Option<&RecipeDef> {
         self.def.recipes.iter().find(|r| r.id == id)
+    }
+}
+
+/// Grund-Schadensart einer Einheit, wenn die Datei nur `attack` kennt.
+fn default_damage_type(kind: UnitKind, ranged: bool) -> DamageType {
+    match (kind, ranged) {
+        (UnitKind::Crossbowman, _) => DamageType::HeavyRanged,
+        (_, true) => DamageType::Ranged,
+        (UnitKind::Swordsman | UnitKind::Knight, _) => DamageType::HeavyMelee,
+        _ => DamageType::Melee,
+    }
+}
+
+/// Schadensliste und `attack` passend machen: ohne Liste wird `attack` zur Liste (eine Art,
+/// je nach Einheit), mit Liste ist `attack` der größte Wert darin.
+fn fill_damage(def: &mut EconomyDef) {
+    let melee_range = def.army.melee_range;
+    for u in &mut def.units {
+        u.damage.retain(|d| d.value > 0);
+        if u.damage.is_empty() && u.attack > 0 && u.range > 0.0 {
+            u.damage.push(Damage { kind: default_damage_type(u.kind, u.range > melee_range), value: u.attack });
+        }
+        if !u.damage.is_empty() {
+            u.attack = u.damage.iter().map(|d| d.value).max().unwrap_or(0);
+        }
+    }
+}
+
+/// Datei vor Format 3 kennt noch keine Rüstung: die eingebauten Rüstungen übernehmen (Einheiten,
+/// Pferde, Gebäude je Stufe) und Schadensarten, die die Einheit noch nicht hat (Ritter: Belagerung).
+/// Die eigenen Werte der Datei (Lebenspunkte, Schaden …) bleiben.
+fn add_armor_from_builtin(def: &mut EconomyDef) {
+    let Some(base) = builtin_def() else { return };
+    let mut base = base;
+    fill_damage(&mut base);
+    let melee_range = def.army.melee_range;
+    for u in &mut def.units {
+        let Some(b) = base.units.iter().find(|b| b.kind == u.kind) else { continue };
+        if u.armor.is_empty() {
+            u.armor = b.armor.clone();
+        }
+        if u.horse_armor.is_empty() {
+            u.horse_armor = b.horse_armor.clone();
+        }
+        if u.damage.is_empty() && u.attack > 0 && u.range > 0.0 {
+            let own = default_damage_type(u.kind, u.range > melee_range);
+            u.damage.push(Damage { kind: own, value: u.attack });
+            u.damage.extend(b.damage.iter().filter(|d| d.kind != own).copied());
+        }
+    }
+    for d in &mut def.buildings {
+        let Some(b) = base.buildings.iter().find(|b| b.kind == d.kind) else { continue };
+        for (i, l) in d.levels.iter_mut().enumerate() {
+            if l.armor.is_empty() {
+                l.armor = b.at(i as u32 + 1).armor.clone();
+            }
+        }
     }
 }
 
@@ -700,6 +828,61 @@ mod tests {
         let eco = Economy::parse(&v.to_string()).unwrap();
         assert!(eco.building(BuildingKind::HorseFarm).is_some());
         assert!(eco.def.goods.contains(&protocol::Good::Horse));
+    }
+
+    #[test]
+    fn alte_datei_bekommt_ruestung_und_schadensarten() {
+        let mut v: serde_json::Value = serde_json::from_str(ECONOMY_JSON).unwrap();
+        v["format"] = serde_json::Value::from(2);
+        for u in v["units"].as_array_mut().unwrap() {
+            let u = u.as_object_mut().unwrap();
+            for k in ["damage", "armor", "horse_armor"] {
+                u.remove(k);
+            }
+            let king = u["kind"] == "king";
+            u.insert("ranged_immune".into(), serde_json::Value::Bool(king));
+            if u["kind"] == "knight" {
+                u.insert("attack".into(), serde_json::Value::from(33));
+            }
+        }
+        for b in v["buildings"].as_array_mut().unwrap() {
+            for l in b["levels"].as_array_mut().unwrap() {
+                l.as_object_mut().unwrap().remove("armor");
+            }
+        }
+        let eco = Economy::parse(&v.to_string()).unwrap();
+        let builtin = Economy::parse(ECONOMY_JSON).unwrap();
+        let knight = eco.unit(UnitKind::Knight).unwrap();
+        assert_eq!(knight.damage[0], Damage { kind: DamageType::HeavyMelee, value: 33 }, "eigener Angriff bleibt");
+        assert!(knight.damage.iter().any(|d| d.kind == DamageType::Siege), "Belagerung aus den eingebauten Werten");
+        assert_eq!(knight.armor, builtin.unit(UnitKind::Knight).unwrap().armor);
+        assert_eq!(knight.horse_armor, builtin.unit(UnitKind::Knight).unwrap().horse_armor);
+        let king = eco.unit(UnitKind::King).unwrap();
+        assert_eq!(eco.hit_damage(eco.unit(UnitKind::Archer).unwrap(), &king.armor), 0, "König immun gegen Fernkampf");
+        let wall = eco.building(BuildingKind::Wall).unwrap();
+        assert_eq!(wall.at(2).armor, builtin.building(BuildingKind::Wall).unwrap().at(2).armor);
+        // Ausdrücklich nicht immun: keine eingebaute Immunität.
+        for u in v["units"].as_array_mut().unwrap() {
+            if u["kind"] == "king" {
+                u["ranged_immune"] = serde_json::Value::Bool(false);
+            }
+        }
+        let eco = Economy::parse(&v.to_string()).unwrap();
+        let king = eco.unit(UnitKind::King).unwrap();
+        assert!(eco.hit_damage(eco.unit(UnitKind::Archer).unwrap(), &king.armor) > 0);
+        // Und nach dem Speichern (Format 3) bleibt es so.
+        let again = Economy::parse(&eco.to_json()).unwrap();
+        assert!(again.hit_damage(again.unit(UnitKind::Archer).unwrap(), &again.unit(UnitKind::King).unwrap().armor) > 0);
+    }
+
+    #[test]
+    fn schaden_gegen_ruestung() {
+        let eco = Economy::parse(ECONOMY_JSON).unwrap();
+        let a = |min, block| [protocol::Armor { kind: DamageType::Melee, min, block }];
+        assert_eq!(eco.damage_against(20, DamageType::Melee, &a(4, 0.5)), 8);
+        assert_eq!(eco.damage_against(20, DamageType::Ranged, &a(4, 0.5)), 20);
+        assert_eq!(eco.damage_against(3, DamageType::Melee, &a(5, 0.0)), eco.def.army.min_damage);
+        assert_eq!(eco.damage_against(30, DamageType::Melee, &a(0, 1.0)), 0);
     }
 
     #[test]
