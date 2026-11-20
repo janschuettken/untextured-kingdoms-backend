@@ -166,6 +166,33 @@ struct GameFile {
     save: Option<SaveGame>,
 }
 
+/// Ein festgehaltener Spielstand, der noch in die Datei muss.
+pub struct PendingSave {
+    file: GameFile,
+    /// Laufende Nummer: ein älterer Stand überschreibt nie einen neueren.
+    seq: u64,
+    dir: PathBuf,
+    path: PathBuf,
+    state: Arc<Match>,
+}
+
+impl PendingSave {
+    pub fn write(self) -> Result<(), String> {
+        let mut written = self.state.saved_seq.lock().unwrap();
+        if *written > self.seq {
+            return Ok(());
+        }
+        let json = serde_json::to_string(&self.file).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
+        let tmp = self.path.with_extension("json.tmp");
+        std::fs::write(&tmp, json)
+            .and_then(|_| std::fs::rename(&tmp, &self.path))
+            .map_err(|e| format!("{}: {e}", self.path.display()))?;
+        *written = self.seq;
+        Ok(())
+    }
+}
+
 struct LobbyConn {
     token: String,
     tx: tokio::sync::mpsc::Sender<LobbyServerMsg>,
@@ -281,14 +308,22 @@ impl Hub {
 
     /// Laufendes Spiel in seine Datei schreiben (erst `.tmp`, dann umbenennen).
     pub fn save_game(&self, game: &Game) -> Result<(), String> {
-        let Some(m) = game.running.get() else {
-            return Ok(());
-        };
+        match self.prepare_save(game) {
+            Some(save) => save.write(),
+            None => Ok(()),
+        }
+    }
+
+    /// Den Stand eines Spiels festhalten (kurz unter der Sperre der Welt). Das teure
+    /// Umwandeln in JSON und Schreiben macht `PendingSave::write`, gern in einem anderen Thread.
+    pub fn prepare_save(&self, game: &Game) -> Option<PendingSave> {
+        let m = game.running.get()?;
         let (host, slots) = {
             let meta = game.meta.lock().unwrap();
             (meta.host.clone(), meta.slots.clone())
         };
         let save = m.world.lock().unwrap().to_save(&m.map_name);
+        let seq = m.save_seq.fetch_add(1, Ordering::Relaxed) + 1;
         let file = GameFile {
             id: game.id,
             map: m.map_name.clone(),
@@ -298,14 +333,7 @@ impl Hub {
             speed: m.game_speed.load(Ordering::Relaxed),
             save: Some(save),
         };
-        let json = serde_json::to_string(&file).map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(&self.saves_dir)
-            .map_err(|e| format!("{}: {e}", self.saves_dir.display()))?;
-        let path = self.save_path(game.id);
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json)
-            .and_then(|_| std::fs::rename(&tmp, &path))
-            .map_err(|e| format!("{}: {e}", path.display()))
+        Some(PendingSave { file, seq, dir: self.saves_dir.clone(), path: self.save_path(game.id), state: m.clone() })
     }
 
     /// Alle laufenden Spiele speichern (beim Herunterfahren des Servers).

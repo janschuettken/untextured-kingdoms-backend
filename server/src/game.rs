@@ -26,6 +26,7 @@ use protocol::{ClientMsg, MapRef, PlayerInfo, ServerMsg, UnitInfo, UnitState};
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 
+use crate::profile::{Phase, PhaseTimes, PHASE_COUNT, PHASE_NAMES};
 use crate::{
     ai::{self, Computer},
     lobby::{Game, Hub},
@@ -88,6 +89,11 @@ pub struct Match {
     pub(crate) computers: Mutex<Vec<Computer>>,
     /// Wie lange die letzten Ticks gedauert haben (Serverauslastung für den Admin).
     pub load: Mutex<TickLoad>,
+    /// Spielstände: zuletzt vergebene Nummer und (unter dieser Sperre) zuletzt geschriebene.
+    pub save_seq: AtomicU64,
+    pub saved_seq: Mutex<u64>,
+    /// Läuft gerade ein automatisches Speichern im Hintergrund?
+    saving: Arc<AtomicBool>,
 }
 
 /// Rechenzeit der letzten Ticks eines Spiels, in Mikrosekunden.
@@ -95,10 +101,15 @@ pub struct Match {
 pub struct TickLoad {
     /// Die letzten LOAD_WINDOW Ticks, neueste hinten.
     recent: std::collections::VecDeque<u32>,
+    /// Dieselben Ticks, aufgeteilt nach Teilschritten.
+    phases: std::collections::VecDeque<PhaseTimes>,
     /// Ticks seit dem Start und davon zu langsame (über Budget).
     pub total: u64,
     pub late_total: u64,
 }
+
+/// Rechenzeit für Computergegner je Tick; wer danach noch dran wäre, denkt im nächsten Tick.
+const AI_TICK_BUDGET: Duration = Duration::from_millis(8);
 
 /// So viele Ticks merkt sich die Auslastung (60 s).
 const LOAD_WINDOW: usize = 60 * TICK_RATE as usize;
@@ -121,19 +132,46 @@ pub struct LoadSummary {
     pub late_minute: u32,
     pub ticks_total: u64,
     pub late_total: u64,
+    /// Teilschritte der letzten Minute, teuerste Spitze zuerst (nur die mit Rechenzeit).
+    pub phases: Vec<PhaseLoad>,
+}
+
+/// Ein Teilschritt des Ticks in der letzten Minute (Millisekunden).
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+pub struct PhaseLoad {
+    /// Schlüssel, z. B. "combat" (Client übersetzt `load.phase.<name>`); "other" = nicht zugeordnet.
+    pub name: &'static str,
+    pub avg_ms: f32,
+    pub max_ms: f32,
+    /// Anteil am langsamsten Tick der Minute.
+    pub peak_ms: f32,
+    /// Bei so vielen zu langsamen Ticks war dieser Teil der größte.
+    pub late_lead: u32,
 }
 
 impl TickLoad {
     fn new() -> TickLoad {
-        TickLoad { recent: std::collections::VecDeque::with_capacity(LOAD_WINDOW), total: 0, late_total: 0 }
+        TickLoad {
+            recent: std::collections::VecDeque::with_capacity(LOAD_WINDOW),
+            phases: std::collections::VecDeque::with_capacity(LOAD_WINDOW),
+            total: 0,
+            late_total: 0,
+        }
     }
 
+    #[cfg(test)]
     pub fn record(&mut self, took: Duration) {
+        self.record_phases(took, PhaseTimes::default());
+    }
+
+    pub fn record_phases(&mut self, took: Duration, phases: PhaseTimes) {
         let us = took.as_micros().min(u32::MAX as u128) as u32;
         if self.recent.len() == LOAD_WINDOW {
             self.recent.pop_front();
+            self.phases.pop_front();
         }
         self.recent.push_back(us);
+        self.phases.push_back(phases);
         self.total += 1;
         if took > Duration::from_secs(1) / TICK_RATE {
             self.late_total += 1;
@@ -172,7 +210,56 @@ impl TickLoad {
             late_minute: self.recent.iter().filter(|&&v| v as f32 > budget_us).count() as u32,
             ticks_total: self.total,
             late_total: self.late_total,
+            phases: self.phase_summary(budget_us),
         }
+    }
+
+    /// Je Teilschritt Schnitt, Spitze und Anteil am langsamsten Tick der letzten Minute.
+    /// Was keinem Teil zugeordnet ist (z. B. Warten auf Sperren), steht unter "other".
+    fn phase_summary(&self, budget_us: f32) -> Vec<PhaseLoad> {
+        const OTHER: usize = PHASE_COUNT;
+        let n = self.recent.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let row = |total: u32, p: &PhaseTimes| {
+            let mut r = [0u32; PHASE_COUNT + 1];
+            r[..PHASE_COUNT].copy_from_slice(&p.0);
+            r[OTHER] = total.saturating_sub(p.0.iter().sum());
+            r
+        };
+        let mut sum = [0u64; PHASE_COUNT + 1];
+        let mut max = [0u32; PHASE_COUNT + 1];
+        let mut lead = [0u32; PHASE_COUNT + 1];
+        let mut slowest = (0u32, [0u32; PHASE_COUNT + 1]);
+        for (&total, p) in self.recent.iter().zip(self.phases.iter()) {
+            let r = row(total, p);
+            for i in 0..=PHASE_COUNT {
+                sum[i] += r[i] as u64;
+                max[i] = max[i].max(r[i]);
+            }
+            if total as f32 > budget_us {
+                if let Some((i, _)) = r.iter().enumerate().max_by_key(|&(_, v)| *v) {
+                    lead[i] += 1;
+                }
+            }
+            if total >= slowest.0 {
+                slowest = (total, r);
+            }
+        }
+        let ms = |us: f32| (us / 10.0).round() / 100.0;
+        let mut list: Vec<PhaseLoad> = (0..=PHASE_COUNT)
+            .filter(|&i| max[i] > 0)
+            .map(|i| PhaseLoad {
+                name: if i == OTHER { "other" } else { PHASE_NAMES[i] },
+                avg_ms: ms(sum[i] as f32 / n as f32),
+                max_ms: ms(max[i] as f32),
+                peak_ms: ms(slowest.1[i] as f32),
+                late_lead: lead[i],
+            })
+            .collect();
+        list.sort_by(|a, b| b.max_ms.total_cmp(&a.max_ms).then(b.avg_ms.total_cmp(&a.avg_ms)));
+        list
     }
 }
 
@@ -192,6 +279,9 @@ impl Match {
             next_conn: AtomicU64::new(1),
             computers: Mutex::new(Vec::new()),
             load: Mutex::new(TickLoad::new()),
+            save_seq: AtomicU64::new(0),
+            saved_seq: Mutex::new(0),
+            saving: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -345,28 +435,44 @@ fn game_loop(hub: Arc<Hub>, game: Arc<Game>, state: Arc<Match>) {
         tick += 1;
         // Gemessen wird alles, was der Tick tut (auch das Speichern einmal pro Minute).
         let started = Instant::now();
-        if tick.is_multiple_of(AUTOSAVE_SECONDS * TICK_RATE as u64) {
-            if let Err(e) = hub.save_game(&game) {
-                warn!(
-                    "Spiel {}: automatisches Speichern fehlgeschlagen: {e}",
-                    game.id
-                );
+        let mut phases = PhaseTimes::default();
+        if tick.is_multiple_of(AUTOSAVE_SECONDS * TICK_RATE as u64) && !state.saving.load(Ordering::Relaxed) {
+            // Im Tick nur den Stand festhalten; JSON und Datei schreibt ein eigener Thread,
+            // sonst gibt es einmal pro Minute eine Lastspitze.
+            if let Some(save) = phases.time(Phase::Save, || hub.prepare_save(&game)) {
+                let (saving, id) = (state.saving.clone(), game.id);
+                saving.store(true, Ordering::Relaxed);
+                std::thread::spawn(move || {
+                    if let Err(e) = save.write() {
+                        warn!("Spiel {id}: automatisches Speichern fehlgeschlagen: {e}");
+                    }
+                    saving.store(false, Ordering::Relaxed);
+                });
             }
         }
-        step(&state, tick);
-        state.load.lock().unwrap().record(started.elapsed());
+        step(&state, tick, &mut phases);
+        state.load.lock().unwrap().record_phases(started.elapsed(), phases);
     }
     info!("Spiel {} beendet", game.id);
 }
 
-fn step(state: &Match, tick: u64) {
+fn step(state: &Match, tick: u64, phases: &mut PhaseTimes) {
+    let sending;
+    let mut castle_took = Duration::ZERO;
     let (units, stocks, paths, infos, castles, game_seconds) = {
         let mut world = state.world.lock().unwrap();
         let speed = state.effective_speed() as f32 / 100.0;
         let dt = speed / TICK_RATE as f32;
+        let thinking = Instant::now();
         // Computergegner geben ihre Befehle wie Menschen, über denselben Weg.
         for computer in state.computers.lock().unwrap().iter_mut() {
             if world.is_eliminated(computer.player) {
+                continue;
+            }
+            // Hat ein anderer Computergegner diesen Tick schon gut gefüllt, denkt dieser im
+            // nächsten nach (50 ms später merkt niemand), statt eine Lastspitze zu machen.
+            if computer.due(dt) && thinking.elapsed() > AI_TICK_BUDGET {
+                computer.postpone(dt);
                 continue;
             }
             // Der Computer plant seine Wirtschaft mit selbst tragenden Arbeitern.
@@ -377,7 +483,11 @@ fn step(state: &Match, tick: u64) {
                 }
             }
         }
+        phases.add(Phase::Ai, thinking.elapsed());
+        world.phase_us = PhaseTimes::default();
         world.step(dt);
+        phases.merge(&world.phase_us);
+        sending = Instant::now();
         // Unter dem Lock verschicken, damit neue Clients nichts doppelt oder gar nicht sehen.
         for event in world.take_events() {
             let _ = state.ticks.send(event);
@@ -400,10 +510,14 @@ fn step(state: &Match, tick: u64) {
         // Burg geschlossen? Alle zwei Sekunden für jeden verbundenen Spieler.
         let castles: HashMap<u32, protocol::CastleStatus> = if tick.is_multiple_of(CASTLE_CHECK_SECONDS * TICK_RATE as u64) {
             let players = players_of(&state.clients.lock().unwrap());
-            players.into_iter().map(|p| (p, world.castle_status(p))).collect()
+            let castle = Instant::now();
+            let list = players.into_iter().map(|p| (p, world.castle_status(p))).collect();
+            castle_took = castle.elapsed();
+            list
         } else {
             HashMap::new()
         };
+        phases.add(Phase::Castle, castle_took);
         (world.snapshot(), world.take_dirty_stocks(), paths, infos, castles, world.game_seconds())
     };
     let mut clients = state.clients.lock().unwrap();
@@ -465,6 +579,7 @@ fn step(state: &Match, tick: u64) {
             }
         }
     }
+    phases.add(Phase::Send, sending.elapsed().saturating_sub(castle_took));
 }
 
 #[derive(serde::Deserialize)]
@@ -997,6 +1112,29 @@ mod tests {
         }
         assert_eq!(l.summary().late_minute, 0);
         assert_eq!(l.summary().late_total, 1);
+    }
+
+    #[test]
+    fn auslastung_nennt_die_teilschritte_der_spitze() {
+        let mut l = TickLoad::new();
+        let mut calm = PhaseTimes::default();
+        calm.add(Phase::Combat, Duration::from_millis(2));
+        for _ in 0..10 {
+            l.record_phases(Duration::from_millis(3), calm);
+        }
+        let mut spike = PhaseTimes::default();
+        spike.add(Phase::Ai, Duration::from_millis(55));
+        spike.add(Phase::Combat, Duration::from_millis(3));
+        l.record_phases(Duration::from_millis(60), spike);
+        let phases = l.summary().phases;
+        assert_eq!(phases[0].name, "ai");
+        assert_eq!((phases[0].max_ms, phases[0].peak_ms, phases[0].late_lead), (55.0, 55.0, 1));
+        assert_eq!(phases[0].avg_ms, 5.0);
+        let combat = phases.iter().find(|p| p.name == "combat").unwrap();
+        assert_eq!((combat.max_ms, combat.peak_ms, combat.late_lead), (3.0, 3.0, 0));
+        // Was keinem Teil zugeordnet ist, steht unter "other" (hier je Tick 1 bzw. 2 ms).
+        let other = phases.iter().find(|p| p.name == "other").unwrap();
+        assert_eq!((other.max_ms, other.peak_ms), (2.0, 2.0));
     }
 
     #[test]

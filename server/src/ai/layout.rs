@@ -766,6 +766,10 @@ pub fn find_site(
     near: Option<(i64, i64)>,
 ) -> Option<(u32, u32, u8)> {
     let def = world.economy.building(kind)?;
+    // Schon so viele, wie erlaubt: nirgends ein Platz, ohne die ganze Gegend abzusuchen.
+    if world.check_limit(player, kind).is_err() {
+        return None;
+    }
     let mut want: Vec<ResourceKind> = def.gathers.clone();
     if let Some(p) = &def.placement {
         want.extend(p.resources.iter().copied());
@@ -796,13 +800,10 @@ pub fn find_site(
     // Erst die gewünschte Zone, dann (falls dort nichts passt) überall außer Ring und Straßen.
     for zone in [zone, if zone == Zone::Inside { Zone::Outside } else { Zone::Inside }] {
         let free = layout.free_tiles(world, zone);
-        let fits = |r: &Rect| {
-            r.x0 >= 0
-                && r.y0 >= 0
-                && r.x1 < mw
-                && r.y1 < mh
-                && (r.y0..=r.y1).all(|y| (r.x0..=r.x1).all(|x| free[(y * mw + x) as usize]))
-        };
+        // Summenfeld der belegten Felder: ob ein Rechteck frei ist, kostet dann vier Zugriffe
+        // statt eines je Feld (die Suche prüft hunderttausende Rechtecke).
+        let blocked = BlockedSums::new(&free, mw, mh);
+        let fits = |r: &Rect| r.x0 >= 0 && r.y0 >= 0 && r.x1 < mw && r.y1 < mh && blocked.none_in(r);
         // Bester Platz: nah am Ziel, aber gemessen am Laufweg vom Bergfried. Was man nur über
         // einen Umweg erreicht (etwa hinter einem Waldstreifen), zählt um den Umweg weiter weg.
         let (sx, sy) = (start.0 as i64, start.1 as i64);
@@ -848,6 +849,34 @@ pub fn find_site(
         }
     }
     None
+}
+
+/// Wie viele belegte Felder links oberhalb liegen (Summenfeld, (w+1)×(h+1)).
+struct BlockedSums {
+    w: i64,
+    sums: Vec<u32>,
+}
+
+impl BlockedSums {
+    fn new(free: &[bool], w: i64, h: i64) -> BlockedSums {
+        let stride = w + 1;
+        let mut sums = vec![0u32; (stride * (h + 1)) as usize];
+        for y in 0..h {
+            let mut row = 0u32;
+            for x in 0..w {
+                row += u32::from(!free[(y * w + x) as usize]);
+                sums[((y + 1) * stride + x + 1) as usize] = sums[(y * stride + x + 1) as usize] + row;
+            }
+        }
+        BlockedSums { w, sums }
+    }
+
+    /// Kein belegtes Feld im Rechteck (das ganz auf der Karte liegt).
+    fn none_in(&self, r: &Rect) -> bool {
+        let stride = self.w + 1;
+        let at = |x: i64, y: i64| self.sums[(y * stride + x) as usize];
+        at(r.x1 + 1, r.y1 + 1) + at(r.x0, r.y0) == at(r.x0, r.y1 + 1) + at(r.x1 + 1, r.y0)
+    }
 }
 
 /// Drehungen, die den Eingang zum Bergfried zeigen lassen, die beste zuerst.

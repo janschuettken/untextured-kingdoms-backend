@@ -47,6 +47,8 @@ pub struct Seat {
 
 /// So lange (Spielsekunden) lässt er ein Gebäude aus, für das er keinen Platz gefunden hat.
 const RETRY_SECONDS: f32 = 90.0;
+/// So lange bleibt ein Posten auf Turm oder Wehrgang gesperrt, zu dem kein Weg führte.
+const POST_RETRY_SECONDS: f32 = 30.0;
 /// Liegt ein Abbaubetrieb weiter als so viele Felder vom nächsten Lager, baut er dort eins.
 const HUB_DISTANCE: f32 = 22.0;
 /// Ab so viel Holz bzw. Stein in einem Lager draußen baut er die Werkstatt daneben.
@@ -123,6 +125,11 @@ pub struct Computer {
     relief: Option<Relief>,
     /// Frühestens dann wieder Waren an einen bedrängten Verbündeten.
     next_aid: f32,
+    /// Schützen, die er zuletzt auf einen Posten geschickt hat (Einheit → Posten).
+    post_sent: HashMap<u32, (i64, i64)>,
+    /// Posten, zu denen kein Weg führte, bis zu dieser Zeit (sonst jede Überlegung eine
+    /// teure, vergebliche Wegsuche je Schütze).
+    post_skip: HashMap<(i64, i64), f32>,
 }
 
 impl Computer {
@@ -131,8 +138,9 @@ impl Computer {
         let next_attack = profile.attack.as_ref().map_or(f32::MAX, |a| a.first_minutes * 60.0);
         Computer {
             player: seat.player,
-            // Leicht versetzt, damit nicht alle Computergegner im selben Tick rechnen.
-            next_think: 1.0 + (seat.player % 4) as f32 * 0.5,
+            // Versetzt, damit nicht zwei Computergegner im selben Tick rechnen: der Anteil am
+            // Denktakt folgt dem goldenen Schnitt, so liegen auch acht Spieler weit auseinander.
+            next_think: 1.0 + profile.think_seconds * (seat.player as f32 * 0.618_034).fract(),
             seat,
             profile,
             clock: 0.0,
@@ -155,6 +163,8 @@ impl Computer {
             closed: false,
             ring_busy: false,
             next_closed_check: 0.0,
+            post_sent: HashMap::new(),
+            post_skip: HashMap::new(),
         }
     }
 
@@ -174,6 +184,16 @@ impl Computer {
         } else if self.next_attack == f32::MAX {
             self.next_attack = self.clock + 60.0;
         }
+    }
+
+    /// Würde er in diesem Tick (nach `dt`) nachdenken?
+    pub fn due(&self, dt: f32) -> bool {
+        self.clock + dt >= self.next_think
+    }
+
+    /// Dieser Tick ist schon voll: die Zeit läuft weiter, nachgedacht wird im nächsten Tick.
+    pub fn postpone(&mut self, dt: f32) {
+        self.clock += dt;
     }
 
     /// Einen Spieltakt von `dt` Spielsekunden weiter. Liefert die Befehle, die er geben will.
@@ -1320,9 +1340,22 @@ impl Computer {
 
     /// Stehende Soldaten: Fernkämpfer (falls im Profil) hinauf auf Bergfried und Türme, so
     /// viele dort Platz haben; alle anderen, die weit weg sind, zum Sammelpunkt.
-    fn rally(&self, world: &World, layout: &Layout, cmds: &mut Vec<ClientMsg>) {
+    fn rally(&mut self, world: &World, layout: &Layout, cmds: &mut Vec<ClientMsg>) {
         let Some(point) = rally_point(world, self.player, layout) else { return };
         let p = self.player;
+        // Wer beim letzten Mal auf einen Posten sollte und jetzt untätig unten steht, kam nicht
+        // hin: diesen Posten eine Weile nicht mehr vergeben.
+        let clock = self.clock;
+        for (id, post) in std::mem::take(&mut self.post_sent) {
+            let stuck = world.units.iter().find(|u| u.id == id).is_some_and(|u| {
+                !u.is_moving() && !u.is_on_wall() && (u.pos.0 - post.0 as f32).hypot(u.pos.1 - post.1 as f32) > 2.0
+            });
+            if stuck {
+                self.post_skip.insert(post, clock + POST_RETRY_SECONDS);
+            }
+        }
+        self.post_skip.retain(|_, until| *until > clock);
+        let post_key = |q: (f32, f32)| (q.0.round() as i64, q.1.round() as i64);
         let ranged = |k: UnitKind| world.economy.unit(k).is_some_and(|d| d.range > 2.0);
         let mut posts: Vec<((f32, f32), usize)> = Vec::new();
         if self.profile.garrison_ranged {
@@ -1370,8 +1403,9 @@ impl Computer {
         let mut to_rally = Vec::new();
         for u in idle {
             if ranged(u.kind) {
-                if let Some(post) = posts.iter_mut().find(|(_, room)| *room > 0) {
+                if let Some(post) = posts.iter_mut().find(|(q, room)| *room > 0 && !self.post_skip.contains_key(&post_key(*q))) {
                     post.1 -= 1;
+                    self.post_sent.insert(u.id, post_key(post.0));
                     cmds.push(ClientMsg::MoveUnits { unit_ids: vec![u.id], x: post.0 .0, y: post.0 .1, fast: None, append: None });
                     continue;
                 }

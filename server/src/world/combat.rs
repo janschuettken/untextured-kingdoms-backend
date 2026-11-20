@@ -486,10 +486,13 @@ impl World {
         if radius <= 0.0 {
             return Ok(());
         }
+        // Abstand zuerst: das ist billig, und die KI fragt das bei der Bauplatzsuche sehr oft.
+        let r2 = radius * radius;
         let near = self.units.iter().any(|u| {
-            self.economy.unit(u.kind).is_some_and(|d| d.attack > 0)
+            let (dx, dy) = (u.pos.0 - at.0, u.pos.1 - at.1);
+            dx * dx + dy * dy <= r2
+                && self.economy.unit(u.kind).is_some_and(|d| d.attack > 0)
                 && self.can_attack(player, u.owner)
-                && (u.pos.0 - at.0).hypot(u.pos.1 - at.1) <= radius
         });
         if near {
             return Err(protocol::Text::new("error.enemy_near").arg("radius", radius));

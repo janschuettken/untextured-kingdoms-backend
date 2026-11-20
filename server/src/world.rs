@@ -3,8 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use protocol::{
-    BuildingDef, GateMode,
-    BuildingKind, BuildingSettings, BuildingState, BuildingStatus, GoodAmount, PeopleState, ResourceKind, ServerMsg, StockState, Text,
+    BuildingKind, BuildingSettings, BuildingState, BuildingStatus, GateMode, GoodAmount, PeopleState, ResourceKind, ServerMsg, StockState, Text,
     TileKind, UnitActivity, UnitInfo, UnitKind, UnitState,
 };
 
@@ -257,6 +256,8 @@ pub struct World {
     pub(crate) worker_carries_default: bool,
     /// Spieler (Computer), bei denen neue Betriebe auch neben dem Wagenschuppen selbst tragen.
     pub(crate) self_carry: HashSet<u32>,
+    /// Rechenzeit der Teilschritte seit dem letzten Abholen (Serverauslastung).
+    pub phase_us: crate::profile::PhaseTimes,
     /// Zufall für Treffer im Fernkampf (Deckung), siehe `combat.rs`.
     combat_rng: u64,
     /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
@@ -308,7 +309,6 @@ type Refusal = Text;
 
 /// Ergebnis der Prüfungen vor dem Bauen (siehe `World::placement_plan`).
 struct PlacementPlan {
-    def: BuildingDef,
     rotation: u8,
     level: u8,
     w: u32,
@@ -368,6 +368,7 @@ impl World {
             alerts: alerts::Alerts::default(),
             worker_carries_default: true,
             self_carry: HashSet::new(),
+            phase_us: Default::default(),
             combat_rng: 0x9E37_79B9_7F4A_7C15,
         };
         world.add_map_bridges();
@@ -677,6 +678,17 @@ impl World {
         Ok(())
     }
 
+    /// Darf der Spieler noch eins davon bauen (`max_per_player`)? Hängt nicht vom Ort ab,
+    /// die Bauplatzsuche der KI fragt das deshalb einmal vorab.
+    pub fn check_limit(&self, player: u32, kind: BuildingKind) -> Result<(), Refusal> {
+        let Some(max) = self.economy.building(kind).and_then(|d| d.max_per_player) else { return Ok(()) };
+        let have = self.buildings.iter().filter(|b| b.owner == player && b.kind == kind).count();
+        if have >= max as usize {
+            return Err(Text::new("error.limit_reached").arg("max", max));
+        }
+        Ok(())
+    }
+
     /// Alle Prüfungen vor dem Bauen außer dem Bezahlen.
     fn placement_plan(
         &self,
@@ -687,7 +699,8 @@ impl World {
         level: u8,
         free: bool,
     ) -> Result<PlacementPlan, Refusal> {
-        let def = self.economy.building(kind).ok_or_else(|| Text::new("error.unknown_building"))?.clone();
+        // Nicht klonen: die KI prüft bei der Bauplatzsuche zehntausende Stellen.
+        let def = self.economy.building(kind).ok_or_else(|| Text::new("error.unknown_building"))?;
         let rotation = rotation % 4;
         let level = level.max(1);
         if level as usize > def.levels.len() {
@@ -695,13 +708,8 @@ impl World {
         }
         let (w, h) = if rotation % 2 == 1 { (def.h, def.w) } else { (def.w, def.h) };
         // `first_free`: das erste Gebäude dieser Art ist gratis.
-        let cost = if free || (def.first_free && !self.owns(player, kind)) { Vec::new() } else { level_cost(&def, level) };
-        if let Some(max) = def.max_per_player {
-            let have = self.buildings.iter().filter(|b| b.owner == player && b.kind == kind).count();
-            if have >= max as usize {
-                return Err(Text::new("error.limit_reached").arg("max", max));
-            }
-        }
+        let cost = if free || (def.first_free && !self.owns(player, kind)) { Vec::new() } else { level_cost(def, level) };
+        self.check_limit(player, kind)?;
         // Das Startgebäude (der Bergfried) steht noch vor jedem Bergfried: kein Bauradius.
         if !free {
             self.check_build_radius(player, def.build_radius, (x, y), (w, h))?;
@@ -711,8 +719,8 @@ impl World {
         }
         // Tore und Türme dürfen auf eigene Mauern, alle Gebäude auf eigene Wege;
         // die kommen beim Bauen weg.
-        let walls = self.removable_under(player, &def, (x, y), (w, h));
-        let entrance = self.check_site(&def, (x, y), (w, h), rotation, &walls)?;
+        let walls = self.removable_under(player, def, (x, y), (w, h));
+        let entrance = self.check_site(def, (x, y), (w, h), rotation, &walls)?;
         let covers = |p: (f32, f32)| {
             let (ux, uy) = (p.0.floor() as i64, p.1.floor() as i64);
             ux >= x as i64 && uy >= y as i64 && ux < (x + w) as i64 && uy < (y + h) as i64
@@ -721,7 +729,7 @@ impl World {
         if !def.is_road() && self.units.iter().any(|u| !u.is_civilian() && covers(u.pos)) {
             return Err(Text::new("error.unit_in_way"));
         }
-        Ok(PlacementPlan { def, rotation, level, w, h, cost, walls, entrance })
+        Ok(PlacementPlan { rotation, level, w, h, cost, walls, entrance })
     }
 
     /// Wie `place_building_rotated`; `free`: kostet nichts (Startgebäude).
@@ -734,8 +742,9 @@ impl World {
         level: u8,
         free: bool,
     ) -> Result<BuildingState, Refusal> {
-        let PlacementPlan { def, rotation, level, w, h, cost, walls, entrance } =
+        let PlacementPlan { rotation, level, w, h, cost, walls, entrance } =
             self.placement_plan(player, kind, (x, y), rotation, level, free)?;
+        let def = self.economy.building(kind).ok_or_else(|| Text::new("error.unknown_building"))?.clone();
         let max_hp = def.at(level as u32).max_hp;
         self.pay(player, &cost)?;
         // Tor auf einem Weg: der Durchgang bleibt so schnell wie der Weg.
@@ -1495,26 +1504,36 @@ impl World {
     }
 
     pub fn step(&mut self, dt: f32) {
-        self.step_people(dt);
-        self.step_production(dt);
-        self.step_transport(dt);
-        self.step_gather(dt);
-        self.step_progress(dt);
-        self.step_gates();
-        self.step_army(dt);
-        self.step_horses(dt);
-        self.step_trade(dt);
-        self.step_auto_trade(dt);
-        self.step_combat(dt);
-        self.step_waypoints();
-        self.step_heal(dt);
-        self.step_alerts(dt);
-        self.step_orchards(dt);
-        self.spoil_unstored_food();
+        use crate::profile::Phase;
+        macro_rules! timed {
+            ($s:ident, $p:expr, $e:expr) => {{
+                let t = std::time::Instant::now();
+                let r = $e;
+                $s.phase_us.add($p, t.elapsed());
+                r
+            }};
+        }
+        timed!(self, Phase::People, self.step_people(dt));
+        timed!(self, Phase::Production, self.step_production(dt));
+        timed!(self, Phase::Transport, self.step_transport(dt));
+        timed!(self, Phase::Gather, self.step_gather(dt));
+        timed!(self, Phase::Progress, self.step_progress(dt));
+        timed!(self, Phase::Gates, self.step_gates());
+        timed!(self, Phase::Army, self.step_army(dt));
+        timed!(self, Phase::Horses, self.step_horses(dt));
+        timed!(self, Phase::Trade, self.step_trade(dt));
+        timed!(self, Phase::Trade, self.step_auto_trade(dt));
+        timed!(self, Phase::Combat, self.step_combat(dt));
+        timed!(self, Phase::Waypoints, self.step_waypoints());
+        timed!(self, Phase::Heal, self.step_heal(dt));
+        timed!(self, Phase::Alerts, self.step_alerts(dt));
+        timed!(self, Phase::Orchards, self.step_orchards(dt));
+        timed!(self, Phase::Food, self.spoil_unstored_food());
         if self.winners.is_none() {
             self.game_seconds += dt as f64;
         }
-        self.balance_hubs();
+        timed!(self, Phase::Hubs, self.balance_hubs());
+        let moving = std::time::Instant::now();
         let t = &self.economy.def.transport;
         let (carrier, cart) = (t.carrier_speed, t.cart_speed);
         let king = self.economy.def.movement.king_speed;
@@ -1558,8 +1577,9 @@ impl World {
                 }
             }
         }
-        self.step_spread(dt);
-        self.flush_buildings();
+        self.phase_us.add(Phase::Movement, moving.elapsed());
+        timed!(self, Phase::Spread, self.step_spread(dt));
+        timed!(self, Phase::Buildings, self.flush_buildings());
     }
 
     /// Geänderte Gebäude (Status, Lager) an alle Clients melden.

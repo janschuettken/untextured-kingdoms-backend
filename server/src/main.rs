@@ -12,6 +12,7 @@ mod map;
 mod mapgen;
 mod maps_api;
 mod nav;
+mod profile;
 mod stock;
 mod world;
 

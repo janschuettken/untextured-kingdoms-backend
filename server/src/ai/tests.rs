@@ -350,3 +350,100 @@ fn hilft_dem_verbuendeten_aber_nicht_mit_allen() {
     assert!(sent.is_empty());
     assert!(!none.iter().any(|c| matches!(c, ClientMsg::SendGoods { .. })));
 }
+
+/// Wo die Rechenzeit hingeht (nicht im normalen Testlauf), im echten Takt (20 Ticks je Sekunde):
+/// `cargo test --release -p server lastprofil -- --ignored --nocapture`.
+/// Umgebungsvariablen: AI_MAP, AI_PLAYERS (Standard 4), AI_MINUTES (Standard 30).
+#[test]
+#[ignore]
+fn lastprofil() {
+    use crate::profile::{Phase, PhaseTimes, PHASE_COUNT, PHASE_NAMES};
+    use std::time::Instant;
+    let map = std::env::var("AI_MAP").unwrap_or("4-player-zufall-256-682070261.txt".into());
+    let text = std::fs::read_to_string(format!("{}/maps/{map}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let players: usize = std::env::var("AI_PLAYERS").ok().and_then(|s| s.parse().ok()).unwrap_or(4);
+    let minutes: u32 = std::env::var("AI_MINUTES").ok().and_then(|s| s.parse().ok()).unwrap_or(30);
+    let all = super::personality::parse(super::personality::PERSONALITIES_JSON).unwrap();
+    let map = GameMap::parse(&text).unwrap();
+    let economy = Economy::parse(crate::economy::ECONOMY_JSON).unwrap();
+    let spawns = map.spawns.clone();
+    let mut world = World::new(map, economy);
+    let mut ais: Vec<Computer> = Vec::new();
+    for (i, p) in all.personalities.iter().take(players).enumerate() {
+        let player = i as u32 + 1;
+        world.spawn_player_at(player, spawns[i]);
+        let seat = super::Seat { player, level: AiLevel::Hard, personality: p.id.clone(), daring: None, helpfulness: None };
+        ais.push(Computer::new(seat, &all, &world.economy));
+    }
+    let (ticks, _) = tokio::sync::broadcast::channel(64);
+    let dt = 0.05;
+    let mut rows: Vec<(u32, PhaseTimes)> = Vec::new();
+    for step in 0..(minutes as f32 * 60.0 / dt) as u32 {
+        let started = Instant::now();
+        let mut phases = PhaseTimes::default();
+        phases.time(Phase::Ai, || {
+            let thinking = Instant::now();
+            for ai in &mut ais {
+                if ai.due(dt as f32) && thinking.elapsed() > std::time::Duration::from_millis(8) {
+                    ai.postpone(dt as f32);
+                    continue;
+                }
+                world.self_carry.insert(ai.player);
+                for cmd in ai.think(&world, dt) {
+                    let _ = apply_command(&mut world, &ticks, ai.player, cmd);
+                }
+            }
+        });
+        world.phase_us = PhaseTimes::default();
+        world.step(dt);
+        phases.merge(&world.phase_us);
+        phases.time(Phase::Send, || {
+            let _ = world.take_events();
+            let _ = world.take_dirty_stocks();
+            let _ = world.snapshot();
+        });
+        if step % (10 * 20) == 0 {
+            phases.time(Phase::Castle, || {
+                for p in 1..=players as u32 {
+                    let _ = world.castle_status(p);
+                }
+            });
+        }
+        if step % (60 * 20) == 0 {
+            phases.time(Phase::Save, || serde_json::to_string(&world.to_save("x")).unwrap().len());
+        }
+        rows.push((started.elapsed().as_micros() as u32, phases));
+        if step % (60 * 20) == 0 {
+            let last: Vec<u32> = rows.iter().rev().take(1200).map(|r| r.0).collect();
+            let avg = last.iter().sum::<u32>() as f32 / last.len() as f32 / 1000.0;
+            let max = *last.iter().max().unwrap() as f32 / 1000.0;
+            println!("min {:>3}: {} Einheiten, {} Gebäude, Schnitt {avg:.2} ms, Spitze {max:.1} ms", step / 1200, world.units.len(), world.buildings.len());
+        }
+    }
+    let n = rows.len() as f32;
+    let mut sum = [0u64; PHASE_COUNT];
+    let mut max = [0u32; PHASE_COUNT];
+    for (_, p) in &rows {
+        for i in 0..PHASE_COUNT {
+            sum[i] += p.0[i] as u64;
+            max[i] = max[i].max(p.0[i]);
+        }
+    }
+    let mut order: Vec<usize> = (0..PHASE_COUNT).collect();
+    order.sort_by_key(|&i| std::cmp::Reverse(sum[i]));
+    println!("{:<12} {:>9} {:>9}", "Teil", "Schnitt", "Spitze");
+    for i in order {
+        println!("{:<12} {:>7.3}ms {:>7.1}ms", PHASE_NAMES[i], sum[i] as f32 / n / 1000.0, max[i] as f32 / 1000.0);
+    }
+    let late = rows.iter().filter(|r| r.0 > 50_000).count();
+    let over10 = rows.iter().filter(|r| r.0 > 10_000).count();
+    println!("Ticks: {}, über 10 ms: {over10}, über 50 ms: {late}", rows.len());
+    rows.sort_by_key(|r| std::cmp::Reverse(r.0));
+    for (total, p) in rows.iter().take(15) {
+        let mut parts: Vec<(usize, u32)> = p.0.iter().copied().enumerate().filter(|&(_, v)| v > 500).collect();
+        parts.sort_by_key(|&(_, v)| std::cmp::Reverse(v));
+        let text: Vec<String> = parts.iter().map(|&(i, v)| format!("{} {:.1}", PHASE_NAMES[i], v as f32 / 1000.0)).collect();
+        println!("{:>6.1} ms: {}", *total as f32 / 1000.0, text.join(", "));
+    }
+}
+
