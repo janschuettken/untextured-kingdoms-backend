@@ -59,4 +59,8 @@ capacity: number,
 /**
  * Obstplantage: noch so viele Spielsekunden, bis die Bäume als Wald freigegeben werden dürfen. 0 = jetzt.
  */
-mature_in: number, };
+mature_in: number, 
+/**
+ * Nur Kaserne: Sammelpunkt (Feldkoordinaten). Neue Soldaten laufen hierhin. `None` = vor die Tür.
+ */
+rally: [number, number] | null, };

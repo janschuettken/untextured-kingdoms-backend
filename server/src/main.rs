@@ -12,6 +12,7 @@ mod map;
 mod mapgen;
 mod maps_api;
 mod nav;
+mod preview;
 mod profile;
 mod stock;
 mod world;
@@ -75,6 +76,7 @@ async fn main() {
         .route("/health", get(|| async { "ok" }))
         .route("/api/games/{id}/map", get(game::current_map))
         .route("/api/games/{id}/server-load", get(game::current_load))
+        .route("/api/games/{id}/preview", get(preview::handler))
         .with_state(hub.clone())
         .merge(maps_api::router(hub.clone()))
         .merge(admin::router(hub.clone()))

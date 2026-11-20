@@ -166,6 +166,21 @@ impl World {
         Ok(b.clone())
     }
 
+    /// Sammelpunkt der Kaserne: neue Soldaten laufen dorthin. `None` = wie bisher vor die Tür.
+    pub fn set_rally_point(&mut self, player: u32, building_id: u32, point: Option<(f32, f32)>) -> Result<BuildingState, Refusal> {
+        let (mw, mh) = (self.map.width as f32, self.map.height as f32);
+        let b = self.own_barracks_mut(player, building_id)?;
+        if b.kind != protocol::BuildingKind::Barracks {
+            return Err(Text::new("error.not_barracks"));
+        }
+        b.rally = match point {
+            Some((x, y)) if x.is_finite() && y.is_finite() => Some((x.clamp(0.0, mw - 0.01), y.clamp(0.0, mh - 0.01))),
+            _ => None,
+        };
+        self.dirty_buildings.insert(building_id);
+        Ok(self.buildings.iter().find(|x| x.id == building_id).cloned().expect("eben gesetzt"))
+    }
+
     fn own_barracks_mut(&mut self, player: u32, building_id: u32) -> Result<&mut BuildingState, Refusal> {
         let b = self.buildings.iter_mut().find(|b| b.id == building_id).ok_or_else(|| Text::new("error.no_building"))?;
         if b.owner != player {
@@ -232,6 +247,11 @@ impl World {
         let mut unit = Unit::new(id, b.owner, kind, door);
         unit.mounted = self.economy.unit(kind).is_some_and(|d| d.mounted);
         self.units.push(unit);
+        // Eigener Sammelpunkt: dorthin laufen, auseinander stellen sich die Soldaten selbst.
+        if let Some(spot) = b.rally {
+            self.order_move(b.owner, &[id], spot);
+            return true;
+        }
         // Sammelplatz: Reihen zu dreien vor dem Eingang.
         let (out, side) = match b.rotation % 4 {
             0 => ((0.0, 1.0), (1.0, 0.0)),
@@ -388,6 +408,22 @@ mod tests {
         // Ohne Verteilen bleibt alles in der einen Kaserne.
         w.train(1, b, UnitKind::Spearman, 1).unwrap();
         assert_eq!((len(&w, a), len(&w, b)), (3, 3));
+    }
+
+    #[test]
+    fn neue_soldaten_laufen_zum_sammelpunkt() {
+        let mut w = world();
+        let b = w.place_building(1, BuildingKind::Barracks, 10, 10).unwrap();
+        assert_eq!(w.set_rally_point(2, b.id, Some((3.5, 3.5))).unwrap_err().key, "error.not_yours");
+        assert_eq!(w.set_rally_point(1, b.id, Some((3.5, 3.5))).unwrap().rally, Some((3.5, 3.5)));
+        w.admin_give(1, &[GoodAmount { good: Good::Spear, amount: 1 }], 0);
+        w.train(1, b.id, UnitKind::Spearman, 1).unwrap();
+        for _ in 0..20 * 60 {
+            w.step(0.05);
+        }
+        let u = w.units.iter().find(|u| u.kind == UnitKind::Spearman).expect("ausgebildet");
+        assert!((u.pos.0 - 3.5).abs() < 1.0 && (u.pos.1 - 3.5).abs() < 1.0, "am Sammelpunkt: {:?}", u.pos);
+        assert_eq!(w.set_rally_point(1, b.id, None).unwrap().rally, None);
     }
 
     #[test]

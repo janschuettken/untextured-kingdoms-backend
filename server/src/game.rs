@@ -410,6 +410,8 @@ fn game_loop(hub: Arc<Hub>, game: Arc<Game>, state: Arc<Match>) {
     let mut tick: u64 = 0;
     // Seit dem letzten Speichern weitergelaufen?
     let mut dirty = false;
+    // Ausgeschiedene beim letzten Blick: ändert sich das, sieht es die Lobby.
+    let mut defeated = state.world.lock().unwrap().eliminated().len();
     info!("Spiel {} läuft (eigener Thread)", game.id);
     while !state.stop.load(Ordering::Relaxed) {
         next += dt;
@@ -452,6 +454,13 @@ fn game_loop(hub: Arc<Hub>, game: Arc<Game>, state: Arc<Match>) {
         }
         step(&state, tick, &mut phases);
         state.load.lock().unwrap().record_phases(started.elapsed(), phases);
+        if tick.is_multiple_of(TICK_RATE as u64) {
+            let now_defeated = state.world.lock().unwrap().eliminated().len();
+            if now_defeated != defeated {
+                defeated = now_defeated;
+                hub.notify();
+            }
+        }
     }
     info!("Spiel {} beendet", game.id);
 }
@@ -893,6 +902,7 @@ async fn handle_msg(
         | ClientMsg::DemolishBuilding { .. }
         | ClientMsg::ConfigureBuilding { .. }
         | ClientMsg::ReleaseTrees { .. }
+        | ClientMsg::SetRallyPoint { .. }
         | ClientMsg::MoveBuilding { .. }
         | ClientMsg::UpgradeBuilding { .. }
         | ClientMsg::TrainUnits { .. }
@@ -1017,6 +1027,10 @@ pub fn apply_command(
             for event in world.take_events() {
                 send(event);
             }
+        }
+        ClientMsg::SetRallyPoint { building_id, point } => {
+            let building = world.set_rally_point(player_id, building_id, point)?;
+            send(ServerMsg::BuildingChanged { building });
         }
         ClientMsg::MoveBuilding {
             building_id,

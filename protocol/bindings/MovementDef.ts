@@ -20,4 +20,10 @@ spread_distance: number,
 /**
  * So schnell rücken sie dabei (Felder pro Sekunde).
  */
-spread_speed: number, };
+spread_speed: number, 
+/**
+ * Weg-Neuberechnung nach Bauen/Abreißen: wird ein Weg versperrt, sucht die Einheit sofort
+ * neu. Alle anderen (kürzere Wege durch neue Lücken, Wartende) erst so viele Sekunden nach
+ * der letzten Änderung, höchstens nach der doppelten Zeit. 0 = immer sofort.
+ */
+replan_delay_seconds: number, };

@@ -278,6 +278,10 @@ pub struct World {
     respawn_clock: HashMap<u32, f32>,
     /// Warnungen an Spieler (siehe `alerts.rs`).
     alerts: alerts::Alerts,
+    /// Aufgeschobene Weg-Neuberechnung: (Uhr der ersten, Uhr der letzten Änderung).
+    replan_pending: Option<(f64, f64)>,
+    /// Uhr dafür (Sekunden Spielzeit, läuft auch nach Spielende weiter).
+    replan_clock: f64,
 }
 
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
@@ -364,6 +368,8 @@ impl World {
             teams: HashMap::new(),
             winners: None,
             game_seconds: 0.0,
+            replan_pending: None,
+            replan_clock: 0.0,
             respawn_clock: HashMap::new(),
             alerts: alerts::Alerts::default(),
             worker_carries_default: true,
@@ -802,6 +808,7 @@ impl World {
             road_under,
             capacity: 0,
             mature_in: def.release_after_seconds,
+            rally: None,
         };
         self.next_building_id += 1;
         if let Some((ex, ey)) = entrance {
@@ -1156,8 +1163,81 @@ impl World {
         self.drop_from_walls();
     }
 
-    /// Nach einer Änderung am Gitter: laufende Einheiten suchen ihren Weg neu.
+    /// Nach einer Änderung am Gitter (Bauen, Abreißen, ...). Wessen Weg jetzt durch ein neu
+    /// blockiertes Feld führt, der sucht sofort neu. Alle anderen erst, wenn eine Weile
+    /// (`movement.replan_delay_seconds`) nichts mehr geändert wurde: beim Mauerbau kommen viele
+    /// Teile kurz hintereinander, und jedes Mal alle Wege neu zu suchen kostet viel.
     fn replan_all(&mut self) {
+        let delay = self.economy.def.movement.replan_delay_seconds;
+        if delay <= 0.0 {
+            self.replan_now();
+            return;
+        }
+        self.replan_blocked();
+        let now = self.replan_clock;
+        self.replan_pending = Some(match self.replan_pending {
+            Some((first, _)) => (first, now),
+            None => (now, now),
+        });
+    }
+
+    /// Aufgeschobene Neuberechnung fällig? (Ruhe seit der letzten Änderung oder doppelte Zeit um.)
+    fn step_replan(&mut self, dt: f32) {
+        self.replan_clock += dt as f64;
+        // Blockaden, nach denen niemand `replan_all` gerufen hat, sind schon erledigt.
+        self.map.nav.newly_blocked.clear();
+        let Some((first, last)) = self.replan_pending else { return };
+        let delay = self.economy.def.movement.replan_delay_seconds as f64;
+        if self.replan_clock - last >= delay || self.replan_clock - first >= 2.0 * delay {
+            self.replan_now();
+        }
+    }
+
+    /// Nur die Einheiten, deren restlicher Weg ein eben blockiertes Feld kreuzt, suchen neu.
+    fn replan_blocked(&mut self) {
+        let cells: HashSet<(i32, i32)> =
+            std::mem::take(&mut self.map.nav.newly_blocked).into_iter().filter(|&(x, y)| !self.map.nav.is_open(x, y)).collect();
+        if cells.is_empty() {
+            return;
+        }
+        let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for &(x, y) in &cells {
+            (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+        }
+        let hits = |from: (f32, f32), to: (f32, f32)| -> bool {
+            let (lo_x, hi_x) = (from.0.min(to.0).floor() as i32, from.0.max(to.0).floor() as i32);
+            let (lo_y, hi_y) = (from.1.min(to.1).floor() as i32, from.1.max(to.1).floor() as i32);
+            if hi_x < x0 || lo_x > x1 || hi_y < y0 || lo_y > y1 {
+                return false;
+            }
+            let len = ((to.0 - from.0).powi(2) + (to.1 - from.1).powi(2)).sqrt();
+            let steps = (len * 4.0).ceil().max(1.0) as i32;
+            (0..=steps).any(|i| {
+                let f = i as f32 / steps as f32;
+                let p = (from.0 + (to.0 - from.0) * f, from.1 + (to.1 - from.1) * f);
+                cells.contains(&(p.0.floor() as i32, p.1.floor() as i32))
+            })
+        };
+        let affected: Vec<usize> = (0..self.units.len())
+            .filter(|&k| {
+                let u = &self.units[k];
+                let mut at = u.pos;
+                u.path.iter().any(|&next| {
+                    let hit = hits(at, next);
+                    at = next;
+                    hit
+                })
+            })
+            .collect();
+        for k in affected {
+            self.replan_unit(k);
+        }
+    }
+
+    /// Sofort alle laufenden (und vor einem Hindernis wartenden) Einheiten neu planen.
+    fn replan_now(&mut self) {
+        self.replan_pending = None;
+        self.map.nav.newly_blocked.clear();
         for k in 0..self.units.len() {
             let u = &self.units[k];
             let Some(target) = u.target else { continue };
@@ -1165,16 +1245,22 @@ impl World {
             // erneut; Träger und Arbeiter nur, solange sie unterwegs sind.
             let waiting = !u.is_civilian() && (u.pos.0 - target.0).abs() + (u.pos.1 - target.1).abs() > 0.05;
             if !u.path.is_empty() || waiting {
-                let (path, layers) = if u.is_civilian() {
-                    (self.map.nav.waypoints(u.pos, target), Vec::new())
-                } else {
-                    self.plan(u.owner, u.pos, u.on_wall, target, u.target_wall)
-                };
-                let u = &mut self.units[k];
-                u.path = path;
-                u.layers = layers;
+                self.replan_unit(k);
             }
         }
+    }
+
+    fn replan_unit(&mut self, k: usize) {
+        let u = &self.units[k];
+        let Some(target) = u.target else { return };
+        let (path, layers) = if u.is_civilian() {
+            (self.map.nav.waypoints(u.pos, target), Vec::new())
+        } else {
+            self.plan(u.owner, u.pos, u.on_wall, target, u.target_wall)
+        };
+        let u = &mut self.units[k];
+        u.path = path;
+        u.layers = layers;
     }
 
     /// Bewegungsbefehl eines Spielers. Fremde Einheiten werden ignoriert.
@@ -1207,6 +1293,7 @@ impl World {
             .flat_map(gate::passage_tiles)
             .map(|(x, y)| (x as i32, y as i32))
             .collect();
+        let noted = self.map.nav.newly_blocked.len();
         for &(x, y) in &shut {
             self.map.nav.set_blocked(x, y, true);
         }
@@ -1214,6 +1301,8 @@ impl World {
         for &(x, y) in &shut {
             self.map.nav.set_blocked(x, y, false);
         }
+        // Nur für diese Planung zu: zählt nicht als Änderung am Gitter.
+        self.map.nav.newly_blocked.truncate(noted);
         ok
     }
 
@@ -1529,6 +1618,7 @@ impl World {
         timed!(self, Phase::Alerts, self.step_alerts(dt));
         timed!(self, Phase::Orchards, self.step_orchards(dt));
         timed!(self, Phase::Food, self.spoil_unstored_food());
+        timed!(self, Phase::Replan, self.step_replan(dt));
         if self.winners.is_none() {
             self.game_seconds += dt as f64;
         }
@@ -2165,5 +2255,27 @@ mod tests {
         }
         let u = &world.units[0];
         assert!((u.pos.0 - 10.5).abs() < 1e-3 && (u.pos.1 - 1.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn neue_luecke_wird_erst_nach_ruhe_genutzt() {
+        let mut world = flat_world();
+        let id = world.units[0].id;
+        let wall: Vec<u32> = (0..11).map(|y| world.place_building(1, BuildingKind::Wall, 5, y).unwrap().id).collect();
+        world.step(10.0); // Ruhe: alles neu geplant
+        assert!(world.replan_pending.is_none());
+        world.order_move(1, &[id], (10.5, 1.5));
+        let before = world.units[0].path.clone();
+        // Ein Stück Mauer weg: der König plant nicht sofort um, erst nach der Ruhezeit.
+        world.demolish(1, wall[1]).unwrap();
+        assert_eq!(world.units[0].path, before, "noch der alte Weg");
+        assert!(world.replan_pending.is_some());
+        let delay = world.economy.def.movement.replan_delay_seconds;
+        let mut t = 0.0;
+        while t < delay + 0.2 {
+            world.step(0.05);
+            t += 0.05;
+        }
+        assert!(world.replan_pending.is_none(), "nach der Ruhezeit neu geplant");
     }
 }
