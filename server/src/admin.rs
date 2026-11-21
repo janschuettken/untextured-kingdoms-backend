@@ -33,6 +33,7 @@
 //! - `POST /api/games/{id}/load`     nur Admin: zuletzt gespeicherten Stand laden, alle Clients laden neu
 //! - `POST /api/games/{id}/new-game` nur Admin: neu anfangen (gleiche Karte, gleiche Mitspieler)
 //! - `POST /api/games/{id}/end`      nur Admin: Spiel ganz beenden, alle zurück in die Lobby
+//! - `POST /api/games/{id}/duplicate` nur Admin: laufendes Spiel samt Spielstand kopieren → `{ id }`
 //! - `GET  /api/economy`  die geltenden Wirtschaftsdaten als JSON
 //! - `GET  /api/economy/file`  nur Admin: die geltenden Daten als Datei `economy.json` (genau im
 //!   Format der Datei im Repo), zum Herunterladen und Committen
@@ -252,6 +253,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/api/games/{id}/load", post(load_now))
         .route("/api/games/{id}/new-game", post(new_game))
         .route("/api/games/{id}/end", post(end_game))
+        .route("/api/games/{id}/duplicate", post(duplicate_game))
         .layer(DefaultBodyLimit::max(1024 * 1024))
         .with_state(hub)
 }
@@ -756,6 +758,24 @@ async fn end_game(
     hub.end_game(id);
     hub.notify();
     StatusCode::NO_CONTENT.into_response()
+}
+
+async fn duplicate_game(
+    State(hub): State<Arc<Hub>>,
+    headers: HeaderMap,
+    Path(id): Path<u32>,
+) -> Response {
+    if !hub.admin.allows(&headers).await {
+        return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
+    }
+    if let Err(r) = running(&hub, id) {
+        return r;
+    }
+    match tokio::task::spawn_blocking(move || hub.duplicate(id)).await {
+        Ok(Ok(new_id)) => Json(serde_json::json!({ "id": new_id })).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 #[cfg(test)]

@@ -399,44 +399,72 @@ impl Hub {
             })();
             match loaded {
                 Ok((file, world, map)) => {
-                    if file.slots.len() != map.spawns.len() {
-                        warn!(
-                            "{}: Startplätze passen nicht zur Karte, übersprungen",
-                            path.display()
-                        );
-                        continue;
+                    let id = file.id;
+                    match self.launch(file, world, map) {
+                        Ok(_) => info!("Spiel {id} aus {} fortgesetzt", path.display()),
+                        Err(e) => warn!("{}: {e}, übersprungen", path.display()),
                     }
-                    let meta = Meta {
-                        map_name: file.map.clone(),
-                        map_text: file.map_text.clone(),
-                        width: map.width,
-                        height: map.height,
-                        spawns: map.spawns.clone(),
-                        phase: GamePhase::Running,
-                        host: file.host,
-                        slots: file.slots,
-                        trade_mode: world.trade_mode(),
-                        shot_mode: world.shot_mode(),
-                        preview: Arc::new(preview::of_map(&map)),
-                    };
-                    let computers = meta.computers();
-                    let game = Arc::new(Game {
-                        id: file.id,
-                        meta: Mutex::new(meta),
-                        running: OnceLock::new(),
-                    });
-                    let mut m = Match::new(world, file.map, file.map_text, file.speed);
-                    m.set_computers(&computers, &self.personalities.lock().unwrap());
-                    let m = Arc::new(m);
-                    let _ = game.running.set(m.clone());
-                    self.games.lock().unwrap().insert(file.id, game.clone());
-                    self.next_game.fetch_max(file.id + 1, Ordering::Relaxed);
-                    info!("Spiel {} aus {} fortgesetzt", file.id, path.display());
-                    game::spawn_thread(self.clone(), game, m);
                 }
                 Err(e) => warn!("Spiel {} nicht geladen: {e}", path.display()),
             }
         }
+    }
+
+    /// Ein laufendes Spiel aus Datei-Inhalt und Welt aufsetzen und seinen Thread starten.
+    fn launch(self: &Arc<Hub>, file: GameFile, world: World, map: GameMap) -> Result<Arc<Game>, String> {
+        if file.slots.len() != map.spawns.len() {
+            return Err("Startplätze passen nicht zur Karte".into());
+        }
+        let meta = Meta {
+            map_name: file.map.clone(),
+            map_text: file.map_text.clone(),
+            width: map.width,
+            height: map.height,
+            spawns: map.spawns.clone(),
+            phase: GamePhase::Running,
+            host: file.host,
+            slots: file.slots,
+            trade_mode: world.trade_mode(),
+            shot_mode: world.shot_mode(),
+            preview: Arc::new(preview::of_map(&map)),
+        };
+        let computers = meta.computers();
+        let game = Arc::new(Game {
+            id: file.id,
+            meta: Mutex::new(meta),
+            running: OnceLock::new(),
+        });
+        let mut m = Match::new(world, file.map, file.map_text, file.speed);
+        m.set_computers(&computers, &self.personalities.lock().unwrap());
+        let m = Arc::new(m);
+        let _ = game.running.set(m.clone());
+        self.games.lock().unwrap().insert(file.id, game.clone());
+        self.next_game.fetch_max(file.id + 1, Ordering::Relaxed);
+        game::spawn_thread(self.clone(), game.clone(), m);
+        Ok(game)
+    }
+
+    /// Admin: ein laufendes Spiel samt aktuellem Spielstand als neues Spiel kopieren.
+    /// Gleiche Karte, gleiche Mitspieler und Computergegner, gleicher Gastgeber;
+    /// danach laufen beide Spiele unabhängig weiter. Gibt die Id der Kopie zurück.
+    pub fn duplicate(self: &Arc<Hub>, id: u32) -> Result<u32, String> {
+        let game = self.game(id).ok_or("admin.no_game")?;
+        let pending = self.prepare_save(&game).ok_or("admin.no_game")?;
+        let mut file = pending.file;
+        let new_id = self.next_game.fetch_add(1, Ordering::Relaxed);
+        file.id = new_id;
+        let save = file.save.take().ok_or("kein Spielstand")?;
+        let map = GameMap::parse(&file.map_text).map_err(|e| e.to_string())?;
+        let world_map = GameMap::parse(&file.map_text).map_err(|e| e.to_string())?;
+        let world = World::from_save(world_map, self.economy.lock().unwrap().clone(), save)?;
+        let copy = self.launch(file, world, map)?;
+        // Gleich in eine eigene Datei, damit die Kopie auch einen Neustart übersteht.
+        if let Err(e) = self.save_game(&copy) {
+            warn!("Spiel {new_id}: Speichern der Kopie fehlgeschlagen: {e}");
+        }
+        info!("Spiel {id} kopiert als Spiel {new_id}");
+        self.notify();
+        Ok(new_id)
     }
 
     /// Spiel ganz beenden: Thread anhalten, Clients raus, Datei weg.
@@ -1160,6 +1188,29 @@ mod tests {
         hub.leave(A, None).unwrap();
         hub.leave(C, None).unwrap();
         assert!(hub.game(first).is_none() && hub.game(second).is_none());
+    }
+
+    #[test]
+    fn admin_kopiert_laufendes_spiel() {
+        let hub = hub();
+        hub.create(A, "Anna", "zwei-burgen").unwrap();
+        let id = hub.waiting_game_of(A).unwrap().id;
+        hub.join(B, "Bert", id).unwrap();
+        assert!(hub.duplicate(id).is_err(), "wartendes Spiel lässt sich nicht kopieren");
+        hub.start(A).unwrap();
+        let copy = hub.duplicate(id).unwrap();
+        assert_ne!(copy, id);
+        // Gleiche Mitspieler, gleicher Stand, eigene Datei.
+        assert!(hub.membership(copy, A).is_some());
+        assert!(hub.membership(copy, B).is_some());
+        assert!(hub.save_path(copy).exists());
+        let count = |g: u32| hub.game(g).unwrap().running.get().unwrap().world.lock().unwrap().buildings.len();
+        assert_eq!(count(id), count(copy));
+        // Unabhängig: das Original beenden lässt die Kopie stehen.
+        hub.end_game(id);
+        assert!(hub.membership(copy, A).is_some());
+        hub.end_game(copy);
+        assert!(!hub.save_path(copy).exists());
     }
 
     #[test]
