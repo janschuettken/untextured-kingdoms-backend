@@ -214,6 +214,75 @@ impl World {
         best.map(|(_, t)| t)
     }
 
+    /// Wie `gather_tile`, aber nach Laufzeit statt Luftlinie: von der Tür des Betriebs aus
+    /// das Rohstoff-Feld im Umkreis, neben das man am schnellsten kommt (Wege, Hänge und
+    /// Umwege um Wald, Wasser und Mauern zählen). Liefert das Feld und den Stehplatz daneben.
+    /// Kommt man an keines heran, wie bisher das nächste nach Luftlinie (ohne Stehplatz).
+    pub(super) fn fastest_gather_tile(&self, i: usize) -> Option<(usize, Option<(f32, f32)>)> {
+        use std::cmp::Reverse;
+        use std::collections::{BinaryHeap, HashMap};
+        let b = &self.buildings[i];
+        let def = self.economy.building(b.kind)?;
+        let fallback = || self.gather_tile(i).map(|t| (t, None));
+        let r = def.at(b.level).gather_radius as i32;
+        let center = (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0);
+        let Some(door) = self.door(b, center) else { return fallback() };
+        if r == 0 {
+            return fallback();
+        }
+        let nav = &self.map.nav;
+        let (mw, mh) = (self.map.width as i32, self.map.height as i32);
+        let (bx0, by0, bx1, by1) = (b.x as i32, b.y as i32, (b.x + b.w) as i32 - 1, (b.y + b.h) as i32 - 1);
+        // Im Umkreis: höchstens `r` Felder vom Gebäuderand (wie beim Suchen in Ringen).
+        let in_radius = |x: i32, y: i32| (bx0 - x).max(x - bx1).max(0) <= r && (by0 - y).max(y - by1).max(0) <= r;
+        let gatherable = |x: i32, y: i32| {
+            if x < 0 || y < 0 || x >= mw || y >= mh || !in_radius(x, y) {
+                return false;
+            }
+            let t = (y * mw + x) as usize;
+            def.gathers.contains(&self.map.resources[t]) && self.resource_left[t] > 0
+        };
+        let start = (door.0.floor() as i32, door.1.floor() as i32);
+        let mut best: HashMap<(i32, i32), u32> = HashMap::new();
+        let mut heap = BinaryHeap::new();
+        best.insert(start, 0);
+        heap.push(Reverse((0u32, start)));
+        while let Some(Reverse((cost, (x, y)))) = heap.pop() {
+            if best.get(&(x, y)).is_some_and(|&c| c < cost) {
+                continue;
+            }
+            // Neben einem Rohstoff-Feld: das ist das schnellste.
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    if (dx, dy) != (0, 0) && gatherable(x + dx, y + dy) {
+                        let t = ((y + dy) * mw + x + dx) as usize;
+                        return Some((t, Some((x as f32 + 0.5, y as f32 + 0.5))));
+                    }
+                }
+            }
+            if best.len() > 20_000 {
+                break;
+            }
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let (nx, ny) = (x + dx, y + dy);
+                    // Etwas über den Umkreis hinaus, damit man auch um Hindernisse herum findet.
+                    if (dx, dy) == (0, 0) || !nav.can_step(x, y, dx, dy) || (bx0 - nx).max(nx - bx1).max(0) > r + 8 || (by0 - ny).max(ny - by1).max(0) > r + 8 {
+                        continue;
+                    }
+                    let step = if dx != 0 && dy != 0 { 1.414 } else { 1.0 };
+                    let speed = nav.speed_at((nx as f32 + 0.5, ny as f32 + 0.5)).max(0.05);
+                    let c = cost + (step / speed * 100.0) as u32;
+                    if best.get(&(nx, ny)).is_none_or(|&old| c < old) {
+                        best.insert((nx, ny), c);
+                        heap.push(Reverse((c, (nx, ny))));
+                    }
+                }
+            }
+        }
+        fallback()
+    }
+
     /// Ein Feld um eine Einheit abbauen. Leer: Rohstoff verschwindet, Feld wird frei.
     pub(super) fn deplete(&mut self, t: usize) {
         self.resource_left[t] = self.resource_left[t].saturating_sub(1);
@@ -401,6 +470,21 @@ mod tests {
         w.place_building(1, BuildingKind::Woodcutter, 2, 2).unwrap();
         let bi = w.buildings.len() - 1;
         assert_eq!(w.gather_tile(bi), Some(70 + 80));
+    }
+
+    #[test]
+    fn holzfaeller_nimmt_den_baum_mit_dem_schnellsten_weg() {
+        // Gleich unter dem Betrieb ein Baum, aber hinter einem Felsriegel (langer Umweg).
+        // Weiter rechts einer, zu dem man direkt hinläuft.
+        let rects = [(0, 15, 34, 1, 'S'), (11, 17, 1, 1, 'W'), (24, 11, 1, 1, 'W')];
+        let mut w = world(&map(40, 30, (0, 0), &rects));
+        w.place_building(1, BuildingKind::Woodcutter, 10, 10).unwrap();
+        let bi = w.buildings.len() - 1;
+        assert_eq!(w.gather_tile(bi), Some(17 * 40 + 11), "Luftlinie: der hinter dem Fels");
+        let (tile, stand) = w.fastest_gather_tile(bi).unwrap();
+        assert_eq!(tile, 11 * 40 + 24, "schnellster Weg: der rechts");
+        let (sx, sy) = stand.unwrap();
+        assert!((sx - 24.5).abs() <= 1.0 && (sy - 11.5).abs() <= 1.0);
     }
 
     #[test]

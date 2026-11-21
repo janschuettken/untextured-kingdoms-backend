@@ -142,13 +142,14 @@ impl World {
                     self.go_to_building(k, bi);
                     return BuildingStatus::TargetReached;
                 }
-                let Some(tile) = self.gather_tile(bi) else {
+                // Das Feld, zu dem man am schnellsten hinkommt (nicht nur nach Luftlinie).
+                let Some((tile, stand)) = self.fastest_gather_tile(bi) else {
                     self.units[k].cooldown = RETRY;
                     self.go_to_building(k, bi);
                     return BuildingStatus::NoResource;
                 };
                 let pos = self.units[k].pos;
-                let stand = self.stand_at(tile, pos).or_else(|| self.door(&self.buildings[bi], pos));
+                let stand = stand.or_else(|| self.stand_at(tile, pos)).or_else(|| self.door(&self.buildings[bi], pos));
                 let Some(stand) = stand else {
                     self.units[k].cooldown = RETRY;
                     return BuildingStatus::NoResource;
