@@ -234,6 +234,8 @@ pub struct World {
     meal_soonest: HashMap<u32, f32>,
     /// Automatischer Handel je Spieler (siehe `market.rs`).
     auto_trade: HashMap<u32, Vec<protocol::AutoTrade>>,
+    /// Sekunden, die jeder Betrieb schon auf Träger wartet (Vorrang beim Verteilen, siehe `transport.rs`).
+    transport_wait: HashMap<u32, f32>,
     /// Grenzen je Ware für neue Betriebe, je Spieler (Ressourcen-Fenster).
     good_limits: HashMap<u32, Vec<protocol::GoodLimit>>,
     /// Sekunden seit dem letzten automatischen Handel.
@@ -354,6 +356,7 @@ impl World {
             worker_hunger: HashMap::new(),
             auto_trade: HashMap::new(),
             good_limits: HashMap::new(),
+            transport_wait: HashMap::new(),
             auto_trade_clock: 0.0,
             unstaffed: HashSet::new(),
             idle_units: HashSet::new(),

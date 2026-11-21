@@ -32,6 +32,11 @@ const REACH: f32 = 1.6;
 /// So nah am Eingangsfeld (Mitte) gilt man als „an der Tür“.
 const AT_DOOR: f32 = 0.9;
 
+/// Vorrang beim Verteilen der Aufträge: jede Sekunde Wartezeit zählt wie so viele Felder kürzerer Weg.
+const WAIT_WEIGHT: f32 = 0.5;
+/// Betriebe, die stillstehen (Eingang fehlt, Lager voll), kommen vor allen anderen dran.
+const STALL_BONUS: f32 = 10_000.0;
+
 /// Höchstens so viele Betriebe fährt ein Karren auf einer Sammelfahrt an.
 const TOUR_STOPS: usize = 4;
 
@@ -143,6 +148,7 @@ impl World {
             .enumerate()
             .map(|(i, b)| (b.id, i))
             .collect();
+        self.count_transport_wait(dt);
         let mut reserved = Reserved::default();
         for u in &self.units {
             if let Some(job) = &u.job {
@@ -244,6 +250,48 @@ impl World {
         Some((center(b), r as f32))
     }
 
+    /// Wie lange wartet jeder Betrieb schon auf Träger (Abholen oder Beliefern)?
+    /// Die Uhr läuft, solange er etwas braucht, und beginnt neu, sobald ein Auftrag für ihn startet.
+    fn count_transport_wait(&mut self, dt: f32) {
+        let mut waiting = HashMap::new();
+        for b in &self.buildings {
+            let Some(inv) = self.inventories.get(&b.id) else { continue };
+            let inputs: &[GoodAmount] = b.settings.recipe.as_ref().and_then(|r| self.economy.recipe(r)).map_or(&[], |r| &r.inputs);
+            let pickup = inv.state().goods.iter().any(|g| !inputs.iter().any(|i| i.good == g.good));
+            let needs = pickup || matches!(b.status, BuildingStatus::MissingInput | BuildingStatus::StorageFull);
+            if needs {
+                waiting.insert(b.id, self.transport_wait.get(&b.id).copied().unwrap_or(0.0) + dt);
+            }
+        }
+        self.transport_wait = waiting;
+    }
+
+    /// Vorrang eines Betriebs (in Feldern Weg): Stillstand vor allem, dann lange Wartezeit.
+    fn urgency(&self, b: &BuildingState, supply: bool) -> f32 {
+        let stalled = if supply {
+            b.status == BuildingStatus::MissingInput
+        } else {
+            matches!(b.status, BuildingStatus::StorageFull | BuildingStatus::NoStorageRoom)
+        };
+        let wait = self.transport_wait.get(&b.id).copied().unwrap_or(0.0);
+        wait * WAIT_WEIGHT + if stalled { STALL_BONUS } else { 0.0 }
+    }
+
+    /// Lager mit dieser Ware, über das der Weg Träger → Lager → Betrieb am kürzesten ist (mit Weglänge).
+    fn supply_hub(&self, owner: u32, from: (f32, f32), b: &BuildingState, good: Good) -> Option<(u32, f32)> {
+        self.buildings
+            .iter()
+            .filter(|h| h.owner == owner && self.is_hub(h) && self.hub_amount(h.id, good) > 0)
+            .map(|h| (h.id, dist_to(h, from) + dist_to(b, center(h))))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .or_else(|| {
+                // Ware liegt noch in keinem Lager (Startwaren): beim nächsten passenden Lager abholen.
+                let id = self.nearest_hub_having(owner, from, good)?;
+                let h = self.buildings.iter().find(|h| h.id == id)?;
+                Some((id, dist_to(h, from) + dist_to(b, center(h))))
+            })
+    }
+
     /// Bester Auftrag für eine freie Einheit: der nächste, den sie erledigen kann.
     fn find_job(&self, k: usize, reserved: &Reserved, index: &HashMap<u32, usize>) -> Option<Job> {
         let u = &self.units[k];
@@ -315,7 +363,7 @@ impl World {
                         stage: Stage::Load(b.id),
                         rest: NO_REST,
                     };
-                    offer(&mut best, d, job);
+                    offer(&mut best, d - self.urgency(b, false), job);
                 }
             }
             // Beliefern: Eingänge für zwei Durchläufe, aber nicht unter den Mindestbestand.
@@ -323,7 +371,8 @@ impl World {
                 continue;
             }
             for i in inputs.iter().filter(|i| moves(i.good)) {
-                let Some(hub) = self.nearest_hub_having(owner, u.pos, i.good) else { continue };
+                // Erst zum Lager, dann zum Betrieb: das Lager mit dem kürzesten Gesamtweg.
+                let Some((hub, via)) = self.supply_hub(owner, u.pos, b, i.good) else { continue };
                 // Karren füllen das Eingangslager ganz auf, Träger bringen zwei Durchläufe.
                 let want = if cart { inv.capacity_of(i.good) } else { (i.amount * 2).min(inv.capacity_of(i.good)) };
                 let min_load = if cart { cart_min.min(want).max(1) } else { min_load };
@@ -335,8 +384,6 @@ impl World {
                     .saturating_sub(keep);
                 let amount = want.saturating_sub(have).min(cap).min(there);
                 if amount >= min_load {
-                    // Erst zum Lager, dann zum Betrieb: Weg über das Lager zählt.
-                    let via = index.get(&hub).map_or(0.0, |&h| dist_to(&self.buildings[h], u.pos));
                     let job = Job {
                         kind: JobKind::Supply { to: b.id },
                         good: i.good,
@@ -344,7 +391,7 @@ impl World {
                         stage: Stage::Load(hub),
                         rest: NO_REST,
                     };
-                    offer(&mut best, via + d, job);
+                    offer(&mut best, via - self.urgency(b, true), job);
                 }
             }
         }
@@ -379,6 +426,9 @@ impl World {
 
     fn start(&mut self, k: usize, job: Job, index: &HashMap<u32, usize>) {
         let Stage::Load(at) = job.stage else { return };
+        // Bedient: die Wartezeit dieses Betriebs beginnt von vorn.
+        let (JobKind::Pickup { from: b } | JobKind::Supply { to: b }) = job.kind;
+        self.transport_wait.remove(&b);
         self.units[k].job = Some(job);
         if !self.route(k, at, index) {
             self.fail(k, index);
@@ -762,6 +812,36 @@ mod tests {
         );
         let b = w.buildings.iter().find(|b| b.id == cutter.id).unwrap();
         assert_ne!(b.status, BuildingStatus::StorageFull, "Bretter werden abgeholt");
+    }
+
+    #[test]
+    fn stillstand_und_wartezeit_gehen_vor_kurzem_weg() {
+        let mut w = flat(80, 20);
+        w.worker_carries_default = false; // hier tragen die Träger
+        w.admin_give(1, &[GoodAmount { good: Good::Wood, amount: 100 }, GoodAmount { good: Good::Boards, amount: 50 }], 0);
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.economy.def.buildings.iter_mut().find(|d| d.kind == BuildingKind::CartShed).unwrap().levels.iter_mut().for_each(|l| l.service_radius = 0);
+        shed(&mut w, 2, 12, 1);
+        let near = w.place_building(1, BuildingKind::Sawmill, 10, 2).unwrap().id;
+        let far = w.place_building(1, BuildingKind::Sawmill, 70, 2).unwrap().id;
+        let k = w.units.iter().position(|u| u.kind == UnitKind::Carrier).unwrap();
+        let index: std::collections::HashMap<u32, usize> = w.buildings.iter().enumerate().map(|(i, b)| (b.id, i)).collect();
+        let target = |w: &World| match w.find_job(k, &super::Reserved::default(), &index).map(|j| j.kind) {
+            Some(super::JobKind::Supply { to }) | Some(super::JobKind::Pickup { from: to }) => to,
+            None => 0,
+        };
+        let set = |w: &mut World, id: u32, st: BuildingStatus| w.buildings.iter_mut().find(|b| b.id == id).unwrap().status = st;
+        // Beide brauchen Holz, keiner steht: der nähere zuerst.
+        set(&mut w, near, BuildingStatus::Working);
+        set(&mut w, far, BuildingStatus::Working);
+        w.transport_wait.clear();
+        assert_eq!(target(&w), near);
+        // Der ferne wartet schon lange: er kommt vor.
+        w.transport_wait.insert(far, 300.0);
+        assert_eq!(target(&w), far, "lange Wartezeit");
+        // Der nahe steht still (Eingang fehlt): er hat Vorrang vor allem.
+        set(&mut w, near, BuildingStatus::MissingInput);
+        assert_eq!(target(&w), near, "Stillstand zuerst");
     }
 
     #[test]
