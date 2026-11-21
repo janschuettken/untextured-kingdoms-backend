@@ -177,14 +177,16 @@ impl World {
         Ok(())
     }
 
-    /// Beute: die Hälfte aller Waren und Taler des Besiegten geht an `to`, der seinen König
+    /// Beute: `army.loot_percent` (Standard die Hälfte) aller Waren und Taler des Besiegten geht an `to`, der seinen König
     /// getötet hat, wie beim Handel (sofort oder mit Handelskarren, die `to` gehören und
     /// die er steuern kann). Muss laufen, bevor die Gebäude des Besiegten verschwinden.
     pub(super) fn send_loot(&mut self, from: u32, to: u32) {
         let (Some(src), true) = (self.stocks.get(&from), self.stocks.contains_key(&to)) else { return };
+        let pct = self.economy.def.army.loot_percent.min(100) as u64;
+        let share = |n: u32| (n as u64 * pct / 100) as u32;
         let list: Vec<GoodAmount> =
-            src.state().goods.into_iter().map(|g| GoodAmount { good: g.good, amount: g.amount / 2 }).filter(|g| g.amount > 0).collect();
-        let taler = src.taler / 2;
+            src.state().goods.into_iter().map(|g| GoodAmount { good: g.good, amount: share(g.amount) }).filter(|g| g.amount > 0).collect();
+        let taler = share(src.taler);
         if list.is_empty() && taler == 0 {
             return;
         }
@@ -454,6 +456,7 @@ mod tests {
     #[test]
     fn beute_geht_an_den_sieger() {
         let mut w = two();
+        w.economy.def.army.loot_percent = 50;
         w.set_trade_mode(TradeMode::Instant);
         w.admin_give(2, &[GoodAmount { good: Good::Stone, amount: 40 }], 60);
         let (s1, s2) = (amount(&w, 1, Good::Stone), amount(&w, 2, Good::Stone));
@@ -465,8 +468,22 @@ mod tests {
     }
 
     #[test]
+    fn beute_anteil_einstellbar() {
+        let mut w = two();
+        w.economy.def.army.loot_percent = 25;
+        w.set_trade_mode(TradeMode::Instant);
+        w.admin_give(2, &[GoodAmount { good: Good::Stone, amount: 40 }], 60);
+        let (s1, s2) = (amount(&w, 1, Good::Stone), amount(&w, 2, Good::Stone));
+        let (t1, t2) = (w.stocks[&1].taler, w.stocks[&2].taler);
+        w.eliminate(2, Some(1));
+        assert_eq!(amount(&w, 1, Good::Stone), s1 + s2 / 4);
+        assert_eq!(w.stocks[&1].taler, t1 + t2 / 4);
+    }
+
+    #[test]
     fn beute_als_karawane_des_siegers() {
         let mut w = two();
+        w.economy.def.army.loot_percent = 50;
         w.set_trade_mode(TradeMode::Carts);
         w.admin_give(2, &[GoodAmount { good: Good::Stone, amount: 40 }], 60);
         let (s1, s2) = (amount(&w, 1, Good::Stone), amount(&w, 2, Good::Stone));

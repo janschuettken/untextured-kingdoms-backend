@@ -913,6 +913,7 @@ async fn handle_msg(
         | ClientMsg::Attack { .. }
         | ClientMsg::Mount { .. }
         | ClientMsg::Dismount { .. }
+        | ClientMsg::Stop { .. }
         | ClientMsg::RepairBuilding { .. }
         | ClientMsg::Trade { .. }
         | ClientMsg::SetAutoTrade { .. }
@@ -991,6 +992,7 @@ pub fn apply_command(
         ClientMsg::Dismount { unit_ids } => {
             world.order_dismount(player_id, &unit_ids)?;
         }
+        ClientMsg::Stop { unit_ids } => world.order_stop(player_id, &unit_ids),
         ClientMsg::PlaceBuilding {
             kind,
             x,

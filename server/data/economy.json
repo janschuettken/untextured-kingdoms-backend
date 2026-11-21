@@ -2761,6 +2761,7 @@
     "min_damage": 1,
     "horse_hit_percent": 70,
     "melee_max_levels": 1,
-    "height_range_percent": 5
+    "height_range_percent": 5,
+    "loot_percent": 50
   }
 }

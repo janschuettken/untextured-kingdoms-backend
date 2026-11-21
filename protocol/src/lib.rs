@@ -54,6 +54,8 @@ pub enum ClientMsg {
     Mount { unit_ids: Vec<u32> },
     /// Reiter steigen ab; das Pferd läuft zurück in die nächste eigene Pferdezucht.
     Dismount { unit_ids: Vec<u32> },
+    /// Sofort anhalten: Laufbefehl, weitere Wegpunkte und Angriffsbefehl verfallen.
+    Stop { unit_ids: Vec<u32> },
     /// Gebäude bauen. (x, y) ist das Feld oben links der Grundfläche.
     /// Der Server prüft Untergrund, Platz und Besitz.
     /// `x`, `y` ist die linke obere Ecke der (gedrehten) Grundfläche.
@@ -1534,6 +1536,8 @@ pub struct ArmyDef {
     /// Höhenvorteil, Fernkampf: so viel Prozent mehr Reichweite je Stufe, die der Schütze
     /// höher steht als sein Ziel (Gelände, Mauer, Turm). Gleiche Höhe = kein Bonus.
     pub height_range_percent: f32,
+    /// Beute: wer einen König tötet, bekommt so viel Prozent der Waren und Taler des Besiegten.
+    pub loot_percent: u32,
 }
 
 impl Default for ArmyDef {
@@ -1556,6 +1560,7 @@ impl Default for ArmyDef {
             horse_hit_percent: 70,
             melee_max_levels: 1.0,
             height_range_percent: 5.0,
+            loot_percent: 50,
         }
     }
 }

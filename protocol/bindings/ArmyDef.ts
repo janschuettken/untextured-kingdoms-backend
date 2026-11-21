@@ -75,4 +75,8 @@ melee_max_levels: number,
  * Höhenvorteil, Fernkampf: so viel Prozent mehr Reichweite je Stufe, die der Schütze
  * höher steht als sein Ziel (Gelände, Mauer, Turm). Gleiche Höhe = kein Bonus.
  */
-height_range_percent: number, };
+height_range_percent: number, 
+/**
+ * Beute: wer einen König tötet, bekommt so viel Prozent der Waren und Taler des Besiegten.
+ */
+loot_percent: number, };

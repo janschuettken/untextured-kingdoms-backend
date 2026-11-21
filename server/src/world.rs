@@ -1266,6 +1266,23 @@ impl World {
         u.layers = layers;
     }
 
+    /// Sofort anhalten (Soldaten, König): wer läuft, bleibt stehen, Wegpunkte und Angriffsbefehl
+    /// verfallen. Fernkämpfer dürfen danach gleich wieder von selbst schießen.
+    pub fn order_stop(&mut self, player: u32, unit_ids: &[u32]) {
+        for u in self.units.iter_mut().filter(|u| u.owner == player && !u.is_civilian() && unit_ids.contains(&u.id)) {
+            u.path.clear();
+            u.layers.clear();
+            u.waypoints.clear();
+            u.attack_order = None;
+            u.attack_force = false;
+            u.chase_timer = 0.0;
+            u.speed_cap = None;
+            u.mount_at = None;
+            u.target = Some(u.pos);
+            u.target_wall = u.on_wall;
+        }
+    }
+
     /// Bewegungsbefehl eines Spielers. Fremde Einheiten werden ignoriert.
     /// Liefert false, wenn keine der Einheiten das Ziel erreichen kann; dann
     /// läuft auch keine los. Wer nicht hinkommt, bleibt stehen.
@@ -2280,5 +2297,23 @@ mod tests {
             t += 0.05;
         }
         assert!(world.replan_pending.is_none(), "nach der Ruhezeit neu geplant");
+    }
+
+    #[test]
+    fn anhalten_bleibt_sofort_stehen() {
+        let mut world = flat_world();
+        let id = world.units[0].id;
+        world.order_move(1, &[id], (15.5, 1.5));
+        world.step(0.5);
+        let at = world.units[0].pos;
+        world.order_stop(2, &[id]);
+        assert!(!world.units[0].path.is_empty(), "fremde Einheiten hält man nicht an");
+        world.order_stop(1, &[id]);
+        for _ in 0..20 {
+            world.step(0.05);
+        }
+        let u = &world.units[0];
+        assert!(u.path.is_empty() && u.waypoints.is_empty());
+        assert!((u.pos.0 - at.0).abs() < 0.6 && (u.pos.1 - at.1).abs() < 0.6, "steht: {:?} statt {:?}", u.pos, at);
     }
 }
