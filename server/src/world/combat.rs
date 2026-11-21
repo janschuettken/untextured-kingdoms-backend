@@ -20,7 +20,9 @@
 //! seltener getroffen – `cover_percent` der Gebäudestufe sagt, wie viel Prozent der Schüsse
 //! danebengehen. Der Schuss fliegt trotzdem (Pfeil sichtbar), richtet aber nichts an.
 //!
-//! Noch nicht da: Höhenvorteil.
+//! Höhenvorteil (nur relativ, Mauern und Türme zählen mit): Nahkampf geht nur bis
+//! `army.melee_max_levels` Stufen Unterschied. Fernkämpfer reichen je Stufe, die sie höher
+//! stehen als ihr Ziel, `army.height_range_percent` weiter. Gleiche Höhe = kein Bonus.
 
 use std::collections::HashMap;
 
@@ -54,6 +56,31 @@ type TeamKey = (bool, u32);
 
 impl World {
     /// Lebenspunkte einer Einheit (0 = hat keine, z. B. Träger).
+    /// Wie viele Geländestufen steht `u` höher als `t` (negativ: tiefer)? Wehrgänge zählen mit.
+    pub(super) fn levels_above(&self, u: &Unit, t: &Unit) -> f32 {
+        (self.feet_h(u) - self.feet_h(t)) / super::ballistics::LEVEL_HEIGHT
+    }
+
+    /// Reichweite gegen dieses Ziel: wer höher steht, reicht weiter (`army.height_range_percent` je Stufe).
+    pub(super) fn range_against(&self, u: &Unit, t: &Unit, range: f32) -> f32 {
+        let pct = self.economy.def.army.height_range_percent;
+        if pct <= 0.0 {
+            return range;
+        }
+        range * (1.0 + pct / 100.0 * self.levels_above(u, t).max(0.0))
+    }
+
+    /// Nahkampf: gleiche Ebene (Boden oder Wehrgang) und nicht mehr als `army.melee_max_levels` Stufen Unterschied.
+    pub(super) fn melee_reaches(&self, u: &Unit, t: &Unit) -> bool {
+        t.on_wall == u.on_wall && self.levels_above(u, t).abs() <= self.economy.def.army.melee_max_levels + 0.05
+    }
+
+    /// Größte Reichweite, die eine Einheit mit Höhenvorteil haben kann (für die Suche).
+    fn max_range(&self, range: f32) -> f32 {
+        // 10 Geländestufen plus der höchste Turm reichen dicke.
+        range * (1.0 + self.economy.def.army.height_range_percent / 100.0 * 24.0)
+    }
+
     pub(super) fn unit_hp(&self, u: &Unit) -> u32 {
         self.economy.unit(u.kind).map_or(0, |d| d.hp.saturating_sub(u.damage))
     }
@@ -261,9 +288,11 @@ impl World {
                     let t = &self.units[j];
                     let d = (t.pos.0 - u.pos.0).hypot(t.pos.1 - u.pos.1);
                     // Fernkampf: nur wenn Wurfbahn bzw. Sichtlinie frei ist, sonst näher heran.
-                    let flight = if ranged && d <= reach { self.flight(u, t, def.range) } else { None };
-                    let ok = if ranged { flight.is_some() } else { t.on_wall == u.on_wall };
-                    (t.owner, t.pos, t.on_wall, d, ok, Some((j, flight)))
+                    // Von oben reicht es weiter.
+                    let range = if ranged { self.range_against(u, t, def.range) } else { def.range };
+                    let flight = if ranged && d <= range + REACH { self.flight(u, t, range) } else { None };
+                    let ok = if ranged { flight.is_some() } else { self.melee_reaches(u, t) };
+                    (t.owner, t.pos, t.on_wall, d - (range - def.range), ok, Some((j, flight, range)))
                 }),
                 AttackTarget::Building { id } => self.buildings.iter().find(|b| b.id == id && b.hp > 0).map(|b| {
                     let dx = (b.x as f32 - u.pos.0).max(u.pos.0 - (b.x + b.w) as f32).max(0.0);
@@ -299,10 +328,10 @@ impl World {
                 if u.attack_cooldown <= 0.0 {
                     u.attack_cooldown = def.attack_seconds;
                     match (order, j) {
-                        (AttackTarget::Unit { .. }, Some((j, flight))) => {
+                        (AttackTarget::Unit { .. }, Some((j, flight, range))) => {
                             hits.push((j, k, by, ranged));
                             if let Some(f) = flight {
-                                shots.push(self.make_shot(&self.units[k], &self.units[j], f, def.range));
+                                shots.push(self.make_shot(&self.units[k], &self.units[j], f, range));
                             }
                         }
                         (AttackTarget::Building { id }, _) => building_hits.push((id, k)),
@@ -336,7 +365,8 @@ impl World {
             if let Some((j, flight)) = self.nearest_foe(k, &grid, false) {
                 hits.push((j, k, u.owner, self.economy.is_ranged(def.range)));
                 if let Some(f) = flight {
-                    shots.push(self.make_shot(u, &self.units[j], f, def.range));
+                    let range = self.range_against(u, &self.units[j], def.range);
+                    shots.push(self.make_shot(u, &self.units[j], f, range));
                 }
                 self.units[k].attack_cooldown = def.attack_seconds;
                 let foe = self.units[j].id;
@@ -437,7 +467,7 @@ impl World {
         let u = &self.units[k];
         let def = self.economy.unit(u.kind)?;
         let ranged = self.economy.is_ranged(def.range);
-        let reach = def.range + REACH;
+        let reach = if ranged { self.max_range(def.range) } else { def.range } + REACH;
         let team = self.team(u.owner);
         let (cx, cy) = ((u.pos.0 / CELL) as i32, (u.pos.1 / CELL) as i32);
         let r = (reach / CELL).ceil() as i32;
@@ -459,14 +489,18 @@ impl World {
                     if t.kind.is_civilian() && self.inside(t) {
                         continue;
                     }
-                    if (!ranged && t.on_wall != u.on_wall) || !self.can_damage(def, t) {
+                    let d = (t.pos.0 - u.pos.0).hypot(t.pos.1 - u.pos.1);
+                    if d > reach || !self.can_damage(def, t) {
                         continue;
                     }
-                    let d = (t.pos.0 - u.pos.0).hypot(t.pos.1 - u.pos.1);
-                    let key = (civilian, d);
-                    if d <= reach {
-                        near.push((key, j));
+                    if !ranged && !self.melee_reaches(u, t) {
+                        continue;
                     }
+                    if ranged && d > self.range_against(u, t, def.range) + REACH {
+                        continue;
+                    }
+                    let key = (civilian, d);
+                    near.push((key, j));
                 }
             }
         }
@@ -475,7 +509,8 @@ impl World {
             if !ranged {
                 return Some((j, None));
             }
-            self.flight(u, &self.units[j], def.range).map(|f| (j, Some(f)))
+            let t = &self.units[j];
+            self.flight(u, t, self.range_against(u, t, def.range)).map(|f| (j, Some(f)))
         })
     }
 
@@ -740,6 +775,51 @@ mod tests {
         assert!(open > 0 && half * 2 == open, "halbe Abwehr: halber Schaden ({half} von {open})");
         let (attacks, none) = hit_keep(armor(&[(D::HeavyMelee, 0, 1.0)]));
         assert!(!attacks && none == 0, "ganz abgewehrt: gar kein Angriff");
+    }
+
+    /// Links Stufe 0, rechts ab Spalte `cliff` Stufe 3 (eine Klippe); Kampfwerte wie `world()`.
+    fn cliff_world(width: usize, cliff: usize) -> World {
+        let row = format!("{}{}", "0".repeat(cliff), "3".repeat(width - cliff));
+        let text = format!("spawn 1 1\nspawn 2 8\n{}", format!("{row}\n").repeat(10));
+        let mut w = World::new(GameMap::parse(&text).unwrap(), world().economy.clone().without_start_building());
+        w.spawn_player(1);
+        w.spawn_player(2);
+        w.units.retain(|u| u.kind != UnitKind::King);
+        w.take_events();
+        w
+    }
+
+    fn hurt(w: &World, id: u32) -> bool {
+        w.units.iter().find(|u| u.id == id).is_none_or(|u| u.damage > 0)
+    }
+
+    #[test]
+    fn nahkampf_nicht_ueber_die_klippe() {
+        let mut w = cliff_world(30, 15);
+        w.units.push(Unit::new(30_001, 1, UnitKind::Spearman, (14.5, 5.5)));
+        w.units.push(Unit::new(30_002, 2, UnitKind::Spearman, (15.5, 5.5)));
+        run(&mut w, 10.0);
+        assert!(!hurt(&w, 30_001) && !hurt(&w, 30_002), "drei Stufen: kein Nahkampf");
+        // Auf derselben Höhe geht es.
+        w.units.iter_mut().find(|u| u.id == 30_001).unwrap().pos = (16.5, 5.5);
+        run(&mut w, 10.0);
+        assert!(hurt(&w, 30_001) || hurt(&w, 30_002), "gleiche Höhe: Nahkampf");
+    }
+
+    #[test]
+    fn von_oben_reicht_der_bogen_weiter() {
+        let range = world().economy.unit(UnitKind::Archer).unwrap().range;
+        // 10 % weiter weg als die Reichweite: oben (3 Stufen, +15 %) trifft man, auf gleicher Höhe nicht.
+        // Die Klippe steht nah beim Schützen, damit ihre Kante die Sicht nach unten nicht verdeckt.
+        let d = range * 1.1;
+        for (cliff, hits) in [(54, true), (0, false)] {
+            let mut w = cliff_world(60, cliff);
+            w.set_shot_mode(protocol::ShotMode::LineOfSight);
+            w.units.push(Unit::new(30_011, 1, UnitKind::Archer, (59.5, 5.5)));
+            w.units.push(Unit::new(30_012, 2, UnitKind::Spearman, (59.5 - d, 5.5)));
+            run(&mut w, 10.0);
+            assert_eq!(hurt(&w, 30_012), hits, "Klippe bei {cliff}");
+        }
     }
 
     fn king(w: &World, p: u32) -> Option<&Unit> {

@@ -10,6 +10,7 @@ import type { MapRef } from "./MapRef";
 import type { PlayerInfo } from "./PlayerInfo";
 import type { ResourceKind } from "./ResourceKind";
 import type { Shot } from "./Shot";
+import type { ShotMode } from "./ShotMode";
 import type { StockState } from "./StockState";
 import type { Text } from "./Text";
 import type { TradeMode } from "./TradeMode";
@@ -32,7 +33,11 @@ stock: StockState,
 /**
  * Alle Gebäude, die schon stehen. Danach kommen nur noch Änderungen.
  */
-buildings: Array<BuildingState>, } | { "type": "tick", 
+buildings: Array<BuildingState>, 
+/**
+ * Wie Fernkämpfer schießen (für die Reichweitenanzeige).
+ */
+shot_mode: ShotMode, } | { "type": "tick", 
 /**
  * JSON-Zahl; reicht bei 20 Ticks/s für Millionen Jahre.
  */

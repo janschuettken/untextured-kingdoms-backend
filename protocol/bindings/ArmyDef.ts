@@ -65,4 +65,14 @@ min_damage: number,
 /**
  * Treffer gegen einen Reiter gehen zu so viel Prozent aufs Pferd, sonst auf den Reiter.
  */
-horse_hit_percent: number, };
+horse_hit_percent: number, 
+/**
+ * Höhenvorteil, Nahkampf: zwischen Angreifer und Ziel höchstens so viele Geländestufen
+ * Unterschied (Mauern zählen mit). Mehr = kein Nahkampf möglich.
+ */
+melee_max_levels: number, 
+/**
+ * Höhenvorteil, Fernkampf: so viel Prozent mehr Reichweite je Stufe, die der Schütze
+ * höher steht als sein Ziel (Gelände, Mauer, Turm). Gleiche Höhe = kein Bonus.
+ */
+height_range_percent: number, };

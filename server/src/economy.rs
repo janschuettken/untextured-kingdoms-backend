@@ -402,6 +402,9 @@ impl Economy {
         if army.queue_max == 0 {
             return Err("Heer: queue_max muss mindestens 1 sein".into());
         }
+        if !(army.melee_max_levels >= 0.0 && army.melee_max_levels.is_finite() && army.height_range_percent >= 0.0 && army.height_range_percent <= 100.0) {
+            return Err("Heer: melee_max_levels und height_range_percent (0 bis 100) dürfen nicht negativ sein".into());
+        }
         if !(army.melee_range >= 0.0 && army.melee_range.is_finite()) {
             return Err("Heer: melee_range darf nicht negativ sein".into());
         }

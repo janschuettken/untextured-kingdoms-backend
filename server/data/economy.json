@@ -2759,6 +2759,8 @@
     "alert_radius": 80,
     "alert_seconds": 30,
     "min_damage": 1,
-    "horse_hit_percent": 70
+    "horse_hit_percent": 70,
+    "melee_max_levels": 1,
+    "height_range_percent": 5
   }
 }

@@ -171,6 +171,9 @@ pub enum ServerMsg {
         stock: StockState,
         /// Alle Gebäude, die schon stehen. Danach kommen nur noch Änderungen.
         buildings: Vec<BuildingState>,
+        /// Wie Fernkämpfer schießen (für die Reichweitenanzeige).
+        #[serde(default)]
+        shot_mode: ShotMode,
     },
     Tick {
         /// JSON-Zahl; reicht bei 20 Ticks/s für Millionen Jahre.
@@ -1525,6 +1528,12 @@ pub struct ArmyDef {
     pub min_damage: u32,
     /// Treffer gegen einen Reiter gehen zu so viel Prozent aufs Pferd, sonst auf den Reiter.
     pub horse_hit_percent: u32,
+    /// Höhenvorteil, Nahkampf: zwischen Angreifer und Ziel höchstens so viele Geländestufen
+    /// Unterschied (Mauern zählen mit). Mehr = kein Nahkampf möglich.
+    pub melee_max_levels: f32,
+    /// Höhenvorteil, Fernkampf: so viel Prozent mehr Reichweite je Stufe, die der Schütze
+    /// höher steht als sein Ziel (Gelände, Mauer, Turm). Gleiche Höhe = kein Bonus.
+    pub height_range_percent: f32,
 }
 
 impl Default for ArmyDef {
@@ -1545,6 +1554,8 @@ impl Default for ArmyDef {
             alert_seconds: 30.0,
             min_damage: 1,
             horse_hit_percent: 70,
+            melee_max_levels: 1.0,
+            height_range_percent: 5.0,
         }
     }
 }

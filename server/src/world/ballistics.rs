@@ -14,7 +14,7 @@ use protocol::{BuildingState, ShotMode};
 use super::{Unit, World};
 
 /// Weltmaß einer Geländestufe (wie `LEVEL_HEIGHT` im Client).
-const LEVEL_HEIGHT: f32 = 0.5;
+pub(super) const LEVEL_HEIGHT: f32 = 0.5;
 /// Abschuss- und Trefferhöhe über den Füßen.
 const BODY: f32 = 0.7;
 /// Auf dem Wehrgang steht man so weit unter der Oberkante (Zinnen).
