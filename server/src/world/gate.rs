@@ -217,10 +217,12 @@ impl World {
     }
 
     /// Breitensuche oben auf dem Wehrgang ab `from`: Vorgänger je erreichbarem Feld.
-    /// Schräg nur, wenn beide Felder um die Ecke auch begehbar sind; Höhenunterschied höchstens 1.
+    /// Schräg nur, wenn beide Felder um die Ecke auch begehbar sind; Höhenunterschied höchstens
+    /// `movement.walkway_step_levels` (Mauern am Hang bleiben verbunden).
     fn wall_tree(&self, tiles: &HashSet<usize>, from: usize) -> HashMap<usize, usize> {
         let w = self.map.width as i64;
         let h = self.map.height as i64;
+        let step = self.economy.def.movement.walkway_step_levels;
         let mut came = HashMap::new();
         if !tiles.contains(&from) {
             return came;
@@ -241,7 +243,7 @@ impl World {
                 if dx != 0 && dy != 0 && !(tiles.contains(&((y * w + nx) as usize)) && tiles.contains(&((ny * w + x) as usize))) {
                     continue;
                 }
-                if self.map.levels[t].abs_diff(self.map.levels[n]) > 1 {
+                if self.map.levels[t].abs_diff(self.map.levels[n]) > step {
                     continue;
                 }
                 came.insert(n, t);
@@ -735,5 +737,28 @@ mod tests {
         let l = World::from_save(map, w.economy.clone(), back).unwrap();
         assert!(!l.map.nav.is_open(11, 10), "geschlossenes Tor bleibt zu");
         assert!(!l.map.nav.is_open(10, 10), "Pfeiler blockiert");
+    }
+
+    #[test]
+    fn wehrgang_ueber_kleine_hoehenstufen() {
+        // Mauer quer über drei Ebenen: 0 | 2 | 5. Stufe 2 ist begehbar, Stufe 3 trennt.
+        let row: String = (0..24).map(|x| if x < 8 { '0' } else if x < 16 { '2' } else { '5' }).collect();
+        let text = format!("spawn 2 2\n{}", format!("{row}\n").repeat(24));
+        let eco = crate::economy::Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people().without_build_radius();
+        assert_eq!(eco.def.movement.walkway_step_levels, 2);
+        let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
+        w.spawn_player(1);
+        let lots: Vec<GoodAmount> = [Good::Wood, Good::Stone].iter().map(|&good| GoodAmount { good, amount: 5000 }).collect();
+        w.admin_give(1, &lots, 0);
+        for x in 0..24 {
+            w.place_building_rotated(1, BuildingKind::Wall, x, 10, 0, 2).unwrap();
+        }
+        let ends = |w: &World, to: (f32, f32)| w.plan(1, (4.5, 10.5), true, to, true).0.last().copied();
+        assert_eq!(ends(&w, (12.5, 10.5)), Some((12.5, 10.5)), "über 2 Stufen hinweg");
+        assert_ne!(ends(&w, (20.5, 10.5)), Some((20.5, 10.5)), "3 Stufen: getrennt");
+        w.economy.def.movement.walkway_step_levels = 3;
+        assert_eq!(ends(&w, (20.5, 10.5)), Some((20.5, 10.5)), "Grenze einstellbar");
+        w.economy.def.movement.walkway_step_levels = 1;
+        assert_ne!(ends(&w, (12.5, 10.5)), Some((12.5, 10.5)), "alte Regel");
     }
 }

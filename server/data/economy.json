@@ -2389,7 +2389,8 @@
     "slope_speed_percent": 80,
     "spread_distance": 0.5,
     "spread_speed": 1,
-    "replan_delay_seconds": 5
+    "replan_delay_seconds": 5,
+    "walkway_step_levels": 2
   },
   "population": {
     "food": ["bread", "meat", "fruit"],

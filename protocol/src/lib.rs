@@ -1635,6 +1635,14 @@ pub struct MovementDef {
     /// der letzten Änderung, höchstens nach der doppelten Zeit. 0 = immer sofort.
     #[serde(default = "default_replan_delay")]
     pub replan_delay_seconds: f32,
+    /// Größter Höhenunterschied (Stufen) zwischen zwei benachbarten Wehrgangfeldern, über den
+    /// Einheiten oben weiterlaufen (Mauern am Hang). Größer = getrennte Wehrgänge.
+    #[serde(default = "default_walkway_step")]
+    pub walkway_step_levels: u8,
+}
+
+fn default_walkway_step() -> u8 {
+    2
 }
 
 fn default_replan_delay() -> f32 {
@@ -1730,6 +1738,7 @@ impl Default for MovementDef {
             spread_distance: default_spread_distance(),
             spread_speed: default_spread_speed(),
             replan_delay_seconds: default_replan_delay(),
+            walkway_step_levels: default_walkway_step(),
         }
     }
 }

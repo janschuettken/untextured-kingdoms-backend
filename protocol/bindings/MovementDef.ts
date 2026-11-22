@@ -26,4 +26,9 @@ spread_speed: number,
  * neu. Alle anderen (kürzere Wege durch neue Lücken, Wartende) erst so viele Sekunden nach
  * der letzten Änderung, höchstens nach der doppelten Zeit. 0 = immer sofort.
  */
-replan_delay_seconds: number, };
+replan_delay_seconds: number, 
+/**
+ * Größter Höhenunterschied (Stufen) zwischen zwei benachbarten Wehrgangfeldern, über den
+ * Einheiten oben weiterlaufen (Mauern am Hang). Größer = getrennte Wehrgänge.
+ */
+walkway_step_levels: number, };

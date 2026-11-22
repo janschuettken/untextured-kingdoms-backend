@@ -316,6 +316,9 @@ impl Economy {
         if !(mv.replan_delay_seconds >= 0.0 && mv.replan_delay_seconds <= 60.0) {
             return Err("movement.replan_delay_seconds: 0 bis 60".into());
         }
+        if mv.walkway_step_levels > 9 {
+            return Err("movement.walkway_step_levels: 0 bis 9".into());
+        }
         if !(mv.spread_distance >= 0.0 && mv.spread_distance <= 3.0 && mv.spread_speed >= 0.0 && mv.spread_speed.is_finite()) {
             return Err("Auseinanderrücken: Abstand 0 bis 3, Tempo nicht negativ".into());
         }
