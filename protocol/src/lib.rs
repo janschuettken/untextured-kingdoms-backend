@@ -483,6 +483,11 @@ pub struct GameSummary {
     #[serde(default)]
     pub title: String,
     pub map: String,
+    /// Kartengröße in Feldern.
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
     pub phase: GamePhase,
     pub host_name: String,
     /// Öffentliche Id des Gastgebers (wer umbenennen darf).
