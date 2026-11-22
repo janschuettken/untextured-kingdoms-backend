@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn arbeiter_laeuft_hin_und_bringt_holz() {
         let mut w = world();
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let b = w.place_building(1, BuildingKind::Woodcutter, 18, 2).unwrap();
         assert_eq!(w.units.iter().filter(|u| u.kind == UnitKind::Worker).count(), 1);
         let worker = w.units.iter().find(|u| u.kind == UnitKind::Worker).unwrap();
@@ -374,7 +374,7 @@ mod tests {
         let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people();
         let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
         w.spawn_player(1);
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let r = w.economy.building(BuildingKind::Quarry).unwrap().at(1).gather_radius;
         assert!(r >= 2, "kleiner Umkreis eingestellt");
         // Zu weit weg geht nicht, daneben schon.
@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn ohne_traeger_traegt_der_arbeiter_selbst() {
         let mut w = world();
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         w.economy.def.army.civilian_respawn_seconds = 0.0; // entfernte Träger nicht ersetzen
         w.units.retain(|u| !u.is_transport());
         let b = w.place_building(1, BuildingKind::Woodcutter, 18, 2).unwrap();

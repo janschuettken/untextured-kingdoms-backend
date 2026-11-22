@@ -375,6 +375,9 @@ mod tests {
         w.spawn_player_at(1, (8, 8));
         w.spawn_player_at(2, (50, 50));
         assert!(w.buildings.iter().filter(|b| b.kind == BuildingKind::Keep).count() == 2);
+        // Der Bergfried ist kein Lager: jeder bekommt sein (erstes, freies) Vorratslager.
+        w.place_building(1, BuildingKind::Storehouse, 16, 8).unwrap();
+        w.place_building(2, BuildingKind::Storehouse, 42, 50).unwrap();
         w.admin_give(1, &[GoodAmount { good: Good::Stone, amount: 100 }], 100);
         w
     }

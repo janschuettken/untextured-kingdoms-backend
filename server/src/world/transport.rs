@@ -944,7 +944,7 @@ mod tests {
     #[test]
     fn traeger_und_karren_nur_aus_dem_wagenschuppen() {
         let mut w = flat(30, 20);
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         w.place_building(1, BuildingKind::Storehouse, 12, 2).unwrap();
         assert_eq!(count(&w, UnitKind::Carrier), 0, "Lager bringen keine Träger mehr mit");
         let shed = shed(&mut w, 20, 2, 1);
@@ -970,7 +970,7 @@ mod tests {
     fn wagenschuppen_bewegt_nur_ausgewaehlte_waren() {
         let mut w = flat(40, 20);
         w.worker_carries_default = false; // hier tragen die Träger
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         granary(&mut w, 30, 14);
         let s = shed(&mut w, 10, 12, 1);
         let mut set = w.buildings.iter().find(|b| b.id == s).unwrap().settings.clone();
@@ -992,7 +992,7 @@ mod tests {
     fn traeger_holen_ab_und_beliefern() {
         let mut w = flat(40, 20);
         w.worker_carries_default = false; // hier tragen die Träger
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let cutter = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap();
         shed(&mut w, 10, 12, 1);
         let wood = central(&w, Good::Wood);
@@ -1014,7 +1014,7 @@ mod tests {
         let mut w = flat(80, 20);
         w.worker_carries_default = false; // hier tragen die Träger
         w.admin_give(1, &[GoodAmount { good: Good::Wood, amount: 100 }, GoodAmount { good: Good::Boards, amount: 50 }], 0);
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         w.economy.def.buildings.iter_mut().find(|d| d.kind == BuildingKind::CartShed).unwrap().levels.iter_mut().for_each(|l| l.service_radius = 0);
         shed(&mut w, 2, 12, 1);
         let near = w.place_building(1, BuildingKind::Sawmill, 10, 2).unwrap().id;
@@ -1043,7 +1043,7 @@ mod tests {
     fn traeger_kommen_sofort_wenn_etwas_fertig_ist() {
         let mut w = flat(40, 20);
         w.worker_carries_default = false; // hier tragen die Träger
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let mill = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap().id;
         w.buildings.iter_mut().find(|b| b.id == mill).unwrap().settings.paused = true;
         shed(&mut w, 10, 12, 1);
@@ -1061,7 +1061,7 @@ mod tests {
     fn karren_fuellen_eingangslager_auf() {
         // Der Arbeiter trägt selbst (Standard), mit „Karren liefern“ bringt der Karren trotzdem Holz in großen Ladungen.
         let mut w = flat(40, 20);
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let mill = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap().id;
         assert!(w.buildings.iter().find(|b| b.id == mill).unwrap().settings.cart_deliveries, "Standard: an");
         let s = &mut w.buildings.iter_mut().find(|b| b.id == mill).unwrap().settings;
@@ -1126,7 +1126,7 @@ mod tests {
         );
         // Bergfried mit Trägern und ein Wagenschuppen: Die große Ladung lassen
         // die Träger für den Karren liegen, er holt alles auf einmal.
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         granary(&mut w, 2, 12);
         shed(&mut w, 10, 2, 2);
         let fruit = central(&w, Good::Fruit);
@@ -1184,7 +1184,7 @@ mod tests {
         let mut w = flat(60, 20);
         w.worker_carries_default = false; // hier tragen die Träger
         w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 100 }, GoodAmount { good: Good::Wood, amount: 100 }], 0);
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         shed(&mut w, 30, 12, 1);
         let saw = w.place_building(1, BuildingKind::Sawmill, 40, 2).unwrap().id;
         let tan = sattlerei(&mut w, 50, 2);
@@ -1207,7 +1207,7 @@ mod tests {
         let mut w = flat(60, 20);
         w.worker_carries_default = false; // hier tragen die Träger
         w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 100 }, GoodAmount { good: Good::Wood, amount: 100 }], 0);
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         shed(&mut w, 30, 12, 1);
         let saw = w.place_building(1, BuildingKind::Sawmill, 40, 2).unwrap().id;
         let tan = sattlerei(&mut w, 50, 2);
@@ -1231,7 +1231,7 @@ mod tests {
     fn lager_nimmt_nur_gewaehlte_waren() {
         let mut w = flat(40, 20);
         w.worker_carries_default = false; // hier tragen die Träger
-        let keep = w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        let keep = w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let mut s = keep.settings.clone();
         s.stores = Some(vec![Good::Wood]);
         w.configure(1, keep.id, s).unwrap();
@@ -1249,7 +1249,7 @@ mod tests {
     #[test]
     fn mindestbestand_bleibt_im_vorrat() {
         let mut w = flat(40, 20);
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let saw = w.place_building(1, BuildingKind::Sawmill, 20, 2).unwrap();
         let wood = central(&w, Good::Wood);
         let mut s = saw.settings.clone();
@@ -1264,7 +1264,7 @@ mod tests {
     fn karren_sammelt_bei_mehreren_und_bleibt_im_umkreis() {
         let mut w = flat(120, 30);
         w.worker_carries_default = false; // hier tragen die Träger
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         granary(&mut w, 2, 12);
         shed(&mut w, 12, 2, 2);
         w.economy.def.army.civilian_respawn_seconds = 0.0; // entfernte Träger nicht ersetzen
@@ -1295,7 +1295,7 @@ mod tests {
     #[test]
     fn abriss_gibt_inhalt_in_den_vorrat() {
         let mut w = flat(30, 20);
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let saw = w.place_building(1, BuildingKind::Sawmill, 14, 2).unwrap();
         w.inventories.get_mut(&saw.id).unwrap().add(Good::Boards, 5);
         let boards = central(&w, Good::Boards);

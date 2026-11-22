@@ -200,7 +200,7 @@ mod tests {
         let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
         let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
         w.spawn_player(1);
-        let keep = w.place_building(1, BuildingKind::Keep, 2, 2).unwrap().id;
+        let keep = w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap().id;
         let store = w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap().id;
         w.step(0.05);
         let total = |w: &World, g: Good| w.hub_amount(keep, g) + w.hub_amount(store, g);
@@ -232,7 +232,7 @@ mod tests {
         let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
         let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
         w.spawn_player(1);
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         w.stocks.get_mut(&1).unwrap().add_unlimited(Good::Bread, 30);
         w.stocks.get_mut(&1).unwrap().add_unlimited(Good::Iron, 5);
         w.step(0.05);
@@ -325,7 +325,7 @@ mod tests {
         let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
         let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
         w.spawn_player(1);
-        let keep = w.place_building(1, BuildingKind::Keep, 2, 2).unwrap().id;
+        let keep = w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap().id;
         let store = w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap().id;
         let base = w.economy.def.base_capacity;
         w.admin_give(1, &[GoodAmount { good: Good::Iron, amount: base + 50 }], 0);
@@ -344,7 +344,7 @@ mod tests {
         let text = format!("spawn 0 19\n{}", format!("{row}\n").repeat(20));
         let mut w = World::new(GameMap::parse(&text).unwrap(), Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_start_building().without_people());
         w.spawn_player(1);
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let lots: Vec<GoodAmount> = [Good::Wood, Good::Boards, Good::Stone].iter().map(|&good| GoodAmount { good, amount: 200 }).collect();
         w.admin_give(1, &lots, 0);
         for kind in [BuildingKind::Storehouse, BuildingKind::Armory] {

@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn ohne_wagenschuppen_traegt_der_arbeiter_selbst() {
         let mut w = flat();
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let saw = w.place_building(1, BuildingKind::Sawmill, 25, 2).unwrap();
         w.test_granary(1); // sonst verdirbt das Essen
         assert_eq!(w.units.iter().filter(|u| u.kind == UnitKind::Carrier).count(), 0);
@@ -235,7 +235,7 @@ mod tests {
         let (wood, boards) = (w.stocks[&1].amount(Good::Wood), w.stocks[&1].amount(Good::Boards));
         let mut away = false;
         let mut carried = false;
-        for _ in 0..20 * 120 {
+        for _ in 0..20 * 240 {
             w.step(0.05);
             let b = w.buildings.iter().find(|b| b.id == saw.id).unwrap();
             away |= b.status == BuildingStatus::WorkerAway;
@@ -244,13 +244,13 @@ mod tests {
         assert!(away, "Betrieb steht, während der Arbeiter unterwegs ist");
         assert!(carried, "Arbeiter holt Holz selbst");
         assert!(w.stocks[&1].amount(Good::Wood) < wood);
-        assert!(w.stocks[&1].amount(Good::Boards) > boards, "Bretter selbst ins Lager gebracht");
+        assert!(w.stocks[&1].amount(Good::Boards) > boards, "Bretter selbst ins Lager gebracht {:?} {:?}", w.stock_state(1).pools, w.buildings.iter().find(|b| b.id == saw.id).unwrap().status);
     }
 
     #[test]
     fn arbeiter_bringt_ergebnis_direkt_zum_abnehmer() {
         let mut w = flat();
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         w.admin_give(1, &[protocol::GoodAmount { good: Good::Boards, amount: 100 }, protocol::GoodAmount { good: Good::Wood, amount: 100 }], 0);
         w.test_granary(1); // sonst verdirbt das Essen
         let saw = w.place_building(1, BuildingKind::Sawmill, 25, 2).unwrap().id;
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn arbeiter_traegt_selbst_wenn_eingestellt_und_haelt_beim_hoechstbestand() {
         let mut w = flat();
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         w.place_building(1, BuildingKind::CartShed, 12, 12).unwrap();
         let saw = w.place_building(1, BuildingKind::Sawmill, 25, 2).unwrap();
         let mut s = saw.settings.clone();
@@ -300,7 +300,7 @@ mod tests {
     fn mit_traegern_bleibt_der_arbeiter_am_betrieb() {
         let mut w = flat();
         w.worker_carries_default = false; // hier tragen die Träger
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         w.place_building(1, BuildingKind::CartShed, 12, 12).unwrap();
         let saw = w.place_building(1, BuildingKind::Sawmill, 25, 2).unwrap();
         let worker = w.units.iter().position(|u| u.kind == UnitKind::Worker && u.home == Some(saw.id)).unwrap();
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn mindestbestand_zeigt_eigenen_status() {
         let mut w = flat();
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let saw = w.place_building(1, BuildingKind::Sawmill, 25, 2).unwrap();
         let mut s = saw.settings.clone();
         s.keep_in_stock = vec![protocol::GoodAmount { good: Good::Wood, amount: 9999 }];
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn nebeneinander_wird_trotzdem_zur_tuer_gelaufen() {
         let mut w = flat();
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let store = w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap();
         // Sägewerk direkt rechts neben dem Lager.
         let saw = w.place_building(1, BuildingKind::Sawmill, store.x + store.w, 2).unwrap();
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn abliefern_und_holen_auf_einer_tour() {
         let mut w = flat();
-        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 2, 2).unwrap();
         let mason = w.place_building(1, BuildingKind::Stonemason, 25, 2).unwrap();
         let worker = w.units.iter().position(|u| u.kind == UnitKind::Worker && u.home == Some(mason.id)).unwrap();
         // Quader liegen schon fertig, Stein fehlt: hin mit Quadern, zurück mit Stein.

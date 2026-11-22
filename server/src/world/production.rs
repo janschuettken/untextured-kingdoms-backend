@@ -491,7 +491,7 @@ mod tests {
     fn holzfaeller_holzt_wald_ab() {
         let mut w = world(&map(30, 10, (0, 9), &[(15, 0, 1, 1, 'W')]));
         w.worker_carries_default = false; // hier tragen die Träger
-        w.place_building(1, BuildingKind::Keep, 20, 2).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 20, 2).unwrap();
         w.place_building(1, BuildingKind::CartShed, 8, 5).unwrap();
         let before = w.stocks[&1].amount(Good::Wood);
         let b = w.place_building(1, BuildingKind::Woodcutter, 2, 2).unwrap();
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn fortschritt_laeuft_und_wird_selten_geschickt() {
         let mut w = world(&map(20, 10, (0, 9), &[]));
-        w.place_building(1, BuildingKind::Keep, 10, 0).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 10, 0).unwrap();
         let b = w.place_building(1, BuildingKind::Bowyer, 2, 0).unwrap();
         let mut seen = 0.0f32;
         let mut sent = 0;
@@ -551,7 +551,7 @@ mod tests {
     fn werkstatt_braucht_eingaenge_und_rezept_einstellbar() {
         let mut w = world(&map(20, 10, (0, 9), &[]));
         w.worker_carries_default = false; // hier tragen die Träger
-        w.place_building(1, BuildingKind::Keep, 10, 0).unwrap();
+        w.place_building(1, BuildingKind::Storehouse, 10, 0).unwrap();
         let b = w.place_building(1, BuildingKind::Bowyer, 2, 0).unwrap();
         w.place_building(1, BuildingKind::CartShed, 4, 5).unwrap();
         w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 50 }, GoodAmount { good: Good::Stone, amount: 50 }], 0);
