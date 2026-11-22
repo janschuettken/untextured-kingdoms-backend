@@ -115,6 +115,13 @@ pub struct Unit {
     /// Zuletzt von selbst angegriffene Einheit und wie lange das her ist (für die Anzeige).
     #[serde(skip)]
     last_foe: Option<(u32, f32)>,
+    /// Wer diese Einheit zuletzt angegriffen hat und wie lange das her ist (Sekunden).
+    #[serde(default)]
+    attacked_by: Option<(u32, f32)>,
+    /// Gegenwehr: dieser Angriffsbefehl (auf ein Gebäude) ruht, bis der Angreifer fällt
+    /// oder die Zeit (Sekunden) um ist; dann geht es dort weiter.
+    #[serde(default)]
+    resume_order: Option<(protocol::AttackTarget, f32)>,
 }
 
 /// Ein späteres Ziel eines Laufbefehls (siehe `Unit::waypoints`).
@@ -163,6 +170,8 @@ impl Unit {
             speed_cap: None,
             waypoints: Vec::new(),
             last_foe: None,
+            attacked_by: None,
+            resume_order: None,
             heal_cooldown: 0.0,
         }
     }
@@ -1274,6 +1283,7 @@ impl World {
             u.layers.clear();
             u.waypoints.clear();
             u.attack_order = None;
+            u.resume_order = None;
             u.attack_force = false;
             u.chase_timer = 0.0;
             u.speed_cap = None;
@@ -1402,6 +1412,7 @@ impl World {
         // Ein Laufbefehl hebt einen Angriffsbefehl auf (und den Weg zum Pferd).
         for &k in &chosen {
             self.units[k].attack_order = None;
+            self.units[k].resume_order = None;
             self.units[k].mount_at = None;
         }
         let mut orders = Vec::new();

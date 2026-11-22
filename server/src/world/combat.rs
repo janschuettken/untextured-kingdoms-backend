@@ -38,6 +38,10 @@ const CELL: f32 = 8.0;
 const REACH: f32 = 0.5;
 /// Beim Verfolgen: so oft (Sekunden) wird der Weg zum Ziel neu gesucht.
 const CHASE_SECONDS: f32 = 1.0;
+/// Gegenwehr: wer vor so kurzer Zeit (Sekunden) getroffen wurde, wendet sich dem Angreifer zu …
+const STRUCK_SECONDS: f32 = 3.0;
+/// … und gibt nach so vielen Sekunden auf, wenn er ihn nicht erwischt (dann weiter am Gebäude).
+const RETALIATE_SECONDS: f32 = 12.0;
 
 /// Darf eine Einheit dieser Art jetzt angreifen? Zu Pferd zählt `attack_mounted`
 /// (im Stehen und im Reiten), zu Fuß `attack_standing` bzw. im Laufen `attack_moving`.
@@ -134,6 +138,7 @@ impl World {
             if (force || self.can_attack(player, owner)) && !itself && self.can_hurt(u, target) {
                 let u = &mut self.units[k];
                 u.attack_order = Some(target);
+                u.resume_order = None;
                 u.attack_force = force;
                 u.waypoints.clear();
                 u.chase_timer = 0.0;
@@ -230,6 +235,17 @@ impl World {
             u.attack_cooldown = (u.attack_cooldown - dt).max(0.0);
             // Selbst gewähltes Ziel nur kurz anzeigen, solange weiter gekämpft wird.
             u.last_foe = u.last_foe.map(|(id, age)| (id, age + dt)).filter(|&(_, age)| age < FOE_SHOWN_SECONDS);
+            u.attacked_by = u.attacked_by.map(|(id, age)| (id, age + dt)).filter(|&(_, age)| age < STRUCK_SECONDS);
+            // Gegenwehr zu lange erfolglos: zurück zum Gebäude.
+            if let Some((order, left)) = u.resume_order {
+                if left - dt <= 0.0 {
+                    u.attack_order = Some(order);
+                    u.resume_order = None;
+                    u.chase_timer = 0.0;
+                } else {
+                    u.resume_order = Some((order, left - dt));
+                }
+            }
             let team = match self.teams.get(&u.owner) {
                 Some(&t) => (true, t),
                 None => (false, u.owner),
@@ -282,6 +298,20 @@ impl World {
                     continue;
                 }
             }
+            // Am Gebäude, aber selbst angegriffen (z. B. von Schützen außer Reichweite): erst den
+            // Angreifer verfolgen, danach weiter am Gebäude.
+            if let (AttackTarget::Building { .. }, Some((aid, _))) = (order, u.attacked_by) {
+                let foe = AttackTarget::Unit { id: aid };
+                let alive = index.get(&aid).map(|&j| self.units[j].owner);
+                if alive.is_some_and(|o| self.can_attack(u.owner, o)) && self.can_hurt(u, foe) {
+                    let u = &mut self.units[k];
+                    u.resume_order = Some((order, RETALIATE_SECONDS));
+                    u.attack_order = Some(foe);
+                    u.attacked_by = None;
+                    u.chase_timer = 0.0;
+                    continue;
+                }
+            }
             // Wo steht das Ziel, wie weit ist es, und kann man es von hier treffen?
             let found = match order {
                 AttackTarget::Unit { id } => index.get(&id).map(|&j| {
@@ -302,8 +332,14 @@ impl World {
                 }),
             };
             let Some((owner, pos, on_wall, dist, level_ok, j)) = found.filter(|f| (u.attack_force || self.can_attack(u.owner, f.0)) && self.can_hurt(u, order)) else {
-                // Ziel gefallen, abgerissen oder nicht (mehr) angreifbar: stehen bleiben.
+                // Ziel gefallen, abgerissen oder nicht (mehr) angreifbar: stehen bleiben
+                // (nach der Gegenwehr: zurück zum Gebäude).
                 let u = &mut self.units[k];
+                if let Some((resume, _)) = u.resume_order.take() {
+                    u.attack_order = Some(resume);
+                    u.chase_timer = 0.0;
+                    continue;
+                }
                 u.attack_order = None;
                 u.path.clear();
                 u.layers.clear();
@@ -409,6 +445,9 @@ impl World {
         let horse_percent = self.economy.def.army.horse_hit_percent.min(100);
         let mut landed = Vec::with_capacity(hits.len());
         for (j, k, by, ranged) in hits {
+            // Das Ziel merkt sich, wer es angreift (auch wenn der Schuss danebengeht).
+            let attacker = self.units[k].id;
+            self.units[j].attacked_by = Some((attacker, 0.0));
             let cover = if ranged { self.cover_of(&self.units[j]) } else { 0 };
             if self.misses(cover) {
                 continue;
@@ -1009,6 +1048,35 @@ mod tests {
         let slow = damage_on_keep(0, 1.0, 30.0);
         let fast = damage_on_keep(0, 2.0, 30.0);
         assert!(slow > 0 && fast > slow * 3 / 2, "doppelter Takt: etwa doppelter Schaden ({fast} gegen {slow})");
+    }
+
+    #[test]
+    fn angegriffene_wehren_sich_erst_und_machen_dann_am_gebaeude_weiter() {
+        let mut w = world();
+        let keep = w.buildings.iter().find(|b| b.owner == 2 && b.kind == BuildingKind::Keep).unwrap().clone();
+        w.units.retain(|u| u.kind != UnitKind::King);
+        let center = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);
+        let foot = w.foot_of(center, (center.0, center.1 + 10.0));
+        w.units.push(Unit::new(41_000, 1, UnitKind::Swordsman, foot));
+        let target = protocol::AttackTarget::Building { id: keep.id };
+        w.order_attack(1, &[41_000], target);
+        // Ein Bogenschütze schießt von weiter weg (außer Reichweite des Schwertkämpfers).
+        w.units.push(Unit::new(41_001, 2, UnitKind::Archer, (foot.0, foot.1 + 8.0)));
+        let mut turned = false;
+        for _ in 0..20 * 20 {
+            w.step(0.05);
+            let s = w.units.iter().find(|u| u.id == 41_000).expect("lebt");
+            turned |= s.attack_order == Some(protocol::AttackTarget::Unit { id: 41_001 });
+            if !w.units.iter().any(|u| u.id == 41_001) {
+                break;
+            }
+        }
+        assert!(turned, "wendet sich dem Schützen zu");
+        // Den Schützen gibt es nicht mehr (erschlagen oder hier entfernt): zurück zum Gebäude.
+        w.units.retain(|u| u.id != 41_001);
+        steps(&mut w, 1.0);
+        let s = w.units.iter().find(|u| u.id == 41_000).unwrap();
+        assert_eq!(s.attack_order, Some(target), "weiter am Bergfried");
     }
 
     #[test]
