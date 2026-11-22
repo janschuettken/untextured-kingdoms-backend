@@ -34,6 +34,9 @@
 //! - `POST /api/games/{id}/new-game` nur Admin: neu anfangen (gleiche Karte, gleiche Mitspieler)
 //! - `POST /api/games/{id}/end`      nur Admin: Spiel ganz beenden, alle zurück in die Lobby
 //! - `POST /api/games/{id}/duplicate` nur Admin: laufendes Spiel samt Spielstand kopieren → `{ id }`
+//! - `GET  /api/games/{id}/settings`  Starteinstellungen des laufenden Spiels `{ trade_mode, shot_mode }`
+//! - `POST /api/games/{id}/settings`  nur Admin: dieselben nachträglich ändern (Felder optional),
+//!   alle Clients laden danach neu
 //! - `GET  /api/games/{id}/export`    nur Admin: aktuellen Spielstand als Datei herunterladen
 //! - `POST /api/games/import`         nur Admin: Spieldatei (Rumpf) als neues Spiel starten → `{ id }`
 //! - `GET  /api/economy`  die geltenden Wirtschaftsdaten als JSON
@@ -257,6 +260,7 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/api/games/{id}/end", post(end_game))
         .route("/api/games/{id}/duplicate", post(duplicate_game))
         .route("/api/games/{id}/export", get(export_game))
+        .route("/api/games/{id}/settings", get(get_settings).post(set_settings))
         .layer(DefaultBodyLimit::max(1024 * 1024))
         // Spieldateien sind größer als die übrigen Rümpfe.
         .merge(
@@ -784,6 +788,38 @@ async fn duplicate_game(
         Ok(Ok(new_id)) => Json(serde_json::json!({ "id": new_id })).into_response(),
         Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct GameSettings {
+    #[serde(default)]
+    trade_mode: Option<protocol::TradeMode>,
+    #[serde(default)]
+    shot_mode: Option<protocol::ShotMode>,
+}
+
+async fn get_settings(State(hub): State<Arc<Hub>>, Path(id): Path<u32>) -> Response {
+    let (_, m) = match running(&hub, id) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let world = m.world.lock().unwrap();
+    Json(serde_json::json!({ "trade_mode": world.trade_mode(), "shot_mode": world.shot_mode() })).into_response()
+}
+
+async fn set_settings(
+    State(hub): State<Arc<Hub>>,
+    headers: HeaderMap,
+    Path(id): Path<u32>,
+    Json(body): Json<GameSettings>,
+) -> Response {
+    if !hub.admin.allows(&headers).await {
+        return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
+    }
+    match hub.change_settings(id, body.trade_mode, body.shot_mode) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
     }
 }
 

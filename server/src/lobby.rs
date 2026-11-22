@@ -500,6 +500,37 @@ impl Hub {
         Ok(new_id)
     }
 
+    /// Admin: Starteinstellungen eines laufenden Spiels nachträglich ändern.
+    /// Alle Clients laden danach neu (Reichweitenanzeige, Handelsfenster).
+    pub fn change_settings(
+        &self,
+        id: u32,
+        trade_mode: Option<TradeMode>,
+        shot_mode: Option<protocol::ShotMode>,
+    ) -> Result<(), String> {
+        let game = self.game(id).ok_or("admin.no_game")?;
+        let m = game.running.get().ok_or("admin.no_game")?.clone();
+        {
+            let mut meta = game.meta.lock().unwrap();
+            let mut world = m.world.lock().unwrap();
+            if let Some(mode) = trade_mode {
+                world.set_trade_mode(mode);
+                meta.trade_mode = mode;
+            }
+            if let Some(mode) = shot_mode {
+                world.set_shot_mode(mode);
+                meta.shot_mode = mode;
+            }
+        }
+        info!("Spiel {id}: Einstellungen geändert (Handel {trade_mode:?}, Fernkampf {shot_mode:?})");
+        if let Err(e) = self.save_game(&game) {
+            warn!("Spiel {id}: Speichern nach Einstellungen fehlgeschlagen: {e}");
+        }
+        let _ = m.ticks.send(protocol::ServerMsg::Reload);
+        self.notify();
+        Ok(())
+    }
+
     /// Spiel ganz beenden: Thread anhalten, Clients raus, Datei weg.
     pub fn end_game(&self, id: u32) {
         let Some(game) = self.games.lock().unwrap().remove(&id) else {
@@ -1294,6 +1325,13 @@ mod tests {
         assert!(loaded != copy && hub.membership(loaded, B).is_some());
         assert_eq!(count(copy), count(loaded));
         assert!(hub.import("kein json").is_err());
+        // Starteinstellungen nachträglich ändern: nur dieses Spiel.
+        hub.change_settings(loaded, Some(TradeMode::Carts), Some(protocol::ShotMode::LineOfSight)).unwrap();
+        let mode = |g: u32| hub.game(g).unwrap().running.get().unwrap().world.lock().unwrap().shot_mode();
+        assert_eq!(mode(loaded), protocol::ShotMode::LineOfSight);
+        assert_eq!(mode(copy), protocol::ShotMode::default());
+        assert_eq!(hub.game(loaded).unwrap().meta.lock().unwrap().trade_mode, TradeMode::Carts);
+        assert!(hub.change_settings(9999, None, None).is_err());
         hub.end_game(copy);
         hub.end_game(loaded);
         assert!(!hub.save_path(copy).exists());
