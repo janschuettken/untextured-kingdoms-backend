@@ -77,6 +77,15 @@ melee_max_levels: number,
  */
 height_range_percent: number, 
 /**
+ * Fernkampf: so schnell (Felder pro Sekunde entlang der Bahn) fliegen Pfeile und Bolzen.
+ * Schaden gibt es erst beim Aufschlag; Schützen halten auf laufende Ziele vor.
+ */
+arrow_speed: number, 
+/**
+ * Fernkampf: so nah (Felder) muss ein Ziel beim Aufschlag am Einschlagpunkt stehen, sonst geht der Pfeil daneben.
+ */
+arrow_hit_radius: number, 
+/**
  * Beute: wer einen König tötet, bekommt so viel Prozent der Waren und Taler des Besiegten.
  */
 loot_percent: number, };

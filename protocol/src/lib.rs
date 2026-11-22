@@ -786,6 +786,9 @@ pub struct Shot {
     pub to_h: f32,
     /// Wurfbahn: Steigung beim Abschuss (tan) und Reichweite des Schützen. `None` = gerade Linie.
     pub arc: Option<(f32, f32)>,
+    /// Flugzeit bis zum Aufschlag (Sekunden); erst dann zählt der Treffer auf dem Server.
+    #[serde(default)]
+    pub seconds: f32,
 }
 
 /// Ein Heiler behandelt einen Verwundeten.
@@ -1556,6 +1559,11 @@ pub struct ArmyDef {
     /// Höhenvorteil, Fernkampf: so viel Prozent mehr Reichweite je Stufe, die der Schütze
     /// höher steht als sein Ziel (Gelände, Mauer, Turm). Gleiche Höhe = kein Bonus.
     pub height_range_percent: f32,
+    /// Fernkampf: so schnell (Felder pro Sekunde entlang der Bahn) fliegen Pfeile und Bolzen.
+    /// Schaden gibt es erst beim Aufschlag; Schützen halten auf laufende Ziele vor.
+    pub arrow_speed: f32,
+    /// Fernkampf: so nah (Felder) muss ein Ziel beim Aufschlag am Einschlagpunkt stehen, sonst geht der Pfeil daneben.
+    pub arrow_hit_radius: f32,
     /// Beute: wer einen König tötet, bekommt so viel Prozent der Waren und Taler des Besiegten.
     pub loot_percent: u32,
 }
@@ -1580,6 +1588,8 @@ impl Default for ArmyDef {
             horse_hit_percent: 70,
             melee_max_levels: 1.0,
             height_range_percent: 5.0,
+            arrow_speed: 22.0,
+            arrow_hit_radius: 0.6,
             loot_percent: 50,
         }
     }
