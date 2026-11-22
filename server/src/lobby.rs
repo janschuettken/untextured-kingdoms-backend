@@ -97,6 +97,8 @@ fn computer_token(game: u32, n: u64) -> String {
 
 /// Was sich an einem Spiel ändert (wer wo sitzt, Phase).
 pub struct Meta {
+    /// Name des Spiels (leer: Standardname „Spiel von …“).
+    pub title: String,
     pub map_name: String,
     pub map_text: String,
     pub width: u32,
@@ -168,6 +170,8 @@ impl Game {
 #[derive(Serialize, Deserialize)]
 struct GameFile {
     id: u32,
+    #[serde(default)]
+    title: String,
     map: String,
     /// Die Karte, wie sie beim Start war (die Datei im Kartenordner kann sich ändern).
     map_text: String,
@@ -235,6 +239,13 @@ pub fn public_id(token: &str) -> String {
 
 fn valid_token(token: &str) -> bool {
     (16..=64).contains(&token.len()) && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// Längster Spielname (Zeichen).
+const MAX_TITLE: usize = 40;
+
+fn clean_title(title: &str) -> String {
+    title.trim().chars().filter(|c| !c.is_control()).take(MAX_TITLE).collect::<String>().trim().to_string()
 }
 
 fn clean_name(name: &str) -> String {
@@ -329,14 +340,15 @@ impl Hub {
     /// Umwandeln in JSON und Schreiben macht `PendingSave::write`, gern in einem anderen Thread.
     pub fn prepare_save(&self, game: &Game) -> Option<PendingSave> {
         let m = game.running.get()?;
-        let (host, slots) = {
+        let (host, slots, title) = {
             let meta = game.meta.lock().unwrap();
-            (meta.host.clone(), meta.slots.clone())
+            (meta.host.clone(), meta.slots.clone(), meta.title.clone())
         };
         let save = m.world.lock().unwrap().to_save(&m.map_name);
         let seq = m.save_seq.fetch_add(1, Ordering::Relaxed) + 1;
         let file = GameFile {
             id: game.id,
+            title,
             map: m.map_name.clone(),
             map_text: m.map_text.clone(),
             host,
@@ -416,6 +428,7 @@ impl Hub {
             return Err("Startplätze passen nicht zur Karte".into());
         }
         let meta = Meta {
+            title: file.title,
             map_name: file.map.clone(),
             map_text: file.map_text.clone(),
             width: map.width,
@@ -562,9 +575,11 @@ impl Hub {
                 .collect();
             summaries.push(GameSummary {
                 id: g.id,
+                title: meta.title.clone(),
                 map: meta.map_name.clone(),
                 phase: meta.phase,
                 host_name,
+                host: public_id(&meta.host),
                 players: meta.members().count() as u32,
                 max_players: meta.slots.len() as u32,
                 mine: false,
@@ -573,6 +588,7 @@ impl Hub {
             });
             let detail = LobbyGame {
                 id: g.id,
+                title: meta.title.clone(),
                 map: meta.map_name.clone(),
                 width: meta.width,
                 height: meta.height,
@@ -636,6 +652,7 @@ impl Hub {
         let mut slots = vec![None; map.spawns.len()];
         slots[0] = Some(Member::human(token, name));
         let meta = Meta {
+            title: String::new(),
             map_name: map_name.into(),
             map_text: text,
             width: map.width,
@@ -895,6 +912,19 @@ impl Hub {
         Ok(())
     }
 
+    /// Gastgeber oder Admin: ein Spiel umbenennen (auch laufend; leer = Standardname).
+    fn rename_game(&self, token: &str, admin: bool, game_id: u32, title: &str) -> Reply {
+        let Some(game) = self.game(game_id) else {
+            return err("lobby.game_gone");
+        };
+        let mut meta = game.meta.lock().unwrap();
+        if meta.host != token && !admin {
+            return err("lobby.not_host");
+        }
+        meta.title = clean_title(title);
+        Ok(())
+    }
+
     /// Gastgeber: wie Waren zwischen Verbündeten ankommen.
     fn set_trade_mode(&self, token: &str, mode: TradeMode) -> Reply {
         let Some(game) = self.waiting_game_of(token) else {
@@ -985,6 +1015,8 @@ impl Hub {
             LobbyClientMsg::SetComputerTraits { slot, daring, helpfulness } => self.set_computer_traits(token, slot, daring, helpfulness),
             LobbyClientMsg::SetTradeMode { mode } => self.set_trade_mode(token, mode),
             LobbyClientMsg::SetShotMode { mode } => self.set_shot_mode(token, mode),
+            // Braucht die Admin-Rechte (Datenbank): kommt über `handle_socket`.
+            LobbyClientMsg::RenameGame { game_id, title } => self.rename_game(token, false, game_id, &title),
         }
     }
 }
@@ -1046,7 +1078,14 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
             }
             Ok(msg) => {
                 let renamed = matches!(msg, LobbyClientMsg::SetName { .. });
-                if let Err(text) = hub.handle(&token, &mut name, msg) {
+                let result = match msg {
+                    LobbyClientMsg::RenameGame { game_id, title } => {
+                        let admin = hub.admin.check(&token).await;
+                        hub.rename_game(&token, admin, game_id, &title)
+                    }
+                    msg => hub.handle(&token, &mut name, msg),
+                };
+                if let Err(text) = result {
                     let _ = out_tx.try_send(LobbyServerMsg::Rejected { text });
                 } else if renamed {
                     hub.admin.record_guest(&token, &name);
@@ -1154,6 +1193,24 @@ mod tests {
         assert!(hub.game(id).is_some());
         hub.leave(B, None).unwrap();
         assert!(hub.game(id).is_none());
+    }
+
+    #[test]
+    fn spiel_umbenennen_gastgeber_oder_admin() {
+        let hub = hub();
+        hub.create(A, "Anna", "zwei-burgen").unwrap();
+        let id = hub.game_of(A).unwrap().id;
+        hub.join(B, "Bert", id).unwrap();
+        assert!(hub.rename_game(B, false, id, "Bert's Spiel").is_err(), "nur der Gastgeber");
+        hub.rename_game(B, true, id, "  Admin\u{7}-Runde  ").unwrap();
+        assert_eq!(hub.game(id).unwrap().meta.lock().unwrap().title, "Admin-Runde");
+        hub.start(A).unwrap();
+        hub.rename_game(A, false, id, &"x".repeat(99)).unwrap();
+        let game = hub.game(id).unwrap();
+        assert_eq!(game.meta.lock().unwrap().title.chars().count(), MAX_TITLE, "auch laufend, gekürzt");
+        let pending = hub.prepare_save(&game).unwrap();
+        assert_eq!(pending.file.title.chars().count(), MAX_TITLE, "kommt in die Spieldatei");
+        assert!(hub.rename_game(A, false, 9999, "x").is_err());
     }
 
     #[test]

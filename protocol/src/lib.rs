@@ -430,6 +430,8 @@ pub enum LobbyClientMsg {
     SetTradeMode { mode: TradeMode },
     /// Nur Gastgeber, nur vor dem Start: wann Fernkämpfer treffen (Wurfbahn oder Sichtlinie).
     SetShotMode { mode: ShotMode },
+    /// Gastgeber oder Admin, jederzeit: Namen eines Spiels setzen (leer = Standardname).
+    RenameGame { game_id: u32, title: String },
 }
 
 /// Stärke eines Computergegners. Was jede Stufe tut, steht im Server (`server/src/ai/`).
@@ -477,9 +479,15 @@ pub enum GamePhase {
 #[ts(export)]
 pub struct GameSummary {
     pub id: u32,
+    /// Vom Gastgeber gesetzter Name (leer: „Spiel von …“).
+    #[serde(default)]
+    pub title: String,
     pub map: String,
     pub phase: GamePhase,
     pub host_name: String,
+    /// Öffentliche Id des Gastgebers (wer umbenennen darf).
+    #[serde(default)]
+    pub host: String,
     pub players: u32,
     pub max_players: u32,
     /// Man spielt selbst mit (laufende Spiele: man kann weiterspielen).
@@ -495,6 +503,9 @@ pub struct GameSummary {
 #[ts(export)]
 pub struct LobbyGame {
     pub id: u32,
+    /// Vom Gastgeber gesetzter Name (leer: „Spiel von …“).
+    #[serde(default)]
+    pub title: String,
     pub map: String,
     pub width: u32,
     pub height: u32,

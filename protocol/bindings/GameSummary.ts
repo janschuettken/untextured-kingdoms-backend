@@ -5,7 +5,15 @@ import type { LobbySlot } from "./LobbySlot";
 /**
  * Ein Spiel in der Übersicht.
  */
-export type GameSummary = { id: number, map: string, phase: GamePhase, host_name: string, players: number, max_players: number, 
+export type GameSummary = { id: number, 
+/**
+ * Vom Gastgeber gesetzter Name (leer: „Spiel von …“).
+ */
+title: string, map: string, phase: GamePhase, host_name: string, 
+/**
+ * Öffentliche Id des Gastgebers (wer umbenennen darf).
+ */
+host: string, players: number, max_players: number, 
 /**
  * Man spielt selbst mit (laufende Spiele: man kann weiterspielen).
  */

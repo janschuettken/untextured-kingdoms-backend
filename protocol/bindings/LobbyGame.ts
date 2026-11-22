@@ -7,7 +7,11 @@ import type { TradeMode } from "./TradeMode";
 /**
  * Das Spiel, in dem man selbst ist, mit allen Startplätzen.
  */
-export type LobbyGame = { id: number, map: string, width: number, height: number, phase: GamePhase, 
+export type LobbyGame = { id: number, 
+/**
+ * Vom Gastgeber gesetzter Name (leer: „Spiel von …“).
+ */
+title: string, map: string, width: number, height: number, phase: GamePhase, 
 /**
  * Öffentliche Id des Gastgebers.
  */
