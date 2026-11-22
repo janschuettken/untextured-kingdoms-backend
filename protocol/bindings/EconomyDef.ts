@@ -41,6 +41,11 @@ demolish_refund_percent: number,
  */
 move_cost_percent: number, 
 /**
+ * Gebäude ohne `on_ramps` dürfen trotzdem mit so vielen Feldern auf einer Schräge
+ * oder eine Stufe neben der Grundhöhe stehen (0 = ganz eben).
+ */
+slope_tiles: number, 
+/**
  * Wie viel ein Feld hergibt, bevor es erschöpft ist (Wald, Stein, Eisen).
  */
 resource_amounts: Array<ResourceAmount>, 

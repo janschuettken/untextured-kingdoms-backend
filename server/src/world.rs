@@ -902,6 +902,30 @@ impl World {
         })
     }
 
+    /// Grundhöhe einer Fläche: die Stufe, die die meisten Felder haben (bei Gleichstand die
+    /// niedrigere). Schräge Felder zählen nur, wenn es keine ebenen gibt.
+    pub fn base_level(&self, (x, y): (u32, u32), (w, h): (u32, u32)) -> u8 {
+        let mut count: std::collections::BTreeMap<u8, (u32, u32)> = Default::default();
+        for ty in y..(y + h).min(self.map.height) {
+            for tx in x..(x + w).min(self.map.width) {
+                let i = (ty * self.map.width + tx) as usize;
+                let e = count.entry(self.map.levels[i]).or_default();
+                if self.map.tiles[i] == TileKind::Ramp {
+                    e.1 += 1;
+                } else {
+                    e.0 += 1;
+                }
+            }
+        }
+        let mut best: Option<(u8, (u32, u32))> = None;
+        for (&level, &c) in &count {
+            if best.is_none_or(|(_, b)| c > b) {
+                best = Some((level, c));
+            }
+        }
+        best.map_or(0, |(l, _)| l)
+    }
+
     fn check_site(
         &self,
         def: &protocol::BuildingDef,
@@ -913,19 +937,25 @@ impl World {
         if x.checked_add(w).is_none_or(|r| r > self.map.width) || y.checked_add(h).is_none_or(|b| b > self.map.height) {
             return Err(Text::new("error.outside_map"));
         }
-        let height = self.map.levels[(y * self.map.width + x) as usize];
+        let height = self.base_level((x, y), (w, h));
+        // Ohne `on_ramps`: höchstens `slope_tiles` Felder dürfen schräg oder eine Stufe daneben liegen.
+        let mut uneven = 0;
         for ty in y..y + h {
             for tx in x..x + w {
                 let i = (ty * self.map.width + tx) as usize;
-                match self.map.tiles[i] {
-                    TileKind::Water => return Err(Text::new("error.on_water")),
-                    TileKind::Ramp if !def.on_ramps => return Err(Text::new("error.on_ramp")),
-                    _ => {}
+                if self.map.tiles[i] == TileKind::Water {
+                    return Err(Text::new("error.on_water"));
                 }
-                // Auf Schrägen (`on_ramps`) reicht: höchstens eine Stufe Unterschied.
                 let diff = self.map.levels[i].abs_diff(height);
-                if diff > 1 || (diff == 1 && !def.on_ramps) {
+                if diff > 1 {
                     return Err(Text::new("error.not_flat"));
+                }
+                if !def.on_ramps && (diff == 1 || self.map.tiles[i] == TileKind::Ramp) {
+                    uneven += 1;
+                    if uneven > self.economy.def.slope_tiles {
+                        let ramp = self.map.tiles[i] == TileKind::Ramp;
+                        return Err(Text::new(if ramp { "error.on_ramp" } else { "error.not_flat" }));
+                    }
                 }
                 if self.occupied[i] != 0 && !ignore.contains(&self.occupied[i]) {
                     return Err(Text::new("error.occupied"));
@@ -1943,6 +1973,34 @@ mod tests {
     }
 
     #[test]
+    fn leichte_schraege_unter_wenigen_feldern_erlaubt() {
+        let mut w = flat_world();
+        w.economy.def.slope_tiles = 2;
+        let mw = w.map.width;
+        let def = w.economy.building(BuildingKind::House).unwrap().clone();
+        assert!(!def.on_ramps);
+        let (x, y) = (10u32, 10u32);
+        let size = (def.w, def.h);
+        // Eine Ecke eine Stufe höher: geht (1 Feld).
+        w.map.levels[(y * mw + x) as usize] += 1;
+        assert!(w.check_site(&def, (x, y), size, 0, &[]).is_ok());
+        assert_eq!(w.base_level((x, y), size), w.map.levels[((y + 1) * mw + x + 1) as usize], "Grundhöhe = Mehrheit");
+        // Zweites Feld: geht noch.
+        w.map.levels[(y * mw + x + 1) as usize] += 1;
+        assert!(w.check_site(&def, (x, y), size, 0, &[]).is_ok());
+        // Drittes Feld: zu viel.
+        w.map.levels[(y * mw + x + 2) as usize] += 1;
+        assert_eq!(w.check_site(&def, (x, y), size, 0, &[]).unwrap_err().key, "error.not_flat");
+        // Zwei Stufen Unterschied geht nie.
+        w.map.levels[(y * mw + x + 2) as usize] -= 1;
+        w.map.levels[(y * mw + x) as usize] += 1;
+        assert_eq!(w.check_site(&def, (x, y), size, 0, &[]).unwrap_err().key, "error.not_flat");
+        w.map.levels[(y * mw + x) as usize] -= 1;
+        w.economy.def.slope_tiles = 0;
+        assert_eq!(w.check_site(&def, (x, y), size, 0, &[]).unwrap_err().key, "error.not_flat", "0 = ganz eben");
+    }
+
+    #[test]
     fn bauregeln_werden_geprueft() {
         let mut world = World::new(GameMap::parse(DEFAULT_MAP).unwrap(), eco());
         world.spawn_player(1);
@@ -1950,6 +2008,7 @@ mod tests {
         let water = (0..w * world.map.height).find(|&i| world.map.tiles[i as usize] == TileKind::Water).unwrap();
         assert!(world.place_building(1, BuildingKind::Wall, water % w, water / w).is_err());
         let ramp = (0..w * world.map.height).find(|&i| world.map.tiles[i as usize] == TileKind::Ramp).unwrap();
+        world.economy.def.slope_tiles = 0;
         assert_eq!(world.place_building(1, BuildingKind::House, ramp % w, ramp / w).unwrap_err().key, "error.on_ramp");
         // Mauern (`on_ramps`) dürfen auf Schrägen.
         assert!(world.economy.building(BuildingKind::Wall).unwrap().on_ramps);

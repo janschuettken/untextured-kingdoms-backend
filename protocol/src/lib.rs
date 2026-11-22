@@ -1421,6 +1421,10 @@ pub struct EconomyDef {
     /// So viel Prozent der Bau- und Ausbaukosten kostet das Versetzen eines Gebäudes.
     #[serde(default = "default_move_cost")]
     pub move_cost_percent: u32,
+    /// Gebäude ohne `on_ramps` dürfen trotzdem mit so vielen Feldern auf einer Schräge
+    /// oder eine Stufe neben der Grundhöhe stehen (0 = ganz eben).
+    #[serde(default = "default_slope_tiles")]
+    pub slope_tiles: u32,
     /// Wie viel ein Feld hergibt, bevor es erschöpft ist (Wald, Stein, Eisen).
     pub resource_amounts: Vec<ResourceAmount>,
     /// So viel schneller arbeiten Höfe auf besonders fruchtbarem Boden (anteilig).
@@ -1865,6 +1869,10 @@ fn default_enemy_radius() -> f32 {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_slope_tiles() -> u32 {
+    2
 }
 
 fn default_move_cost() -> u32 {

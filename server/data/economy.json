@@ -2368,6 +2368,7 @@
   "storehouse_capacity": 600,
   "demolish_refund_percent": 75,
   "move_cost_percent": 25,
+  "slope_tiles": 2,
   "resource_amounts": [
     {"resource": "forest", "amount": 20},
     {"resource": "stone", "amount": 120},
