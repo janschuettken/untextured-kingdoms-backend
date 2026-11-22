@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use protocol::{BuildingStatus, GoodAmount, UnitKind};
+use protocol::{BuildingStatus, UnitKind};
 
 use super::World;
 
@@ -20,7 +20,7 @@ pub enum Gather {
     Working { tile: usize, left: f32 },
     /// Trägt die Ware zum eigenen Betrieb.
     Home,
-    /// Trägt die Ware selbst ins Lager (Gebäude-Id).
+    /// Trägt die Ware selbst ins Lager oder direkt zu einem Betrieb, der sie gerade braucht (Gebäude-Id).
     Deliver(u32),
     /// Herstellungsbetrieb: holt Eingänge aus diesem Lager (siehe `errand.rs`).
     Fetch(u32),
@@ -95,20 +95,24 @@ impl World {
                 BuildingStatus::Working
             }
             Some(Gather::Home) => self.drop_off(k, bi),
-            Some(Gather::Deliver(hub)) => {
-                if let Some(load) = self.units[k].carrying.take() {
-                    let stock = self.stocks.get_mut(&owner).expect("Spieler hat einen Vorrat");
-                    let fits = stock.add(load.good, load.amount);
-                    self.dirty_stocks.insert(owner);
-                    self.hub_add(hub, load.good, fits);
-                    if fits < load.amount {
-                        // Lager voll: Rest wieder mitnehmen und später nochmal versuchen.
-                        self.units[k].carrying = Some(GoodAmount { good: load.good, amount: load.amount - fits });
-                        self.units[k].cooldown = RETRY;
-                        self.go_to_building(k, bi);
-                        self.units[k].gather = Some(Gather::Home);
-                        return BuildingStatus::NoStorageRoom;
+            Some(Gather::Deliver(target)) => {
+                let was_hub = self.unload_errand(k, target);
+                if let Some(load) = self.units[k].carrying {
+                    // Abnehmer hatte doch keinen Platz mehr: Rest ins Lager.
+                    let pos = self.units[k].pos;
+                    if !was_hub {
+                        if let Some(hub) = self.nearest_hub(owner, pos, load.good) {
+                            if self.walk_to(k, hub) {
+                                self.units[k].gather = Some(Gather::Deliver(hub));
+                                return BuildingStatus::Working;
+                            }
+                        }
                     }
+                    // Lager voll: Rest wieder mitnehmen und später nochmal versuchen.
+                    self.units[k].cooldown = RETRY;
+                    self.go_to_building(k, bi);
+                    self.units[k].gather = Some(Gather::Home);
+                    return BuildingStatus::NoStorageRoom;
                 }
                 self.units[k].gather = None;
                 BuildingStatus::Working
@@ -182,13 +186,12 @@ impl World {
             return BuildingStatus::Working;
         }
         let pos = self.units[k].pos;
-        if let Some(hub) = self.nearest_hub(owner, pos, load.good) {
-            let hb = self.buildings.iter().find(|b| b.id == hub).expect("Lager existiert");
-            if let Some(door) = self.door(hb, pos) {
-                let u = &mut self.units[k];
-                u.path = self.map.nav.waypoints(pos, door);
-                u.target = Some(door);
-                u.gather = Some(Gather::Deliver(hub));
+        let hub = self.nearest_hub(owner, pos, load.good);
+        // Braucht ein anderer Betrieb die Ware gerade? Dann direkt dorthin statt ins Lager.
+        let direct = self.worker_direct_target(bi, pos, load.good, hub).filter(|&(_, need)| need >= load.amount).map(|(to, _)| to);
+        for target in direct.into_iter().chain(hub) {
+            if self.walk_to(k, target) {
+                self.units[k].gather = Some(Gather::Deliver(target));
                 return BuildingStatus::Working;
             }
         }
