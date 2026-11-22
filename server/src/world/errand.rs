@@ -2,8 +2,8 @@
 //! eigenes Gebäude selbst, solange der Spieler keine Träger hat.
 //!
 //! Träger und Karren gibt es nur noch im Wagenschuppen. Ohne sie trägt der
-//! Arbeiter fertige Waren selbst ins nächste Lager und holt fehlende Eingänge
-//! selbst von dort. In der Zeit steht der Betrieb (`WorkerAway`).
+//! Arbeiter fertige Waren selbst ins nächste Lager (oder direkt zu einem Betrieb,
+//! der sie gerade braucht) und holt fehlende Eingänge selbst von dort. In der Zeit steht der Betrieb (`WorkerAway`).
 
 use protocol::GoodAmount;
 
@@ -26,21 +26,24 @@ impl World {
         }
         let owner = self.buildings[bi].owner;
         match self.units[k].gather {
-            Some(Gather::Deliver(hub)) => {
-                if self.near(k, hub) {
-                    if let Some(load) = self.units[k].carrying.take() {
-                        let stock = self.stocks.get_mut(&owner).expect("Spieler hat einen Vorrat");
-                        let fits = stock.add(load.good, load.amount);
-                        self.dirty_stocks.insert(owner);
-                        self.hub_add(hub, load.good, fits);
-                        if fits < load.amount {
-                            // Passt nicht ganz: Rest wieder mit zurücknehmen.
-                            self.units[k].carrying = Some(GoodAmount { good: load.good, amount: load.amount - fits });
+            Some(Gather::Deliver(target)) => {
+                if self.near(k, target) {
+                    // Passt nicht ganz: Rest bleibt in den Händen.
+                    let was_hub = self.unload_errand(k, target);
+                    if was_hub {
+                        // Hände frei: gleich hier mitnehmen, was der Betrieb braucht (eine Tour statt zwei).
+                        if self.units[k].carrying.is_none() {
+                            self.pick_up_inputs(k, bi, target, true);
                         }
-                    }
-                    // Hände frei: gleich hier mitnehmen, was der Betrieb braucht (eine Tour statt zwei).
-                    if self.units[k].carrying.is_none() {
-                        self.pick_up_inputs(k, bi, hub, true);
+                    } else if let Some(load) = self.units[k].carrying {
+                        // Der Abnehmer hatte doch keinen Platz mehr: Rest ins Lager.
+                        let pos = self.units[k].pos;
+                        if let Some(hub) = self.nearest_hub(owner, pos, load.good) {
+                            if self.walk_to(k, hub) {
+                                self.units[k].gather = Some(Gather::Deliver(hub));
+                                return false;
+                            }
+                        }
                     }
                 }
                 self.walk_home(k, bi);
@@ -103,15 +106,19 @@ impl World {
         let pos = self.units[k].pos;
         let Some(inv) = self.inventories.get(&id) else { return true };
         let stock = self.stocks.get(&owner);
-        // Abliefern: alles, was kein Eingang ist.
+        // Abliefern: alles, was kein Eingang ist. Braucht ein anderer Betrieb die Ware
+        // gerade, geht sie direkt dorthin, sonst ins Lager.
         let out = inv.state().goods.into_iter().find_map(|g| {
             if inputs.iter().any(|i| i.good == g.good) {
                 return None;
             }
+            let hub = self.nearest_hub(owner, pos, g.good);
+            if let Some((to, need)) = self.worker_direct_target(bi, pos, g.good, hub) {
+                return Some((to, GoodAmount { good: g.good, amount: g.amount.min(cap).min(need) }));
+            }
             let room = stock.map_or(0, |s| s.room(g.good));
             let amount = g.amount.min(cap).min(room);
-            let hub = self.nearest_hub(owner, pos, g.good)?;
-            (amount > 0).then_some((hub, GoodAmount { good: g.good, amount }))
+            (amount > 0).then_some((hub?, GoodAmount { good: g.good, amount }))
         });
         if let Some((hub, load)) = out {
             if self.walk_to(k, hub) {
@@ -184,7 +191,7 @@ impl World {
     }
 
     /// Zum Gebäude laufen. `false`, wenn es keinen freien Platz davor gibt.
-    fn walk_to(&mut self, k: usize, building: u32) -> bool {
+    pub(super) fn walk_to(&mut self, k: usize, building: u32) -> bool {
         let pos = self.units[k].pos;
         let Some(b) = self.buildings.iter().find(|b| b.id == building) else { return false };
         let Some(door) = self.door(b, pos) else { return false };
@@ -207,7 +214,7 @@ impl World {
 mod tests {
     use protocol::{BuildingKind, BuildingStatus, Good, UnitKind};
 
-    use crate::{economy::Economy, map::GameMap, world::World};
+    use crate::{economy::Economy, map::GameMap, world::{gather::Gather, World}};
 
     fn flat() -> World {
         let row = "0".repeat(40);
@@ -238,6 +245,29 @@ mod tests {
         assert!(carried, "Arbeiter holt Holz selbst");
         assert!(w.stocks[&1].amount(Good::Wood) < wood);
         assert!(w.stocks[&1].amount(Good::Boards) > boards, "Bretter selbst ins Lager gebracht");
+    }
+
+    #[test]
+    fn arbeiter_bringt_ergebnis_direkt_zum_abnehmer() {
+        let mut w = flat();
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        w.admin_give(1, &[protocol::GoodAmount { good: Good::Boards, amount: 100 }, protocol::GoodAmount { good: Good::Wood, amount: 100 }], 0);
+        w.test_granary(1); // sonst verdirbt das Essen
+        let saw = w.place_building(1, BuildingKind::Sawmill, 25, 2).unwrap().id;
+        let tan = w.place_building(1, BuildingKind::Tannery, 32, 2).unwrap().id;
+        // Sättel erst ab höherer Stufe: für den Test direkt einstellen.
+        w.buildings.iter_mut().find(|b| b.id == tan).unwrap().settings.recipe = Some("make_saddle".into());
+        // Kein Brett im Vorrat: die Sattlerei bekommt sie nur vom Sägewerk.
+        let n = w.stocks[&1].amount(Good::Boards);
+        w.stocks.get_mut(&1).unwrap().take_all(&[protocol::GoodAmount { good: Good::Boards, amount: n }]);
+        let worker = w.units.iter().position(|u| u.kind == UnitKind::Worker && u.home == Some(saw)).unwrap();
+        let mut direct = false;
+        for _ in 0..20 * 120 {
+            w.step(0.05);
+            direct |= w.units[worker].gather == Some(Gather::Deliver(tan)) && w.units[worker].carrying.is_some_and(|g| g.good == Good::Boards);
+        }
+        assert!(direct, "der Arbeiter bringt die Bretter direkt zur Sattlerei");
+        assert!(w.inventories[&tan].amount(Good::Boards) > 0);
     }
 
     #[test]

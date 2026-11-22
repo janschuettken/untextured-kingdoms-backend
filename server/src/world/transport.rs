@@ -9,6 +9,11 @@
 //!   (Lieferungen nimmt jeder Betrieb an, `accept_deliveries` gilt nicht mehr). Er hält
 //!   Eingänge für zwei Durchläufe vorrätig.
 //!
+//! - **Direkt:** Braucht ein Betrieb gerade eine Ware, die ein anderer fertig hat,
+//!   geht sie ohne Umweg übers Lager vom Hersteller zum Abnehmer. Das gilt auch,
+//!   wenn ein Träger beim Abholen merkt, dass jemand sie braucht, und für
+//!   Arbeiter, die selbst tragen (siehe `errand.rs`, `gather.rs`).
+//!
 //! Träger wohnen in den Lagern und tragen wenig. Der Karren aus dem
 //! Wagenschuppen fährt erst ab `cart_min_load` los und lädt dann viel; er
 //! lohnt sich für Betriebe, die viel herstellen oder weit weg liegen.
@@ -36,6 +41,10 @@ const AT_DOOR: f32 = 0.9;
 const WAIT_WEIGHT: f32 = 0.5;
 /// Betriebe, die stillstehen (Eingang fehlt, Lager voll), kommen vor allen anderen dran.
 const STALL_BONUS: f32 = 10_000.0;
+
+/// Selbst tragende Arbeiter liefern direkt an einen Abnehmer, wenn ihr Rundweg
+/// dadurch höchstens so viele Felder länger wird als über das Lager.
+const DIRECT_DETOUR: f32 = 10.0;
 
 /// Höchstens so viele Betriebe fährt ein Karren auf einer Sammelfahrt an.
 const TOUR_STOPS: usize = 4;
@@ -72,6 +81,8 @@ enum JobKind {
     Pickup { from: u32 },
     /// Ware aus dem Vorrat zum Betrieb `to` bringen.
     Supply { to: u32 },
+    /// Ware vom Betrieb `from` direkt zum Betrieb `to` bringen, der sie gerade braucht.
+    Direct { from: u32, to: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -108,8 +119,19 @@ impl Reserved {
                     *self.central.entry((owner, job.good)).or_default() += job.amount;
                 }
             }
+            (JobKind::Direct { from, to }, stage) => {
+                *self.incoming.entry((to, job.good)).or_default() += job.amount;
+                if matches!(stage, Stage::Load(_)) {
+                    *self.pickup.entry((from, job.good)).or_default() += job.amount;
+                }
+            }
             _ => {}
         }
+    }
+
+    /// Ein Arbeiter, der selbst trägt, ist mit dieser Ladung zu `to` unterwegs.
+    fn add_errand(&mut self, to: u32, load: GoodAmount) {
+        *self.incoming.entry((to, load.good)).or_default() += load.amount;
     }
 
     fn get(map: &HashMap<(u32, Good), u32>, key: (u32, Good)) -> u32 {
@@ -153,6 +175,9 @@ impl World {
         for u in &self.units {
             if let Some(job) = &u.job {
                 reserved.add(u.owner, job);
+            }
+            if let (Some(super::Gather::Deliver(to)), Some(load)) = (u.gather, u.carrying) {
+                reserved.add_errand(to, load);
             }
         }
         // Ereignisgesteuert: Hat sich bei einem Spieler in diesem Takt etwas an Gebäuden
@@ -292,6 +317,145 @@ impl World {
             })
     }
 
+    /// Bedienen Träger (`cart` = Karren) die Eingänge dieses Betriebs?
+    fn served(b: &BuildingState, cart: bool) -> bool {
+        if cart {
+            b.settings.cart_deliveries
+        } else {
+            !b.settings.worker_carries
+        }
+    }
+
+    /// Was gerade zu jedem Gebäude unterwegs ist: (Gebäude, Ware) → Menge.
+    fn incoming_goods(&self) -> HashMap<(u32, Good), u32> {
+        let mut r = Reserved::default();
+        for u in &self.units {
+            if let Some(job) = &u.job {
+                r.add(u.owner, job);
+            }
+            if let (Some(super::Gather::Deliver(to)), Some(load)) = (u.gather, u.carrying) {
+                r.add_errand(to, load);
+            }
+        }
+        r.incoming
+    }
+
+    /// Wie viel von `good` braucht dieser Betrieb gerade? Eingänge für zwei Durchläufe,
+    /// abzüglich dem, was er hat und was schon zu ihm unterwegs ist.
+    fn direct_need(&self, bi: usize, good: Good, incoming: &HashMap<(u32, Good), u32>) -> u32 {
+        let b = &self.buildings[bi];
+        if b.settings.paused || self.unstaffed.contains(&b.id) || self.is_hub(b) || self.target_reached(bi) {
+            return 0;
+        }
+        let Some(recipe) = b.settings.recipe.as_ref().and_then(|r| self.economy.recipe(r)) else { return 0 };
+        let Some(input) = recipe.inputs.iter().find(|i| i.good == good) else { return 0 };
+        let Some(inv) = self.inventories.get(&b.id) else { return 0 };
+        let want = (input.amount * 2).min(inv.capacity_of(good));
+        let have = inv.amount(good) + Reserved::get(incoming, (b.id, good));
+        want.saturating_sub(have).min(inv.room(good))
+    }
+
+    /// Nächster eigener Betrieb (außer `except`), der `good` gerade braucht:
+    /// (Id, Menge, steht er still?). `carrier`: Träger (`Some(false)`) oder Karren
+    /// (`Some(true)`) beliefern nur Betriebe, die sie bedienen; Arbeiter (`None`) alle.
+    #[allow(clippy::too_many_arguments)]
+    fn direct_consumer(
+        &self,
+        owner: u32,
+        good: Good,
+        from: (f32, f32),
+        except: u32,
+        area: Option<((f32, f32), f32)>,
+        carrier: Option<bool>,
+        incoming: &HashMap<(u32, Good), u32>,
+    ) -> Option<(u32, u32, bool)> {
+        self.buildings
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.owner == owner && b.id != except && within(area, b))
+            .filter(|(_, b)| carrier.is_none_or(|cart| Self::served(b, cart)))
+            .filter_map(|(bi, b)| {
+                let need = self.direct_need(bi, good, incoming);
+                (need > 0).then(|| (dist_to(b, from), b.id, need, b.status == BuildingStatus::MissingInput))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, id, need, stalled)| (id, need, stalled))
+    }
+
+    /// Hersteller, bei dem der Weg Träger → Hersteller → Betrieb `b` am kürzesten ist und der
+    /// `good` fertig hat (noch nicht vorgemerkt): (Id, Weglänge, Menge).
+    fn direct_source(
+        &self,
+        from: (f32, f32),
+        b: &BuildingState,
+        good: Good,
+        area: Option<((f32, f32), f32)>,
+        reserved: &Reserved,
+    ) -> Option<(u32, f32, u32)> {
+        self.buildings
+            .iter()
+            .filter(|s| s.owner == b.owner && s.id != b.id && within(area, s) && !s.settings.worker_carries && !self.is_hub(s))
+            .filter_map(|s| {
+                let inv = self.inventories.get(&s.id)?;
+                let is_input = s
+                    .settings
+                    .recipe
+                    .as_ref()
+                    .and_then(|r| self.economy.recipe(r))
+                    .is_some_and(|r| r.inputs.iter().any(|i| i.good == good));
+                if is_input {
+                    return None;
+                }
+                let free = inv.amount(good).saturating_sub(Reserved::get(&reserved.pickup, (s.id, good)));
+                (free > 0).then(|| (s.id, dist_to(s, from) + dist_to(b, center(s)), free))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
+    /// Ein Arbeiter von Betrieb `bi`, der selbst trägt, hat `good` bei `pos`: Gibt es einen
+    /// anderen Betrieb, der es gerade braucht, und lohnt sich der Weg gegenüber dem Lager `hub`?
+    /// Liefert (Abnehmer, Menge, die er braucht).
+    pub(super) fn worker_direct_target(&self, bi: usize, pos: (f32, f32), good: Good, hub: Option<u32>) -> Option<(u32, u32)> {
+        let home = &self.buildings[bi];
+        let incoming = self.incoming_goods();
+        let (to, need, _) = self.direct_consumer(home.owner, good, pos, home.id, None, None, &incoming)?;
+        let round = |id: u32| {
+            let t = self.buildings.iter().find(|b| b.id == id)?;
+            Some(dist_to(t, pos) + dist_to(home, center(t)))
+        };
+        let direct = round(to)?;
+        let via_hub = hub.and_then(round);
+        via_hub.is_none_or(|h| direct <= h + DIRECT_DETOUR).then_some((to, need))
+    }
+
+    /// Ein selbst tragender Arbeiter ist bei `target` angekommen: ins Lager (Vorrat) oder
+    /// direkt in den Betrieb abladen. Was nicht passt, bleibt in seinen Händen.
+    /// Liefert, ob `target` ein Lager war.
+    pub(super) fn unload_errand(&mut self, k: usize, target: u32) -> bool {
+        let owner = self.units[k].owner;
+        let hub = self.buildings.iter().find(|b| b.id == target).is_none_or(|b| self.is_hub(b));
+        let Some(load) = self.units[k].carrying.take() else { return hub };
+        let fits = if hub {
+            let stock = self.stocks.get_mut(&owner).expect("Spieler hat einen Vorrat");
+            let fits = stock.add(load.good, load.amount);
+            self.dirty_stocks.insert(owner);
+            self.hub_add(target, load.good, fits);
+            fits
+        } else {
+            let Some(inv) = self.inventories.get_mut(&target) else {
+                self.units[k].carrying = Some(load);
+                return hub;
+            };
+            let fits = inv.add(load.good, load.amount);
+            self.dirty_buildings.insert(target);
+            fits
+        };
+        if fits < load.amount {
+            self.units[k].carrying = Some(GoodAmount { good: load.good, amount: load.amount - fits });
+        }
+        hub
+    }
+
     /// Bester Auftrag für eine freie Einheit: der nächste, den sie erledigen kann.
     fn find_job(&self, k: usize, reserved: &Reserved, index: &HashMap<u32, usize>) -> Option<Job> {
         let u = &self.units[k];
@@ -371,26 +535,37 @@ impl World {
                 continue;
             }
             for i in inputs.iter().filter(|i| moves(i.good)) {
-                // Erst zum Lager, dann zum Betrieb: das Lager mit dem kürzesten Gesamtweg.
-                let Some((hub, via)) = self.supply_hub(owner, u.pos, b, i.good) else { continue };
                 // Karren füllen das Eingangslager ganz auf, Träger bringen zwei Durchläufe.
                 let want = if cart { inv.capacity_of(i.good) } else { (i.amount * 2).min(inv.capacity_of(i.good)) };
                 let min_load = if cart { cart_min.min(want).max(1) } else { min_load };
                 let have = inv.amount(i.good) + Reserved::get(&reserved.incoming, (b.id, i.good));
-                let keep = b.settings.keep_in_stock.iter().find(|g| g.good == i.good).map_or(0, |g| g.amount);
-                let there = stock
-                    .amount(i.good)
-                    .saturating_sub(Reserved::get(&reserved.central, (owner, i.good)))
-                    .saturating_sub(keep);
-                let amount = want.saturating_sub(have).min(cap).min(there);
-                if amount >= min_load {
-                    let job = Job {
-                        kind: JobKind::Supply { to: b.id },
-                        good: i.good,
-                        amount,
-                        stage: Stage::Load(hub),
-                        rest: NO_REST,
-                    };
+                let need = want.saturating_sub(have).min(cap);
+                if need < min_load {
+                    continue;
+                }
+                let mut choice: Option<(f32, Job)> = None;
+                // Erst zum Lager, dann zum Betrieb: das Lager mit dem kürzesten Gesamtweg.
+                if let Some((hub, via)) = self.supply_hub(owner, u.pos, b, i.good) {
+                    let keep = b.settings.keep_in_stock.iter().find(|g| g.good == i.good).map_or(0, |g| g.amount);
+                    let there = stock
+                        .amount(i.good)
+                        .saturating_sub(Reserved::get(&reserved.central, (owner, i.good)))
+                        .saturating_sub(keep);
+                    let amount = need.min(there);
+                    if amount >= min_load {
+                        let kind = JobKind::Supply { to: b.id };
+                        choice = Some((via, Job { kind, good: i.good, amount, stage: Stage::Load(hub), rest: NO_REST }));
+                    }
+                }
+                // Oder direkt vom Hersteller, der die Ware fertig hat, wenn der Weg nicht länger ist.
+                if let Some((src, via, free)) = self.direct_source(u.pos, b, i.good, area, reserved) {
+                    let amount = need.min(free);
+                    if amount >= min_load && choice.as_ref().is_none_or(|(d, _)| via <= *d) {
+                        let kind = JobKind::Direct { from: src, to: b.id };
+                        choice = Some((via, Job { kind, good: i.good, amount, stage: Stage::Load(src), rest: NO_REST }));
+                    }
+                }
+                if let Some((via, job)) = choice {
                     offer(&mut best, via - self.urgency(b, true), job);
                 }
             }
@@ -427,8 +602,15 @@ impl World {
     fn start(&mut self, k: usize, job: Job, index: &HashMap<u32, usize>) {
         let Stage::Load(at) = job.stage else { return };
         // Bedient: die Wartezeit dieses Betriebs beginnt von vorn.
-        let (JobKind::Pickup { from: b } | JobKind::Supply { to: b }) = job.kind;
-        self.transport_wait.remove(&b);
+        match job.kind {
+            JobKind::Pickup { from: b } | JobKind::Supply { to: b } => {
+                self.transport_wait.remove(&b);
+            }
+            JobKind::Direct { from, to } => {
+                self.transport_wait.remove(&from);
+                self.transport_wait.remove(&to);
+            }
+        }
         self.units[k].job = Some(job);
         if !self.route(k, at, index) {
             self.fail(k, index);
@@ -448,7 +630,7 @@ impl World {
         match job.stage {
             Stage::Load(_) => {
                 let taken = match job.kind {
-                    JobKind::Pickup { from } => {
+                    JobKind::Pickup { from } | JobKind::Direct { from, .. } => {
                         let Some(inv) = self.inventories.get_mut(&from) else {
                             return self.fail(k, index);
                         };
@@ -491,14 +673,27 @@ impl World {
                         }
                     }
                 }
-                let dest = match job.kind {
+                // Braucht gerade ein anderer Betrieb die abgeholte Ware? Dann direkt dorthin.
+                let mut kind = job.kind;
+                if let JobKind::Pickup { from } = job.kind {
+                    let u = &self.units[k];
+                    let incoming = self.incoming_goods();
+                    let area = self.service_area(u.home);
+                    let carrier = Some(u.kind == UnitKind::Cart);
+                    if let Some((to, need, stalled)) = self.direct_consumer(owner, job.good, u.pos, from, area, carrier, &incoming) {
+                        if need >= carried || stalled {
+                            kind = JobKind::Direct { from, to };
+                        }
+                    }
+                }
+                let dest = match kind {
                     JobKind::Pickup { .. } => self.nearest_hub(owner, self.units[k].pos, job.good),
-                    JobKind::Supply { to } => Some(to),
+                    JobKind::Supply { to } | JobKind::Direct { to, .. } => Some(to),
                 };
                 let Some(dest) = dest else {
                     return self.fail(k, index);
                 };
-                self.units[k].job = Some(Job { amount: carried, stage: Stage::Unload(dest), rest: NO_REST, ..job });
+                self.units[k].job = Some(Job { kind, amount: carried, stage: Stage::Unload(dest), rest: NO_REST, ..job });
                 if !self.route(k, dest, index) {
                     self.fail(k, index);
                 }
@@ -518,7 +713,7 @@ impl World {
                         self.hub_add(at, load.good, fits);
                         load.amount - fits
                     }
-                    JobKind::Supply { to } => {
+                    JobKind::Supply { to } | JobKind::Direct { to, .. } => {
                         let Some(inv) = self.inventories.get_mut(&to) else {
                             return self.fail(k, index);
                         };
@@ -536,7 +731,7 @@ impl World {
                     good: load.good,
                     amount: left,
                 });
-                if let JobKind::Supply { .. } = job.kind {
+                if let JobKind::Supply { .. } | JobKind::Direct { .. } = job.kind {
                     // Passt nicht mehr hinein: Rest zurück ins Lager.
                     self.return_load(k, index);
                 } else {
@@ -585,7 +780,7 @@ impl World {
         ) || matches!(
             self.units[k].job,
             Some(Job {
-                kind: JobKind::Supply { .. },
+                kind: JobKind::Supply { .. } | JobKind::Direct { .. },
                 ..
             })
         );
@@ -827,7 +1022,7 @@ mod tests {
         let k = w.units.iter().position(|u| u.kind == UnitKind::Carrier).unwrap();
         let index: std::collections::HashMap<u32, usize> = w.buildings.iter().enumerate().map(|(i, b)| (b.id, i)).collect();
         let target = |w: &World| match w.find_job(k, &super::Reserved::default(), &index).map(|j| j.kind) {
-            Some(super::JobKind::Supply { to }) | Some(super::JobKind::Pickup { from: to }) => to,
+            Some(super::JobKind::Supply { to } | super::JobKind::Direct { to, .. } | super::JobKind::Pickup { from: to }) => to,
             None => 0,
         };
         let set = |w: &mut World, id: u32, st: BuildingStatus| w.buildings.iter_mut().find(|b| b.id == id).unwrap().status = st;
@@ -969,6 +1164,67 @@ mod tests {
         let mut s = w.buildings.iter().find(|b| b.id == id).unwrap().settings.clone();
         s.paused = true;
         w.configure(1, id, s).unwrap();
+    }
+
+    /// Kein Brett mehr im Vorrat: Bretter gibt es nur noch im Sägewerk.
+    fn ohne_bretter_im_vorrat(w: &mut World) {
+        let n = central(w, Good::Boards);
+        w.stocks.get_mut(&1).unwrap().take_all(&[GoodAmount { good: Good::Boards, amount: n }]);
+    }
+
+    fn sattlerei(w: &mut World, x: u32, y: u32) -> u32 {
+        let id = w.place_building(1, BuildingKind::Tannery, x, y).unwrap().id;
+        // Sättel erst ab höherer Stufe: für den Test direkt einstellen.
+        w.buildings.iter_mut().find(|b| b.id == id).unwrap().settings.recipe = Some("make_saddle".into());
+        id
+    }
+
+    #[test]
+    fn traeger_bringen_ware_direkt_zum_abnehmer() {
+        let mut w = flat(60, 20);
+        w.worker_carries_default = false; // hier tragen die Träger
+        w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 100 }, GoodAmount { good: Good::Wood, amount: 100 }], 0);
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        shed(&mut w, 30, 12, 1);
+        let saw = w.place_building(1, BuildingKind::Sawmill, 40, 2).unwrap().id;
+        let tan = sattlerei(&mut w, 50, 2);
+        pause(&mut w, saw);
+        ohne_bretter_im_vorrat(&mut w);
+        w.inventories.get_mut(&saw).unwrap().add(Good::Boards, 2);
+        let mut direct = false;
+        for _ in 0..20 * 60 {
+            w.step(0.05);
+            direct |= w.units.iter().any(|u| matches!(u.job.map(|j| j.kind), Some(super::JobKind::Direct { from, to }) if from == saw && to == tan));
+            assert_eq!(central(&w, Good::Boards), 0, "die Bretter gehen nicht übers Lager");
+        }
+        assert!(direct, "ein Träger bringt die Bretter direkt zur Sattlerei");
+        assert_eq!(local(&w, tan, Good::Boards), 2);
+        assert_eq!(local(&w, saw, Good::Boards), 0);
+    }
+
+    #[test]
+    fn abgeholte_ware_geht_zum_abnehmer_statt_ins_lager() {
+        let mut w = flat(60, 20);
+        w.worker_carries_default = false; // hier tragen die Träger
+        w.admin_give(1, &[GoodAmount { good: Good::Boards, amount: 100 }, GoodAmount { good: Good::Wood, amount: 100 }], 0);
+        w.place_building(1, BuildingKind::Keep, 2, 2).unwrap();
+        shed(&mut w, 30, 12, 1);
+        let saw = w.place_building(1, BuildingKind::Sawmill, 40, 2).unwrap().id;
+        let tan = sattlerei(&mut w, 50, 2);
+        pause(&mut w, saw);
+        ohne_bretter_im_vorrat(&mut w);
+        w.inventories.get_mut(&saw).unwrap().add(Good::Boards, 2);
+        // Ein Träger hat die Bretter schon zum Abholen (Richtung Lager) aufgeladen.
+        let k = w.units.iter().position(|u| u.kind == UnitKind::Carrier).unwrap();
+        let index: std::collections::HashMap<u32, usize> = w.buildings.iter().enumerate().map(|(i, b)| (b.id, i)).collect();
+        let door = w.door(w.buildings.iter().find(|b| b.id == saw).unwrap(), (0.0, 0.0)).unwrap();
+        w.units[k].pos = door;
+        let job = super::Job { kind: super::JobKind::Pickup { from: saw }, good: Good::Boards, amount: 2, stage: super::Stage::Load(saw), rest: super::NO_REST };
+        w.arrive(k, job, &index);
+        assert!(matches!(w.units[k].job.map(|j| (j.kind, j.stage)), Some((super::JobKind::Direct { .. }, super::Stage::Unload(t))) if t == tan));
+        run(&mut w, 30.0);
+        assert_eq!(local(&w, tan, Good::Boards), 2, "direkt in der Sattlerei angekommen");
+        assert_eq!(central(&w, Good::Boards), 0);
     }
 
     #[test]
