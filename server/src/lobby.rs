@@ -450,19 +450,39 @@ impl Hub {
     pub fn duplicate(self: &Arc<Hub>, id: u32) -> Result<u32, String> {
         let game = self.game(id).ok_or("admin.no_game")?;
         let pending = self.prepare_save(&game).ok_or("admin.no_game")?;
-        let mut file = pending.file;
+        let new_id = self.start_from_file(pending.file)?;
+        info!("Spiel {id} kopiert als Spiel {new_id}");
+        Ok(new_id)
+    }
+
+    /// Admin: aktueller Stand eines laufenden Spiels als Datei (gleiches Format wie in `SAVES_DIR`).
+    pub fn export(&self, id: u32) -> Result<String, String> {
+        let game = self.game(id).ok_or("admin.no_game")?;
+        let pending = self.prepare_save(&game).ok_or("admin.no_game")?;
+        serde_json::to_string(&pending.file).map_err(|e| e.to_string())
+    }
+
+    /// Admin: eine heruntergeladene Spieldatei als neues laufendes Spiel starten.
+    pub fn import(self: &Arc<Hub>, text: &str) -> Result<u32, String> {
+        let file: GameFile = serde_json::from_str(text).map_err(|_| "admin.bad_game_file".to_string())?;
+        let old = file.id;
+        let new_id = self.start_from_file(file)?;
+        info!("Spieldatei (Spiel {old}) geladen als Spiel {new_id}");
+        Ok(new_id)
+    }
+
+    /// Spieldatei unter neuer Id starten und gleich speichern (übersteht so einen Neustart).
+    fn start_from_file(self: &Arc<Hub>, mut file: GameFile) -> Result<u32, String> {
+        let save = file.save.take().ok_or("admin.bad_game_file")?;
+        let map = GameMap::parse(&file.map_text).map_err(|_| "admin.bad_game_file")?;
+        let world_map = GameMap::parse(&file.map_text).map_err(|_| "admin.bad_game_file")?;
+        let world = World::from_save(world_map, self.economy.lock().unwrap().clone(), save)?;
         let new_id = self.next_game.fetch_add(1, Ordering::Relaxed);
         file.id = new_id;
-        let save = file.save.take().ok_or("kein Spielstand")?;
-        let map = GameMap::parse(&file.map_text).map_err(|e| e.to_string())?;
-        let world_map = GameMap::parse(&file.map_text).map_err(|e| e.to_string())?;
-        let world = World::from_save(world_map, self.economy.lock().unwrap().clone(), save)?;
-        let copy = self.launch(file, world, map)?;
-        // Gleich in eine eigene Datei, damit die Kopie auch einen Neustart übersteht.
-        if let Err(e) = self.save_game(&copy) {
-            warn!("Spiel {new_id}: Speichern der Kopie fehlgeschlagen: {e}");
+        let game = self.launch(file, world, map)?;
+        if let Err(e) = self.save_game(&game) {
+            warn!("Spiel {new_id}: Speichern fehlgeschlagen: {e}");
         }
-        info!("Spiel {id} kopiert als Spiel {new_id}");
         self.notify();
         Ok(new_id)
     }
@@ -1209,7 +1229,14 @@ mod tests {
         // Unabhängig: das Original beenden lässt die Kopie stehen.
         hub.end_game(id);
         assert!(hub.membership(copy, A).is_some());
+        // Als Datei herunterladen und wieder hochladen: neues Spiel, gleicher Stand.
+        let text = hub.export(copy).unwrap();
+        let loaded = hub.import(&text).unwrap();
+        assert!(loaded != copy && hub.membership(loaded, B).is_some());
+        assert_eq!(count(copy), count(loaded));
+        assert!(hub.import("kein json").is_err());
         hub.end_game(copy);
+        hub.end_game(loaded);
         assert!(!hub.save_path(copy).exists());
     }
 

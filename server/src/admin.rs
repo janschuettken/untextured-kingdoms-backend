@@ -34,6 +34,8 @@
 //! - `POST /api/games/{id}/new-game` nur Admin: neu anfangen (gleiche Karte, gleiche Mitspieler)
 //! - `POST /api/games/{id}/end`      nur Admin: Spiel ganz beenden, alle zurück in die Lobby
 //! - `POST /api/games/{id}/duplicate` nur Admin: laufendes Spiel samt Spielstand kopieren → `{ id }`
+//! - `GET  /api/games/{id}/export`    nur Admin: aktuellen Spielstand als Datei herunterladen
+//! - `POST /api/games/import`         nur Admin: Spieldatei (Rumpf) als neues Spiel starten → `{ id }`
 //! - `GET  /api/economy`  die geltenden Wirtschaftsdaten als JSON
 //! - `GET  /api/economy/file`  nur Admin: die geltenden Daten als Datei `economy.json` (genau im
 //!   Format der Datei im Repo), zum Herunterladen und Committen
@@ -254,7 +256,14 @@ pub fn router(hub: Arc<Hub>) -> Router {
         .route("/api/games/{id}/new-game", post(new_game))
         .route("/api/games/{id}/end", post(end_game))
         .route("/api/games/{id}/duplicate", post(duplicate_game))
+        .route("/api/games/{id}/export", get(export_game))
         .layer(DefaultBodyLimit::max(1024 * 1024))
+        // Spieldateien sind größer als die übrigen Rümpfe.
+        .merge(
+            Router::new()
+                .route("/api/games/import", post(import_game))
+                .layer(DefaultBodyLimit::max(256 * 1024 * 1024)),
+        )
         .with_state(hub)
 }
 
@@ -774,6 +783,45 @@ async fn duplicate_game(
     match tokio::task::spawn_blocking(move || hub.duplicate(id)).await {
         Ok(Ok(new_id)) => Json(serde_json::json!({ "id": new_id })).into_response(),
         Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn export_game(
+    State(hub): State<Arc<Hub>>,
+    headers: HeaderMap,
+    Path(id): Path<u32>,
+) -> Response {
+    if !hub.admin.allows(&headers).await {
+        return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
+    }
+    if let Err(r) = running(&hub, id) {
+        return r;
+    }
+    match tokio::task::spawn_blocking(move || hub.export(id)).await {
+        Ok(Ok(text)) => (
+            [
+                (axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8".to_string()),
+                (
+                    axum::http::header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"spiel-{id}.json\""),
+                ),
+            ],
+            text,
+        )
+            .into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn import_game(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: String) -> Response {
+    if !hub.admin.allows(&headers).await {
+        return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
+    }
+    match tokio::task::spawn_blocking(move || hub.import(&body)).await {
+        Ok(Ok(id)) => Json(serde_json::json!({ "id": id })).into_response(),
+        Ok(Err(e)) => (StatusCode::UNPROCESSABLE_ENTITY, e).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
