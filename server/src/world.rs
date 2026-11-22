@@ -122,6 +122,9 @@ pub struct Unit {
     /// oder die Zeit (Sekunden) um ist; dann geht es dort weiter.
     #[serde(default)]
     resume_order: Option<(protocol::AttackTarget, f32)>,
+    /// Tempo im letzten Schritt (Felder pro Sekunde): Schützen halten danach vor.
+    #[serde(skip)]
+    vel: (f32, f32),
 }
 
 /// Ein späteres Ziel eines Laufbefehls (siehe `Unit::waypoints`).
@@ -173,6 +176,7 @@ impl Unit {
             attacked_by: None,
             resume_order: None,
             heal_cooldown: 0.0,
+            vel: (0.0, 0.0),
         }
     }
 
@@ -271,6 +275,8 @@ pub struct World {
     pub phase_us: crate::profile::PhaseTimes,
     /// Zufall für Treffer im Fernkampf (Deckung), siehe `combat.rs`.
     combat_rng: u64,
+    /// Pfeile und Bolzen in der Luft: Schaden erst beim Aufschlag (siehe `combat.rs`).
+    projectiles: Vec<combat::Projectile>,
     /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
     hub_goods: HashMap<u32, storage::HubGoods>,
     /// Wie Waren zwischen Verbündeten ankommen.
@@ -388,6 +394,7 @@ impl World {
             self_carry: HashSet::new(),
             phase_us: Default::default(),
             combat_rng: 0x9E37_79B9_7F4A_7C15,
+            projectiles: Vec::new(),
         };
         world.add_map_bridges();
         world
@@ -1680,6 +1687,7 @@ impl World {
             // Auf Wegen schneller (oben auf der Mauer zählt der Boden nicht).
             let road = if unit.on_wall { 1.0 } else { nav.speed_at(unit.pos) };
             let mut budget = speed * road * dt;
+            let before = unit.pos;
             while budget > 0.0 {
                 let Some(&next) = unit.path.first() else { break };
                 let (dx, dy) = (next.0 - unit.pos.0, next.1 - unit.pos.1);
@@ -1697,6 +1705,7 @@ impl World {
                     budget = 0.0;
                 }
             }
+            unit.vel = if dt > 0.0 { ((unit.pos.0 - before.0) / dt, (unit.pos.1 - before.1) / dt) } else { (0.0, 0.0) };
         }
         self.phase_us.add(Phase::Movement, moving.elapsed());
         timed!(self, Phase::Spread, self.step_spread(dt));

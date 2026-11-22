@@ -405,6 +405,9 @@ impl Economy {
         if !(army.melee_max_levels >= 0.0 && army.melee_max_levels.is_finite() && army.height_range_percent >= 0.0 && army.height_range_percent <= 100.0) {
             return Err("Heer: melee_max_levels und height_range_percent (0 bis 100) dürfen nicht negativ sein".into());
         }
+        if !(army.arrow_speed > 0.0 && army.arrow_speed.is_finite() && army.arrow_hit_radius >= 0.0 && army.arrow_hit_radius.is_finite()) {
+            return Err("Heer: arrow_speed muss über 0 liegen, arrow_hit_radius darf nicht negativ sein".into());
+        }
         if army.loot_percent > 100 {
             return Err("Heer: loot_percent höchstens 100".into());
         }

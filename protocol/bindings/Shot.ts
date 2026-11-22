@@ -12,4 +12,8 @@ from_h: number, to_h: number,
 /**
  * Wurfbahn: Steigung beim Abschuss (tan) und Reichweite des Schützen. `None` = gerade Linie.
  */
-arc: [number, number] | null, };
+arc: [number, number] | null, 
+/**
+ * Flugzeit bis zum Aufschlag (Sekunden); erst dann zählt der Treffer auf dem Server.
+ */
+seconds: number, };

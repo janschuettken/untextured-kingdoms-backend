@@ -20,6 +20,12 @@
 //! seltener getroffen – `cover_percent` der Gebäudestufe sagt, wie viel Prozent der Schüsse
 //! danebengehen. Der Schuss fliegt trotzdem (Pfeil sichtbar), richtet aber nichts an.
 //!
+//! Pfeile und Bolzen fliegen wirklich: Schaden gibt es erst beim Aufschlag. Der Schütze hält
+//! auf ein laufendes Ziel vor (Tempo und Richtung aus dem letzten Schritt), läuft es geradeaus
+//! weiter, trifft er meistens. Biegt es ab oder bleibt stehen, schlägt der Pfeil am vorausberechneten
+//! Punkt ein und geht daneben – außer dort steht gerade ein anderer Feind (`army.arrow_hit_radius`).
+//! Ohne freie Bahn zum Vorhaltepunkt zielt er dorthin, wo das Ziel gerade steht.
+//!
 //! Höhenvorteil (nur relativ, Mauern und Türme zählen mit): Nahkampf geht nur bis
 //! `army.melee_max_levels` Stufen Unterschied. Fernkämpfer reichen je Stufe, die sie höher
 //! stehen als ihr Ziel, `army.height_range_percent` weiter. Gleiche Höhe = kein Bonus.
@@ -54,6 +60,29 @@ pub(super) fn may_attack(def: &protocol::UnitDef, mounted: bool, moving: bool) -
         def.attack_standing
     }
 }
+
+/// Ein Pfeil oder Bolzen in der Luft.
+#[derive(Clone, Debug)]
+pub(super) struct Projectile {
+    /// Schütze (Id), sein Spieler und seine Art (für den Schaden, auch wenn er inzwischen fiel).
+    shooter: u32,
+    owner: u32,
+    kind: UnitKind,
+    /// Wen er treffen wollte.
+    target: u32,
+    /// Einschlagpunkt und Höhe der Füße dort.
+    to: (f32, f32),
+    to_feet: f32,
+    /// Sekunden bis zum Aufschlag.
+    left: f32,
+}
+
+/// Ein Treffer: (Ziel (Index), Angreifer (Id), Art des Angreifers, Spieler des Angreifers, Fernkampf).
+type Hit = (usize, u32, UnitKind, u32, bool);
+
+/// So weit darf die Höhe am Ziel von der Höhe am Einschlagpunkt abweichen (Weltmaß), sonst fliegt
+/// der Pfeil drüber oder schlägt darunter ein (z. B. oben auf der Mauer gezielt, unten getroffen).
+const HIT_HEIGHT: f32 = 0.8;
 
 /// Bündnis eines Spielers: (true, Bündnis) oder allein (false, Spieler).
 type TeamKey = (bool, u32);
@@ -264,11 +293,13 @@ impl World {
                 fighters.push(k);
             }
         }
-        if teams.len() < 2 && ordered.is_empty() {
+        // Pfeile, die jetzt aufschlagen.
+        let mut hits: Vec<Hit> = self.land_projectiles(dt, &index, &grid);
+        // Neue Schüsse: (Schütze, Ziel (Indizes), Reichweite, Bahn).
+        let mut launches: Vec<(usize, usize, f32, super::ballistics::Flight)> = Vec::new();
+        if teams.len() < 2 && ordered.is_empty() && hits.is_empty() {
             return;
         }
-        // (Ziel, Angreifer (Index), Spieler des Angreifers, Fernkampf)
-        let mut hits: Vec<(usize, usize, u32, bool)> = Vec::new();
         // (Gebäude, Angreifer (Index))
         let mut building_hits: Vec<(u32, usize)> = Vec::new();
         let mut shots: Vec<Shot> = Vec::new();
@@ -282,8 +313,9 @@ impl World {
             // Unterwegs zu einem Gebäude: feindliche Kämpfer in Reichweite gehen vor. Erst die
             // abwehren, dann weiter zum Gebäude.
             if matches!(order, AttackTarget::Building { .. }) {
-                if let Some((j, _)) = self.nearest_foe(k, &grid, true) {
-                    let by = u.owner;
+                if let Some((j, flight)) = self.nearest_foe(k, &grid, true) {
+                    let (by, me, kind) = (u.owner, u.id, u.kind);
+                    let range = self.range_against(u, &self.units[j], def.range);
                     let u = &mut self.units[k];
                     u.path.clear();
                     u.layers.clear();
@@ -291,7 +323,10 @@ impl World {
                     u.chase_timer = 0.0;
                     if u.attack_cooldown <= 0.0 {
                         u.attack_cooldown = def.attack_seconds;
-                        hits.push((j, k, by, ranged));
+                        match flight {
+                            Some(f) if ranged => launches.push((k, j, range, f)),
+                            _ => hits.push((j, me, kind, by, ranged)),
+                        }
                     }
                     let foe = self.units[j].id;
                     self.units[k].last_foe = Some((foe, 0.0));
@@ -364,12 +399,10 @@ impl World {
                 if u.attack_cooldown <= 0.0 {
                     u.attack_cooldown = def.attack_seconds;
                     match (order, j) {
-                        (AttackTarget::Unit { .. }, Some((j, flight, range))) => {
-                            hits.push((j, k, by, ranged));
-                            if let Some(f) = flight {
-                                shots.push(self.make_shot(&self.units[k], &self.units[j], f, range));
-                            }
-                        }
+                        (AttackTarget::Unit { .. }, Some((j, flight, range))) => match flight {
+                            Some(f) if ranged => launches.push((k, j, range, f)),
+                            _ => hits.push((j, u.id, u.kind, by, ranged)),
+                        },
                         (AttackTarget::Building { id }, _) => building_hits.push((id, k)),
                         _ => {}
                     }
@@ -399,15 +432,22 @@ impl World {
             let u = &self.units[k];
             let def = self.economy.unit(u.kind).expect("oben geprüft");
             if let Some((j, flight)) = self.nearest_foe(k, &grid, false) {
-                hits.push((j, k, u.owner, self.economy.is_ranged(def.range)));
-                if let Some(f) = flight {
-                    let range = self.range_against(u, &self.units[j], def.range);
-                    shots.push(self.make_shot(u, &self.units[j], f, range));
+                match flight {
+                    Some(f) => launches.push((k, j, self.range_against(u, &self.units[j], def.range), f)),
+                    None => hits.push((j, u.id, u.kind, u.owner, self.economy.is_ranged(def.range))),
                 }
                 self.units[k].attack_cooldown = def.attack_seconds;
                 let foe = self.units[j].id;
                 self.units[k].last_foe = Some((foe, 0.0));
             }
+        }
+        // Abschuss: vorhalten, Pfeil in die Luft. Das Ziel merkt schon jetzt, wer auf es schießt.
+        for (k, j, range, flight) in launches {
+            let (shot, arrow) = self.launch(k, j, range, flight);
+            shots.push(shot);
+            self.projectiles.push(arrow);
+            let shooter = self.units[k].id;
+            self.units[j].attacked_by = Some((shooter, 0.0));
         }
         if !shots.is_empty() {
             self.events.push(ServerMsg::Shots { shots });
@@ -444,16 +484,15 @@ impl World {
         // Dann trifft es bei Reitern das Pferd oder den Reiter, und dessen Rüstung zählt.
         let horse_percent = self.economy.def.army.horse_hit_percent.min(100);
         let mut landed = Vec::with_capacity(hits.len());
-        for (j, k, by, ranged) in hits {
+        for (j, attacker, kind, by, ranged) in hits {
             // Das Ziel merkt sich, wer es angreift (auch wenn der Schuss danebengeht).
-            let attacker = self.units[k].id;
             self.units[j].attacked_by = Some((attacker, 0.0));
             let cover = if ranged { self.cover_of(&self.units[j]) } else { 0 };
             if self.misses(cover) {
                 continue;
             }
             let horse = self.units[j].mounted && self.misses(horse_percent);
-            let (Some(adef), Some(tdef)) = (self.economy.unit(self.units[k].kind), self.economy.unit(self.units[j].kind)) else { continue };
+            let (Some(adef), Some(tdef)) = (self.economy.unit(kind), self.economy.unit(self.units[j].kind)) else { continue };
             let attack = self.economy.hit_damage(adef, if horse { &tdef.horse_armor } else { &tdef.armor });
             if attack > 0 {
                 landed.push((j, attack, by, horse));
@@ -613,21 +652,111 @@ impl World {
             .collect()
     }
 
-    /// Schuss für den Client: gleiche Bahn wie auf dem Server gerechnet.
-    fn make_shot(&self, s: &Unit, t: &Unit, flight: super::ballistics::Flight, range: f32) -> Shot {
-        Shot {
-            from: s.pos,
-            to: t.pos,
-            from_wall: s.on_wall,
-            to_wall: t.on_wall,
-            kind: s.kind,
-            from_h: self.feet_h(s) + 0.7,
-            to_h: self.feet_h(t) + 0.7,
+    /// Flugzeit (Sekunden) über `d` Felder mit dieser Bahn; `dh` = Höhenunterschied (Welt).
+    fn flight_seconds(&self, d: f32, dh: f32, flight: super::ballistics::Flight) -> f32 {
+        let len = match flight {
+            super::ballistics::Flight::Arc(tan) => d * (1.0 + tan * tan).sqrt(),
+            super::ballistics::Flight::Straight => d.hypot(dh),
+        };
+        (len / self.economy.def.army.arrow_speed.max(0.1)).max(0.15)
+    }
+
+    /// Schuss von `k` auf `j`: vorhalten (wo steht das Ziel, wenn der Pfeil ankommt?) und den Pfeil
+    /// auf den Weg schicken. Ohne freie Bahn zum Vorhaltepunkt geht er dorthin, wo das Ziel jetzt steht.
+    fn launch(&self, k: usize, j: usize, range: f32, flight: super::ballistics::Flight) -> (Shot, Projectile) {
+        let (u, t) = (&self.units[k], &self.units[j]);
+        let dist = |p: (f32, f32)| (p.0 - u.pos.0).hypot(p.1 - u.pos.1);
+        let dh = self.feet_h(t) - self.feet_h(u);
+        let mut aim = (t.pos, t.on_wall, flight, range);
+        if t.vel.0.hypot(t.vel.1) > 1e-3 {
+            // Ein paar Runden: Flugzeit zum Punkt → wo das Ziel dann ist → neue Flugzeit.
+            let (w, h) = (self.map.width as f32 - 0.01, self.map.height as f32 - 0.01);
+            let mut p = t.pos;
+            for _ in 0..3 {
+                let secs = self.flight_seconds(dist(p), dh, flight);
+                p = ((t.pos.0 + t.vel.0 * secs).clamp(0.0, w), (t.pos.1 + t.vel.1 * secs).clamp(0.0, h));
+            }
+            let mut ghost = Unit::new(t.id, t.owner, t.kind, p);
+            ghost.on_wall = t.on_wall && self.tile_of(p).is_some_and(|i| self.occupied[i] != 0);
+            let def_range = self.economy.unit(u.kind).map_or(range, |d| d.range);
+            let r = self.range_against(u, &ghost, def_range);
+            if dist(p) <= r + REACH {
+                if let Some(f) = self.flight(u, &ghost, r) {
+                    aim = (p, ghost.on_wall, f, r);
+                }
+            }
+        }
+        let (to, to_wall, flight, range) = aim;
+        let mut ghost = Unit::new(t.id, t.owner, t.kind, to);
+        ghost.on_wall = to_wall;
+        let to_feet = self.feet_h(&ghost);
+        let seconds = self.flight_seconds(dist(to), to_feet - self.feet_h(u), flight);
+        let shot = Shot {
+            from: u.pos,
+            to,
+            from_wall: u.on_wall,
+            to_wall,
+            kind: u.kind,
+            from_h: self.feet_h(u) + 0.7,
+            to_h: to_feet + 0.7,
             arc: match flight {
                 super::ballistics::Flight::Arc(tan) => Some((tan, range)),
                 super::ballistics::Flight::Straight => None,
             },
+            seconds,
+        };
+        let arrow = Projectile { shooter: u.id, owner: u.owner, kind: u.kind, target: t.id, to, to_feet, left: seconds };
+        (shot, arrow)
+    }
+
+    /// Pfeile weiterfliegen lassen; wer beim Aufschlag am Einschlagpunkt steht, wird getroffen:
+    /// das Ziel, sonst der nächste Feind des Schützen dort, dem er schaden kann.
+    fn land_projectiles(&mut self, dt: f32, index: &HashMap<u32, usize>, grid: &HashMap<(i32, i32), Vec<usize>>) -> Vec<Hit> {
+        if self.projectiles.is_empty() {
+            return Vec::new();
         }
+        let mut arrived = Vec::new();
+        self.projectiles.retain_mut(|p| {
+            p.left -= dt;
+            if p.left > 0.0 {
+                return true;
+            }
+            arrived.push(p.clone());
+            false
+        });
+        let radius = self.economy.def.army.arrow_hit_radius;
+        let mut hits = Vec::new();
+        for p in arrived {
+            let Some(adef) = self.economy.unit(p.kind) else { continue };
+            let near = |t: &Unit| (t.pos.0 - p.to.0).hypot(t.pos.1 - p.to.1) <= radius && (self.feet_h(t) - p.to_feet).abs() <= HIT_HEIGHT;
+            let aimed = index.get(&p.target).copied().filter(|&j| near(&self.units[j]));
+            let struck = aimed.or_else(|| {
+                let (cx, cy) = ((p.to.0 / CELL) as i32, (p.to.1 / CELL) as i32);
+                let mut best: Option<(f32, usize)> = None;
+                for gy in cy - 1..=cy + 1 {
+                    for gx in cx - 1..=cx + 1 {
+                        for &j in grid.get(&(gx, gy)).map_or(&[][..], |v| v.as_slice()) {
+                            let t = &self.units[j];
+                            if t.owner == p.owner || !self.can_attack(p.owner, t.owner) || !near(t) || !self.can_damage(adef, t) {
+                                continue;
+                            }
+                            if t.kind.is_civilian() && self.inside(t) {
+                                continue;
+                            }
+                            let d = (t.pos.0 - p.to.0).hypot(t.pos.1 - p.to.1);
+                            if best.is_none_or(|(b, _)| d < b) {
+                                best = Some((d, j));
+                            }
+                        }
+                    }
+                }
+                best.map(|(_, j)| j)
+            });
+            if let Some(j) = struck {
+                hits.push((j, p.shooter, p.kind, p.owner, true));
+            }
+        }
+        hits
     }
 
     /// Gebäude im Kampf eingerissen: verschwindet wie beim Abriss, nur ohne Erstattung.
@@ -1159,4 +1288,124 @@ mod tests {
         assert!(l.has_player(2));
         assert_eq!(l.winners(), Some(&[1][..]));
     }
+
+    /// Flache, leere Karte; ein Bogenschütze von 1 bei (20, 20), Speerträger halten
+    /// viel aus und wehren sich nicht.
+    fn open_field() -> World {
+        let row = "0".repeat(60);
+        let text = format!("spawn 1 1\n{}", format!("{row}\n").repeat(40));
+        let mut eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people();
+        for u in &mut eco.def.units {
+            let (hp, attack, range) = match u.kind {
+                UnitKind::Archer => (40, 6, 18.0),
+                UnitKind::Spearman => (100_000, 0, 1.5),
+                _ => continue,
+            };
+            (u.hp, u.attack, u.range, u.attack_seconds) = (hp, attack, range, 1.5);
+            u.damage.clear();
+            u.armor.clear();
+        }
+        eco.def.army.arrow_speed = 10.0;
+        eco.def.army.arrow_hit_radius = 0.6;
+        let mut w = World::new(GameMap::parse(&text).unwrap(), eco);
+        w.units.push(Unit::new(50_000, 1, UnitKind::Archer, (20.5, 20.5)));
+        w
+    }
+
+    /// Lässt den Speerträger (Id 50_001) mit `vel` laufen (`walks`: wirklich, sonst nur so tun) und
+    /// zählt Schüsse und angerichteten Schaden.
+    fn shoot_at_runner(start: (f32, f32), vel: (f32, f32), walks: bool, seconds: f32) -> (u32, u32) {
+        let mut w = open_field();
+        w.units.push(Unit::new(50_001, 2, UnitKind::Spearman, start));
+        let mut shots = 0;
+        for _ in 0..(seconds * 20.0) as u32 {
+            let s = w.units.iter_mut().find(|u| u.id == 50_001).unwrap();
+            s.vel = vel;
+            if walks {
+                s.pos = (s.pos.0 + vel.0 * 0.05, s.pos.1 + vel.1 * 0.05);
+            }
+            w.step_combat(0.05);
+            for e in w.take_events() {
+                if let ServerMsg::Shots { shots: list } = e {
+                    shots += list.len() as u32;
+                }
+            }
+        }
+        // Noch fliegende Pfeile landen lassen (Ziel bleibt dabei stehen).
+        w.units.iter_mut().find(|u| u.id == 50_001).unwrap().vel = (0.0, 0.0);
+        let mut eco = w.economy.clone();
+        eco.def.units.iter_mut().find(|u| u.kind == UnitKind::Archer).unwrap().attack = 0;
+        w.set_economy(eco);
+        run(&mut w, 3.0);
+        (shots, w.units.iter().find(|u| u.id == 50_001).unwrap().damage)
+    }
+
+    #[test]
+    fn pfeil_trifft_erst_beim_aufschlag() {
+        let mut w = open_field();
+        w.units.push(Unit::new(50_001, 2, UnitKind::Spearman, (32.5, 20.5)));
+        w.step_combat(0.05);
+        let events = w.take_events();
+        let seconds = events
+            .iter()
+            .find_map(|e| match e {
+                ServerMsg::Shots { shots } => shots.first().map(|s| s.seconds),
+                _ => None,
+            })
+            .expect("Schuss fliegt");
+        // 12 Felder, Bogen etwas länger, 10 Felder pro Sekunde.
+        assert!(seconds > 1.0 && seconds < 2.0, "Flugzeit {seconds}");
+        assert_eq!(w.units.iter().find(|u| u.id == 50_001).unwrap().damage, 0, "noch kein Schaden beim Abschuss");
+        run(&mut w, seconds - 0.1);
+        assert_eq!(w.units.iter().find(|u| u.id == 50_001).unwrap().damage, 0, "kurz vor dem Aufschlag noch nichts");
+        run(&mut w, 0.2);
+        assert_eq!(w.units.iter().find(|u| u.id == 50_001).unwrap().damage, 6, "beim Aufschlag getroffen");
+    }
+
+    #[test]
+    fn schuetzen_halten_auf_geradeaus_laufende_vor() {
+        // Quer vor dem Schützen vorbei, 2 Felder pro Sekunde.
+        let (shots, damage) = shoot_at_runner((10.5, 28.5), (2.0, 0.0), true, 10.0);
+        assert!(shots >= 5, "Schüsse: {shots}");
+        assert!(damage >= 6 * (shots - 1), "fast alles trifft: {damage} Schaden aus {shots} Schüssen");
+    }
+
+    #[test]
+    fn wer_anders_laeuft_als_gedacht_wird_verfehlt() {
+        // Sieht aus, als liefe er (Tempo gesetzt), bleibt aber stehen: der Pfeil landet vor ihm.
+        let (shots, damage) = shoot_at_runner((26.5, 28.5), (3.0, 0.0), false, 6.0);
+        assert!(shots >= 3, "Schüsse: {shots}");
+        assert_eq!(damage, 0, "alle Pfeile gehen vor ihm nieder");
+        // Steht er wirklich still, trifft jeder Pfeil.
+        let (shots, damage) = shoot_at_runner((26.5, 28.5), (0.0, 0.0), false, 6.0);
+        assert_eq!(damage, 6 * shots);
+    }
+
+    #[test]
+    fn pfeil_trifft_einen_anderen_feind_am_einschlag() {
+        let mut w = open_field();
+        // Ziel bleibt stehen, tut aber so, als liefe es; dort, wo der Pfeil landet, steht ein zweiter Feind.
+        let mut s = Unit::new(50_001, 2, UnitKind::Spearman, (30.5, 20.5));
+        s.vel = (0.0, 3.0);
+        w.units.push(s);
+        w.step_combat(0.05);
+        let to = w
+            .take_events()
+            .iter()
+            .find_map(|e| match e {
+                ServerMsg::Shots { shots } => shots.first().map(|s| s.to),
+                _ => None,
+            })
+            .expect("Schuss fliegt");
+        assert!(to.1 > 22.0, "vorgehalten: {to:?}");
+        w.units.iter_mut().find(|u| u.id == 50_001).unwrap().vel = (0.0, 0.0);
+        w.units.push(Unit::new(50_002, 2, UnitKind::Spearman, to));
+        let mut eco = w.economy.clone();
+        eco.def.units.iter_mut().find(|u| u.kind == UnitKind::Archer).unwrap().attack_seconds = 100.0;
+        w.set_economy(eco);
+        run(&mut w, 2.5);
+        assert_eq!(w.units.iter().find(|u| u.id == 50_001).unwrap().damage, 0);
+        assert_eq!(w.units.iter().find(|u| u.id == 50_002).unwrap().damage, 6);
+    }
+
 }
