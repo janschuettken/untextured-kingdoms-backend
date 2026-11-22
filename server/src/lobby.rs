@@ -577,6 +577,8 @@ impl Hub {
                 id: g.id,
                 title: meta.title.clone(),
                 map: meta.map_name.clone(),
+                width: meta.width,
+                height: meta.height,
                 phase: meta.phase,
                 host_name,
                 host: public_id(&meta.host),

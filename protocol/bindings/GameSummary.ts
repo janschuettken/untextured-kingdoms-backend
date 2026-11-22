@@ -9,7 +9,11 @@ export type GameSummary = { id: number,
 /**
  * Vom Gastgeber gesetzter Name (leer: „Spiel von …“).
  */
-title: string, map: string, phase: GamePhase, host_name: string, 
+title: string, map: string, 
+/**
+ * Kartengröße in Feldern.
+ */
+width: number, height: number, phase: GamePhase, host_name: string, 
 /**
  * Öffentliche Id des Gastgebers (wer umbenennen darf).
  */
