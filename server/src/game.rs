@@ -918,6 +918,7 @@ async fn handle_msg(
         | ClientMsg::Trade { .. }
         | ClientMsg::SetAutoTrade { .. }
         | ClientMsg::SetGoodLimit { .. }
+        | ClientMsg::SetPeoplePolicy { .. }
         | ClientMsg::SendGoods { .. }) => {
             let mut world = state.world.lock().unwrap();
             if let Err(text) = apply_command(&mut world, &state.ticks, player_id, msg) {
@@ -1082,6 +1083,7 @@ pub fn apply_command(
         ClientMsg::Trade { good, amount, sell } => world.trade(player_id, good, amount, sell)?,
         ClientMsg::SetAutoTrade { good, buy_below, sell_above } => world.set_auto_trade(player_id, good, buy_below, sell_above)?,
         ClientMsg::SetGoodLimit { good, stop_at, keep_in_stock } => world.set_good_limit(player_id, good, stop_at, keep_in_stock)?,
+        ClientMsg::SetPeoplePolicy { ration, tax } => world.set_people_policy(player_id, ration, tax)?,
         ClientMsg::SendGoods { to, goods, taler } => {
             world.send_goods(player_id, to, &goods, taler)?;
             for event in world.take_events() {

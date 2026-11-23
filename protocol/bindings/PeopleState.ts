@@ -31,4 +31,16 @@ fed: number,
 /**
  * Sekunden (Spielzeit) bis zur nächsten Mahlzeit, Stand beim Senden.
  */
-next_meal_in: number, };
+next_meal_in: number, 
+/**
+ * Gewählte Ration (Index in `population.rations`).
+ */
+ration: number, 
+/**
+ * Gewählter Steuersatz (Index in `market.tax_levels`).
+ */
+tax: number, 
+/**
+ * So viele haben zuletzt ihre volle Ration bekommen (von `fed`).
+ */
+well_fed: number, };

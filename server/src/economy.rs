@@ -332,6 +332,18 @@ impl Economy {
         if !(1..=100).contains(&pop.hungry_speed_percent) {
             return Err("Bewohner: hungry_speed_percent muss zwischen 1 und 100 liegen".into());
         }
+        if pop.rations.iter().any(|r| r.food == 0 || r.speed_percent <= -100) {
+            return Err("Bewohner: jede Ration braucht mindestens 1 Essen, Tempo über -100 %".into());
+        }
+        if !pop.rations.is_empty() && pop.default_ration as usize >= pop.rations.len() {
+            return Err("Bewohner: default_ration zeigt auf keine Ration".into());
+        }
+        if def.market.tax_levels.iter().any(|t| t.speed_percent <= -100) {
+            return Err("Markt: Steuersatz mit Tempo -100 % oder weniger".into());
+        }
+        if !def.market.tax_levels.is_empty() && def.market.default_tax as usize >= def.market.tax_levels.len() {
+            return Err("Markt: default_tax zeigt auf keinen Steuersatz".into());
+        }
         if !pop.food.iter().all(|g| def.goods.contains(g)) {
             return Err("Bewohner: ein Essen steht nicht in goods".into());
         }

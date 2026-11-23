@@ -103,6 +103,9 @@ pub struct Unit {
     /// Bewohner: bei der letzten Mahlzeit nichts bekommen, arbeitet und läuft langsamer.
     #[serde(default)]
     hungry: bool,
+    /// Bewohner: bei der letzten Mahlzeit die volle (gewählte) Ration bekommen.
+    #[serde(default)]
+    well_fed: bool,
     /// Gruppenmarsch: höchstens so schnell (Felder pro Sekunde), damit die Gruppe zusammenbleibt.
     #[serde(default)]
     speed_cap: Option<f32>,
@@ -170,6 +173,7 @@ impl Unit {
             mount_at: None,
             meal_in: None,
             hungry: false,
+            well_fed: false,
             speed_cap: None,
             waypoints: Vec::new(),
             last_foe: None,
@@ -251,6 +255,10 @@ pub struct World {
     transport_wait: HashMap<u32, f32>,
     /// Grenzen je Ware für neue Betriebe, je Spieler (Ressourcen-Fenster).
     good_limits: HashMap<u32, Vec<protocol::GoodLimit>>,
+    /// Gewählte Ration und Steuersatz je Spieler (Indizes; fehlt = Voreinstellung).
+    policies: HashMap<u32, (u32, u32)>,
+    /// Steuern, die noch keinen ganzen Taler ergeben (in Prozent eines Talers).
+    tax_carry: HashMap<u32, u32>,
     /// Sekunden seit dem letzten automatischen Handel.
     auto_trade_clock: f32,
     /// Tempo-Faktor je Betrieb, dessen Arbeiter (teils) hungern (siehe `people.rs`).
@@ -371,6 +379,8 @@ impl World {
             worker_hunger: HashMap::new(),
             auto_trade: HashMap::new(),
             good_limits: HashMap::new(),
+            policies: HashMap::new(),
+            tax_carry: HashMap::new(),
             transport_wait: HashMap::new(),
             auto_trade_clock: 0.0,
             unstaffed: HashSet::new(),
@@ -612,6 +622,8 @@ impl World {
         self.meal_soonest.remove(&player);
         self.auto_trade.remove(&player);
         self.good_limits.remove(&player);
+        self.policies.remove(&player);
+        self.tax_carry.remove(&player);
         ids
     }
 
@@ -1697,15 +1709,15 @@ impl World {
         let king = self.economy.def.movement.king_speed;
         let worker = self.economy.def.movement.worker_speed;
         let horse = self.economy.def.army.horse_speed;
-        let hungry_speed = self.hungry_speed();
+        let civil: Vec<f32> = (0..self.units.len()).map(|k| self.unit_hunger_factor(k)).collect();
         let soldier: Vec<f32> = self.units.iter().map(|u| if u.kind.is_soldier() { self.soldier_speed(u.owner, u.kind) } else { 0.0 }).collect();
         let nav = &self.map.nav;
         for (k, unit) in self.units.iter_mut().enumerate() {
             let full = match unit.kind {
                 UnitKind::King => king,
-                UnitKind::Carrier => carrier * if unit.hungry { hungry_speed } else { 1.0 },
-                UnitKind::Cart | UnitKind::TradeCart => cart * if unit.hungry { hungry_speed } else { 1.0 },
-                UnitKind::Worker => worker * if unit.hungry { hungry_speed } else { 1.0 },
+                UnitKind::Carrier => carrier * civil[k],
+                UnitKind::Cart | UnitKind::TradeCart => cart * civil[k],
+                UnitKind::Worker => worker * civil[k],
                 UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer => soldier[k],
             };
             // Zu Pferd mindestens so schnell wie das Pferd; nach einem Sturz liegt man still.

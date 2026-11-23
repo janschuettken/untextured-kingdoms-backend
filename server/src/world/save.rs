@@ -52,6 +52,8 @@ pub struct SaveGame {
     #[serde(default)]
     good_limits: HashMap<u32, Vec<protocol::GoodLimit>>,
     #[serde(default)]
+    policies: HashMap<u32, (u32, u32)>,
+    #[serde(default)]
     game_seconds: f64,
 }
 
@@ -81,6 +83,7 @@ impl World {
             winners: self.winners.clone(),
             auto_trade: self.auto_trade.clone(),
             good_limits: self.good_limits.clone(),
+            policies: self.policies.clone(),
             game_seconds: self.game_seconds,
         }
     }
@@ -124,6 +127,7 @@ impl World {
         w.winners = save.winners;
         w.auto_trade = save.auto_trade;
         w.good_limits = save.good_limits;
+        w.policies = save.policies;
         w.game_seconds = save.game_seconds;
         // Ältere Stände: Herstellungsbetriebe hatten noch keine eigenen Arbeiter.
         for bi in 0..w.buildings.len() {

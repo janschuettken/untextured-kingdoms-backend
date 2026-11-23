@@ -126,6 +126,14 @@ pub enum ClientMsg {
         #[serde(default)]
         keep_in_stock: Option<u32>,
     },
+    /// Rationen und Steuersatz für die eigenen Bewohner (Stufen aus `population.rations`
+    /// und `market.tax_levels`; `None` = unverändert).
+    SetPeoplePolicy {
+        #[serde(default)]
+        ration: Option<u32>,
+        #[serde(default)]
+        tax: Option<u32>,
+    },
     /// Als Admin anmelden (Token aus der Server-Umgebung `ADMIN_TOKEN`).
     AdminLogin { token: String },
     /// Nur Admin: sich selbst Waren ins Lager legen.
@@ -1677,11 +1685,67 @@ pub struct PopulationDef {
     pub hungry_speed_percent: u32,
     /// Bewohner je Träger oder Karren.
     pub per_transport: u32,
+    /// Rationen, die ein Spieler wählen kann: so viel Essen je Bewohner und Mahlzeit,
+    /// und so viel schneller arbeiten und laufen alle, die ihre volle Ration bekommen.
+    #[serde(default = "default_rations")]
+    pub rations: Vec<RationLevel>,
+    /// Mit dieser Ration (Index in `rations`) fängt jeder an.
+    #[serde(default)]
+    pub default_ration: u32,
+}
+
+/// Eine wählbare Ration.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RationLevel {
+    /// Essen je Bewohner und Mahlzeit (Träger und Karren mal `per_transport`).
+    pub food: u32,
+    /// Tempo-Zuschlag in Prozent für alle, die die volle Ration bekommen.
+    pub speed_percent: i32,
+}
+
+/// Ein wählbarer Steuersatz.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TaxLevel {
+    /// So viel Prozent von `tax_per_meal` zahlt jeder satte Bewohner je Mahlzeit.
+    pub tax_percent: u32,
+    /// Tempo-Zuschlag (oder mit Minus Abzug) in Prozent für alle satten Bewohner.
+    pub speed_percent: i32,
+}
+
+fn default_rations() -> Vec<RationLevel> {
+    vec![
+        RationLevel { food: 1, speed_percent: 0 },
+        RationLevel { food: 2, speed_percent: 15 },
+        RationLevel { food: 3, speed_percent: 25 },
+    ]
+}
+
+fn default_tax_levels() -> Vec<TaxLevel> {
+    vec![
+        TaxLevel { tax_percent: 0, speed_percent: 15 },
+        TaxLevel { tax_percent: 50, speed_percent: 8 },
+        TaxLevel { tax_percent: 100, speed_percent: 0 },
+        TaxLevel { tax_percent: 200, speed_percent: -10 },
+        TaxLevel { tax_percent: 300, speed_percent: -25 },
+    ]
+}
+
+fn default_tax_level() -> u32 {
+    2
 }
 
 impl Default for PopulationDef {
     fn default() -> Self {
-        PopulationDef { food: vec![Good::Bread, Good::Meat, Good::Fruit], meal_seconds: 60.0, hungry_speed_percent: 50, per_transport: 1 }
+        PopulationDef {
+            food: vec![Good::Bread, Good::Meat, Good::Fruit],
+            meal_seconds: 60.0,
+            hungry_speed_percent: 50,
+            per_transport: 1,
+            rations: default_rations(),
+            default_ration: 0,
+        }
     }
 }
 
@@ -1693,6 +1757,12 @@ pub struct MarketDef {
     pub start_taler: u32,
     /// So viele Taler zahlt jeder satte Bewohner pro Mahlzeit an Steuern.
     pub tax_per_meal: u32,
+    /// Steuersätze, die ein Spieler wählen kann (Anteil von `tax_per_meal`, Wirkung aufs Tempo).
+    #[serde(default = "default_tax_levels")]
+    pub tax_levels: Vec<TaxLevel>,
+    /// Mit diesem Steuersatz (Index in `tax_levels`) fängt jeder an.
+    #[serde(default = "default_tax_level")]
+    pub default_tax: u32,
     /// Preise je Ware. Fehlt eine Ware, kann man sie nicht handeln.
     pub prices: Vec<Price>,
 }
@@ -1727,6 +1797,15 @@ pub struct PeopleState {
     /// Sekunden (Spielzeit) bis zur nächsten Mahlzeit, Stand beim Senden.
     #[serde(default)]
     pub next_meal_in: u32,
+    /// Gewählte Ration (Index in `population.rations`).
+    #[serde(default)]
+    pub ration: u32,
+    /// Gewählter Steuersatz (Index in `market.tax_levels`).
+    #[serde(default)]
+    pub tax: u32,
+    /// So viele haben zuletzt ihre volle Ration bekommen (von `fed`).
+    #[serde(default)]
+    pub well_fed: u32,
 }
 
 impl Default for MovementDef {

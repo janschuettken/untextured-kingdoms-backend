@@ -2396,11 +2396,25 @@
     "food": ["bread", "meat", "fruit"],
     "meal_seconds": 60,
     "hungry_speed_percent": 50,
-    "per_transport": 1
+    "per_transport": 1,
+    "rations": [
+      { "food": 1, "speed_percent": 0 },
+      { "food": 2, "speed_percent": 15 },
+      { "food": 3, "speed_percent": 25 }
+    ],
+    "default_ration": 0
   },
   "market": {
     "start_taler": 100,
     "tax_per_meal": 1,
+    "tax_levels": [
+      { "tax_percent": 0, "speed_percent": 15 },
+      { "tax_percent": 50, "speed_percent": 8 },
+      { "tax_percent": 100, "speed_percent": 0 },
+      { "tax_percent": 200, "speed_percent": -10 },
+      { "tax_percent": 300, "speed_percent": -25 }
+    ],
+    "default_tax": 2,
     "prices": [
       {"good": "wood", "buy": 3, "sell": 1},
       {"good": "boards", "buy": 6, "sell": 3},

@@ -11,6 +11,13 @@
 //! `per_transport`). Jeder isst zu seiner eigenen Zeit, die Zeiten sind zufällig
 //! über die Spanne verteilt. Wer nichts bekommt, hungert: nur er arbeitet und
 //! läuft bis zu seiner nächsten Mahlzeit langsamer.
+//!
+//! Jeder Spieler wählt eine Ration (`population.rations`: Essen je Mahlzeit und
+//! Tempo-Zuschlag für alle, die sie voll bekommen) und einen Steuersatz
+//! (`market.tax_levels`: Anteil von `tax_per_meal` und Zuschlag oder Abzug beim Tempo
+//! für alle Satten). Beides zusammen bestimmt, wie schnell satte Bewohner arbeiten und
+//! laufen: mehr Essen gleicht höhere Steuern aus. Wer hungert, hat nur
+//! `hungry_speed_percent`; Steuern zahlt nur, wer satt ist.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -65,6 +72,7 @@ impl World {
         // `meal_seconds` für sich, zu seiner eigenen Zeit (verteilt über die Minute).
         let meal = pop.meal_seconds;
         let tax = self.economy.def.market.tax_per_meal;
+        let rations: HashMap<u32, (u32, u32)> = self.stocks.keys().map(|&p| (p, (self.ration(p).food.max(1), self.tax_level(p).tax_percent))).collect();
         let mut soonest: HashMap<u32, f32> = HashMap::new();
         let mut hungry_count: HashMap<u32, u32> = HashMap::new();
         for k in 0..self.units.len() {
@@ -75,6 +83,7 @@ impl World {
                 _ => {
                     if self.units[k].hungry || self.units[k].meal_in.is_some() {
                         self.units[k].hungry = false;
+                        self.units[k].well_fed = false;
                         self.units[k].meal_in = None;
                     }
                     continue;
@@ -82,24 +91,32 @@ impl World {
             };
             if meal <= 0.0 || portion == 0 {
                 self.units[k].hungry = false;
+                self.units[k].well_fed = false;
                 continue;
             }
             let (owner, id) = (u.owner, u.id);
+            let (ration, tax_percent) = rations.get(&owner).copied().unwrap_or((1, 100));
             // Die erste Mahlzeit kommt zu einer zufälligen Zeit, danach regelmäßig.
             let mut left = u.meal_in.unwrap_or_else(|| spread(id) * meal) - dt;
             if left <= 0.0 {
                 left += meal;
                 let Some(stock) = self.stocks.get_mut(&owner) else { continue };
+                let full = portion * ration;
                 let mut eaten = 0;
-                while eaten < portion {
+                while eaten < full {
                     let Some(&good) = pop.food.iter().filter(|g| stock.amount(**g) > 0).max_by_key(|g| stock.amount(**g)) else { break };
-                    let take = stock.amount(good).min(portion - eaten);
+                    let take = stock.amount(good).min(full - eaten);
                     stock.take_all(&[GoodAmount { good, amount: take }]);
                     eaten += take;
                 }
-                // Satte Bewohner zahlen Steuern.
-                stock.taler = stock.taler.saturating_add(eaten * tax);
+                // Satte Bewohner zahlen Steuern (je Grundration, im gewählten Satz).
+                let owed = eaten.min(portion) * tax * tax_percent;
+                let carry = self.tax_carry.entry(owner).or_default();
+                *carry += owed;
+                stock.taler = stock.taler.saturating_add(*carry / 100);
+                *carry %= 100;
                 self.units[k].hungry = eaten < portion;
+                self.units[k].well_fed = eaten >= full;
                 self.dirty_stocks.insert(owner);
             }
             self.units[k].meal_in = Some(left.max(0.0));
@@ -109,21 +126,32 @@ impl World {
             let s = soonest.entry(owner).or_insert(f32::MAX);
             *s = s.min(left);
         }
-        // Je Betrieb: wie stark hungernde Arbeiter ihn bremsen.
-        let slow = self.hungry_speed();
-        let mut per: HashMap<u32, (u32, u32)> = HashMap::new();
-        for u in self.units.iter().filter(|u| u.kind == UnitKind::Worker) {
+        // Je Betrieb: Tempo seiner Arbeiter im Schnitt (Hunger bremst, Rationen und Steuern wirken).
+        let mut per: HashMap<u32, (u32, f32)> = HashMap::new();
+        let mut well_fed: HashMap<u32, u32> = HashMap::new();
+        for k in 0..self.units.len() {
+            let u = &self.units[k];
+            if u.well_fed && !u.hungry && u.meal_in.is_some() {
+                *well_fed.entry(u.owner).or_default() += if u.kind == UnitKind::Worker { 1 } else { pop.per_transport };
+            }
+            if u.kind != UnitKind::Worker {
+                continue;
+            }
             let Some(h) = u.home else { continue };
             let e = per.entry(h).or_default();
             e.0 += 1;
-            e.1 += u.hungry as u32;
+            e.1 += self.unit_hunger_factor(k);
         }
-        self.worker_hunger = per.into_iter().filter(|(_, (_, h))| *h > 0).map(|(b, (n, h))| (b, ((n - h) as f32 + h as f32 * slow) / n as f32)).collect();
+        self.worker_hunger = per.into_iter().map(|(b, (n, f))| (b, f / n as f32)).filter(|(_, f)| (*f - 1.0).abs() > 1e-4).collect();
         for (player, mut state) in state_by_player {
             let hungry = hungry_count.get(&player).copied().unwrap_or(0);
             state.hungry = hungry > 0;
             state.hungry_count = hungry;
             state.fed = state.working.saturating_sub(hungry);
+            let (ration, tax) = self.policy(player);
+            state.ration = ration;
+            state.tax = tax;
+            state.well_fed = well_fed.get(&player).copied().unwrap_or(0).min(state.fed);
             self.meal_soonest.insert(player, soonest.get(&player).copied().filter(|s| *s < f32::MAX).unwrap_or(0.0));
             if self.people.get(&player) != Some(&state) {
                 self.people.insert(player, state);
@@ -187,9 +215,55 @@ impl World {
         self.economy.def.population.hungry_speed_percent as f32 / 100.0
     }
 
-    /// Tempo-Faktor einer Einheit: nur wer selbst hungert, ist langsamer.
+    /// Gewählte Ration und Steuersatz eines Spielers (Indizes, gültig für die Wirtschaft).
+    pub fn policy(&self, player: u32) -> (u32, u32) {
+        let pop = &self.economy.def.population;
+        let market = &self.economy.def.market;
+        let (r, t) = self.policies.get(&player).copied().unwrap_or((pop.default_ration, market.default_tax));
+        let clamp = |i: u32, n: usize| if n == 0 { 0 } else { i.min(n as u32 - 1) };
+        (clamp(r, pop.rations.len()), clamp(t, market.tax_levels.len()))
+    }
+
+    /// Gewählte Ration (ohne Liste: eine Einheit, kein Zuschlag).
+    pub(super) fn ration(&self, player: u32) -> protocol::RationLevel {
+        let i = self.policy(player).0 as usize;
+        self.economy.def.population.rations.get(i).copied().unwrap_or(protocol::RationLevel { food: 1, speed_percent: 0 })
+    }
+
+    /// Gewählter Steuersatz (ohne Liste: voller Satz, kein Zuschlag).
+    pub(super) fn tax_level(&self, player: u32) -> protocol::TaxLevel {
+        let i = self.policy(player).1 as usize;
+        self.economy.def.market.tax_levels.get(i).copied().unwrap_or(protocol::TaxLevel { tax_percent: 100, speed_percent: 0 })
+    }
+
+    /// Ration und Steuersatz wählen (`None` = unverändert).
+    pub fn set_people_policy(&mut self, player: u32, ration: Option<u32>, tax: Option<u32>) -> Result<(), crate::world::Refusal> {
+        let (r, t) = self.policy(player);
+        let r = ration.unwrap_or(r);
+        let t = tax.unwrap_or(t);
+        if r as usize >= self.economy.def.population.rations.len().max(1) || t as usize >= self.economy.def.market.tax_levels.len().max(1) {
+            return Err(crate::world::Text::new("error.bad_policy"));
+        }
+        self.policies.insert(player, (r, t));
+        self.dirty_stocks.insert(player);
+        Ok(())
+    }
+
+    /// Tempo-Faktor einer Einheit (Arbeit und Laufen): wer hungert, ist langsamer; wer satt
+    /// ist, bekommt den Zu- oder Abschlag der Steuern, mit voller Ration auch den der Ration.
     pub(super) fn unit_hunger_factor(&self, k: usize) -> f32 {
-        if self.units[k].hungry { self.hungry_speed() } else { 1.0 }
+        let u = &self.units[k];
+        if u.hungry {
+            return self.hungry_speed();
+        }
+        if u.meal_in.is_none() {
+            return 1.0;
+        }
+        let mut pct = self.tax_level(u.owner).speed_percent;
+        if u.well_fed {
+            pct += self.ration(u.owner).speed_percent;
+        }
+        (1.0 + pct as f32 / 100.0).max(0.1)
     }
 
     /// Tempo-Faktor eines Betriebs: Anteil seiner Arbeiter, die hungern, bremst ihn.
@@ -355,5 +429,48 @@ mod tests {
         assert_eq!(w.stock_state(1).people.hungry_count as usize, hungry);
         let k = w.units.iter().position(|u| u.meal_in.is_some() && !u.hungry).unwrap();
         assert_eq!(w.unit_hunger_factor(k), 1.0, "satte sind nicht langsamer");
+    }
+
+    #[test]
+    fn rationen_und_steuern_bestimmen_das_tempo() {
+        let mut w = world();
+        w.economy.def.population.rations = vec![protocol::RationLevel { food: 1, speed_percent: 0 }, protocol::RationLevel { food: 2, speed_percent: 20 }];
+        w.economy.def.market.tax_levels = vec![
+            protocol::TaxLevel { tax_percent: 100, speed_percent: 0 },
+            protocol::TaxLevel { tax_percent: 250, speed_percent: -10 },
+        ];
+        w.economy.def.market.default_tax = 0;
+        w.economy.def.market.tax_per_meal = 2;
+        w.place_building(1, BuildingKind::House, 10, 2).unwrap();
+        w.place_building(1, BuildingKind::Sawmill, 2, 2).unwrap();
+        w.place_building(1, BuildingKind::Woodcutter, 2, 10).unwrap();
+        w.test_granary(1);
+        w.admin_give(1, &[protocol::GoodAmount { good: Good::Bread, amount: 50 }], 0);
+        assert!(w.set_people_policy(1, Some(5), None).is_err(), "gibt es nicht");
+        w.set_people_policy(1, Some(1), Some(1)).unwrap();
+        let bread = |w: &World| w.stock_state(1).goods.iter().find(|g| g.good == Good::Bread).map_or(0, |g| g.amount);
+        let (before, taler) = (bread(&w), w.stock_state(1).taler);
+        for _ in 0..(10.0 / 0.05) as usize + 2 {
+            w.step(0.05);
+        }
+        assert_eq!(before - bread(&w), 4, "doppelte Ration: zwei Arbeiter essen je zwei Brot");
+        // Steuern nur auf die Grundration: 2 Bewohner × 2 Taler × 250 % = 10.
+        assert_eq!(w.stock_state(1).taler, taler + 10);
+        let people = w.stock_state(1).people;
+        assert_eq!((people.ration, people.tax, people.well_fed), (1, 1, 2));
+        let k = w.units.iter().position(|u| u.kind == protocol::UnitKind::Worker).unwrap();
+        assert!((w.unit_hunger_factor(k) - 1.1).abs() < 1e-5, "+20 % Ration, -10 % Steuern");
+        // Nur noch drei Brot: einer bekommt die volle Ration, der andere ist nur satt (ohne Zuschlag).
+        let left = bread(&w);
+        w.stocks.get_mut(&1).unwrap().take_all(&[protocol::GoodAmount { good: Good::Bread, amount: left.saturating_sub(3) }]);
+        for g in w.stock_state(1).goods.iter().filter(|g| g.good != Good::Bread && w.economy.def.population.food.contains(&g.good)).copied().collect::<Vec<_>>() {
+            w.stocks.get_mut(&1).unwrap().take_all(&[g]);
+        }
+        for _ in 0..(10.0 / 0.05) as usize + 2 {
+            w.step(0.05);
+        }
+        let k = w.units.iter().position(|u| u.kind == protocol::UnitKind::Worker && !u.hungry && !u.well_fed).unwrap();
+        assert!((w.unit_hunger_factor(k) - 0.9).abs() < 1e-5, "nur der Steuerabzug");
+        assert_eq!(w.stock_state(1).people.well_fed, 1);
     }
 }
