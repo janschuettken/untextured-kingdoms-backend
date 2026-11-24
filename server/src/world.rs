@@ -27,6 +27,7 @@ mod market;
 mod gather;
 mod horses;
 mod save;
+mod siege;
 mod storage;
 pub use save::SaveGame;
 mod people;
@@ -131,6 +132,12 @@ pub struct Unit {
     /// Tempo im letzten Schritt (Felder pro Sekunde): Schützen halten danach vor.
     #[serde(skip)]
     vel: (f32, f32),
+    /// Baumeister: bedient dieses Belagerungsgerät (Id).
+    #[serde(default)]
+    crew_of: Option<u32>,
+    /// Balliste: steht auf diesem Turm (Gebäude-Id).
+    #[serde(default)]
+    perch: Option<u32>,
 }
 
 /// Ein späteres Ziel eines Laufbefehls (siehe `Unit::waypoints`).
@@ -185,6 +192,8 @@ impl Unit {
             resume_order: None,
             heal_cooldown: 0.0,
             vel: (0.0, 0.0),
+            crew_of: None,
+            perch: None,
         }
     }
 
@@ -289,6 +298,10 @@ pub struct World {
     combat_rng: u64,
     /// Pfeile und Bolzen in der Luft: Schaden erst beim Aufschlag (siehe `combat.rs`).
     projectiles: Vec<combat::Projectile>,
+    /// Steine und Bolzen der Belagerungsgeräte in der Luft (siehe `siege.rs`).
+    siege_shots: Vec<siege::SiegeShot>,
+    /// Sekunden seit der letzten Meldung des Baufortschritts.
+    site_clock: f32,
     /// Was in welchem Lager liegt (Summe = Vorrat), siehe `storage.rs`.
     hub_goods: HashMap<u32, storage::HubGoods>,
     /// Wie Waren zwischen Verbündeten ankommen.
@@ -409,6 +422,8 @@ impl World {
             phase_us: Default::default(),
             combat_rng: 0x9E37_79B9_7F4A_7C15,
             projectiles: Vec::new(),
+            siege_shots: Vec::new(),
+            site_clock: 0.0,
         };
         world.add_map_bridges();
         world
@@ -742,6 +757,10 @@ impl World {
     ) -> Result<PlacementPlan, Refusal> {
         // Nicht klonen: die KI prüft bei der Bauplatzsuche zehntausende Stellen.
         let def = self.economy.building(kind).ok_or_else(|| Text::new("error.unknown_building"))?;
+        // Baustellen für Belagerungsgeräte setzen nur Baumeister (`build_siege`).
+        if kind == BuildingKind::SiegeSite {
+            return Err(Text::new("error.unknown_building"));
+        }
         let rotation = rotation % 4;
         let level = level.max(1);
         if level as usize > def.levels.len() {
@@ -844,6 +863,7 @@ impl World {
             capacity: 0,
             mature_in: def.release_after_seconds,
             rally: None,
+            site: None,
         };
         self.next_building_id += 1;
         if let Some((ex, ey)) = entrance {
@@ -1181,6 +1201,10 @@ impl World {
             && !self.buildings.iter().any(|o| o.id != b.id && o.owner == player && o.kind == b.kind);
         let pct = if last_free { 0 } else { self.economy.def.demolish_refund_percent };
         let mut refund: Vec<GoodAmount> = Vec::new();
+        // Baustelle eines Belagerungsgeräts: was schon geliefert war, kommt zurück.
+        if let Some(site) = &b.site {
+            refund.extend(site.delivered.iter().copied());
+        }
         if let Some(def) = self.economy.building(b.kind) {
             // Brücken kosten je Feld.
             let cells = if b.kind == BuildingKind::Bridge { bridge::bridge_len(&b) } else { 1 };
@@ -1399,9 +1423,13 @@ impl World {
         let chosen: Vec<usize> = (0..self.units.len())
             .filter(|&k| {
                 let u = &self.units[k];
-                u.owner == player && (!u.is_civilian() || u.trade.is_some()) && unit_ids.contains(&u.id)
+                u.owner == player && (!u.is_civilian() || u.trade.is_some()) && unit_ids.contains(&u.id) && !self.immobile(u)
             })
             .collect();
+        // Ein Laufbefehl holt Baumeister von ihrem Gerät weg.
+        for &k in &chosen {
+            self.units[k].crew_of = None;
+        }
         // Reiter kommen nicht auf Wehrgänge: sie stellen sich unten an den Fuß des Bauwerks.
         if target_wall && chosen.iter().any(|&k| self.units[k].mounted) {
             let (riders, walkers): (Vec<usize>, Vec<usize>) = chosen.iter().partition(|&&k| self.units[k].mounted);
@@ -1696,6 +1724,7 @@ impl World {
         timed!(self, Phase::Horses, self.step_horses(dt));
         timed!(self, Phase::Trade, self.step_trade(dt));
         timed!(self, Phase::Trade, self.step_auto_trade(dt));
+        timed!(self, Phase::Combat, self.step_siege(dt));
         timed!(self, Phase::Combat, self.step_combat(dt));
         timed!(self, Phase::Waypoints, self.step_waypoints());
         timed!(self, Phase::Heal, self.step_heal(dt));
@@ -1715,6 +1744,13 @@ impl World {
         let horse = self.economy.def.army.horse_speed;
         let civil: Vec<f32> = (0..self.units.len()).map(|k| self.unit_hunger_factor(k)).collect();
         let soldier: Vec<f32> = self.units.iter().map(|u| if u.kind.is_soldier() { self.soldier_speed(u.owner, u.kind) } else { 0.0 }).collect();
+        // Belagerungsgeräte fahren nur mit voller Bedienung.
+        let crews = self.crew_counts();
+        let siege: Vec<f32> = self
+            .units
+            .iter()
+            .map(|u| if u.kind.is_siege() && !self.immobile(u) && self.crewed(u, &crews) { self.soldier_speed(u.owner, u.kind) } else { 0.0 })
+            .collect();
         let nav = &self.map.nav;
         for (k, unit) in self.units.iter_mut().enumerate() {
             let full = match unit.kind {
@@ -1722,7 +1758,8 @@ impl World {
                 UnitKind::Carrier => carrier * civil[k],
                 UnitKind::Cart | UnitKind::TradeCart => cart * civil[k],
                 UnitKind::Worker => worker * civil[k],
-                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer => soldier[k],
+                UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer | UnitKind::Builder => soldier[k],
+                UnitKind::Catapult | UnitKind::Trebuchet | UnitKind::Ballista => siege[k],
             };
             // Zu Pferd mindestens so schnell wie das Pferd; nach einem Sturz liegt man still.
             let full = if unit.down > 0.0 { 0.0 } else if unit.mounted { full.max(horse) } else { full };
@@ -1787,6 +1824,7 @@ impl World {
     }
 
     pub fn snapshot(&self) -> Vec<UnitState> {
+        let crews = self.crew_counts();
         self.units
             .iter()
             .map(|u| UnitState {
@@ -1805,6 +1843,7 @@ impl World {
                 down: u.down,
                 attack_target: u.attack_order.or(u.last_foe.map(|(id, _)| protocol::AttackTarget::Unit { id })),
                 strikes: u.strikes,
+                crew: if u.kind.is_siege() { crews.get(&u.id).copied().unwrap_or(0) } else { 0 },
             })
             .collect()
     }

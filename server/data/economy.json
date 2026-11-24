@@ -2168,6 +2168,120 @@
           "storage_outputs": 0
         }
       ]
+    },
+    {
+      "kind": "siege_workshop",
+      "category": "military",
+      "w": 4,
+      "h": 4,
+      "height": 1.8,
+      "release_after_seconds": 0,
+      "build_radius": 0,
+      "no_entrance": false,
+      "on_walls": false,
+      "on_ramps": false,
+      "first_free": false,
+      "hub_goods": [],
+      "delivery": {"carriers": true, "carts": true, "worker": true},
+      "horse_capacity": 0,
+      "max_span": 0,
+      "enemy_radius": 15,
+      "levels": [
+        {
+          "cost": [
+            {"good": "wood", "amount": 20},
+            {"good": "boards", "amount": 20},
+            {"good": "stone", "amount": 10}
+          ],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": ["builder"],
+          "max_hp": 500,
+          "workers": 0,
+          "gather_radius": 0,
+          "service_radius": 0,
+          "walkway": false,
+          "stairs": false,
+          "gate_radius": 0,
+          "garrison": 0,
+          "cover_percent": 0,
+          "armor": [{"type": "ranged", "min": 0, "block": 1}, {"type": "heavy_ranged", "min": 0, "block": 1}],
+          "road_speed_percent": 0,
+          "hub_capacity": 0,
+          "storage_inputs": 0,
+          "storage_outputs": 0,
+          "siege": ["catapult", "ballista"]
+        },
+        {
+          "cost": [
+            {"good": "boards", "amount": 30},
+            {"good": "stone", "amount": 20},
+            {"good": "iron", "amount": 10}
+          ],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": [],
+          "max_hp": 600,
+          "workers": 0,
+          "gather_radius": 0,
+          "service_radius": 0,
+          "walkway": false,
+          "stairs": false,
+          "gate_radius": 0,
+          "garrison": 0,
+          "cover_percent": 0,
+          "armor": [{"type": "ranged", "min": 0, "block": 1}, {"type": "heavy_ranged", "min": 0, "block": 1}],
+          "road_speed_percent": 0,
+          "hub_capacity": 0,
+          "storage_inputs": 0,
+          "storage_outputs": 0,
+          "siege": ["trebuchet"]
+        }
+      ]
+    },
+    {
+      "kind": "siege_site",
+      "category": "military",
+      "w": 2,
+      "h": 2,
+      "height": 1.2,
+      "release_after_seconds": 0,
+      "build_radius": 0,
+      "no_entrance": true,
+      "on_walls": false,
+      "on_ramps": false,
+      "first_free": false,
+      "hub_goods": [],
+      "delivery": {"carriers": false, "carts": true, "worker": false},
+      "horse_capacity": 0,
+      "max_span": 0,
+      "enemy_radius": 0,
+      "levels": [
+        {
+          "cost": [],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": [],
+          "max_hp": 150,
+          "workers": 0,
+          "gather_radius": 0,
+          "service_radius": 0,
+          "walkway": false,
+          "stairs": false,
+          "gate_radius": 0,
+          "garrison": 0,
+          "cover_percent": 0,
+          "armor": [],
+          "road_speed_percent": 0,
+          "hub_capacity": 0,
+          "storage_inputs": 0,
+          "storage_outputs": 0,
+          "siege": []
+        }
+      ]
     }
   ],
   "recipes": [
@@ -2758,6 +2872,148 @@
       "attack_seconds": 1.5,
       "heal": 5,
       "heal_range": 5
+    },
+    {
+      "kind": "builder",
+      "cost": [],
+      "taler": 20,
+      "seconds": 8,
+      "speed": 1.3,
+      "hp": 30,
+      "attack": 0,
+      "damage": [],
+      "armor": [],
+      "horse_armor": [],
+      "range": 0,
+      "upkeep": 0,
+      "food": 0,
+      "can_ride": false,
+      "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
+      "attack_seconds": 1.5,
+      "heal": 0,
+      "heal_range": 0
+    },
+    {
+      "kind": "catapult",
+      "cost": [
+        {"good": "boards", "amount": 30},
+        {"good": "wood", "amount": 20},
+        {"good": "iron", "amount": 5}
+      ],
+      "taler": 0,
+      "seconds": 40,
+      "speed": 0.6,
+      "hp": 250,
+      "attack": 60,
+      "damage": [{"type": "siege", "value": 60}, {"type": "heavy_ranged", "value": 15}],
+      "armor": [
+        {"type": "melee", "min": 0, "block": 0.3},
+        {"type": "ranged", "min": 0, "block": 0.8},
+        {"type": "heavy_ranged", "min": 0, "block": 0.5}
+      ],
+      "horse_armor": [],
+      "range": 30,
+      "upkeep": 0,
+      "food": 0,
+      "can_ride": false,
+      "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
+      "attack_seconds": 6,
+      "heal": 0,
+      "heal_range": 0,
+      "siege": {
+        "size": 2,
+        "crew": 2,
+        "min_range": 6,
+        "scatter": 1.5,
+        "splash": 1.5,
+        "hits_buildings": true,
+        "hits_units": true,
+        "on_towers": false,
+        "shot_speed": 14
+      }
+    },
+    {
+      "kind": "trebuchet",
+      "cost": [
+        {"good": "boards", "amount": 50},
+        {"good": "wood", "amount": 30},
+        {"good": "stone", "amount": 20},
+        {"good": "iron", "amount": 10}
+      ],
+      "taler": 0,
+      "seconds": 80,
+      "speed": 0,
+      "hp": 400,
+      "attack": 150,
+      "damage": [{"type": "siege", "value": 150}],
+      "armor": [
+        {"type": "melee", "min": 0, "block": 0.3},
+        {"type": "ranged", "min": 0, "block": 0.8},
+        {"type": "heavy_ranged", "min": 0, "block": 0.5}
+      ],
+      "horse_armor": [],
+      "range": 45,
+      "upkeep": 0,
+      "food": 0,
+      "can_ride": false,
+      "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
+      "attack_seconds": 12,
+      "heal": 0,
+      "heal_range": 0,
+      "siege": {
+        "size": 3,
+        "crew": 3,
+        "min_range": 12,
+        "scatter": 1.0,
+        "splash": 0,
+        "hits_buildings": true,
+        "hits_units": false,
+        "on_towers": false,
+        "shot_speed": 12
+      }
+    },
+    {
+      "kind": "ballista",
+      "cost": [{"good": "boards", "amount": 20}, {"good": "iron", "amount": 10}],
+      "taler": 0,
+      "seconds": 30,
+      "speed": 0,
+      "hp": 150,
+      "attack": 30,
+      "damage": [{"type": "heavy_ranged", "value": 30}],
+      "armor": [{"type": "ranged", "min": 0, "block": 0.5}],
+      "horse_armor": [],
+      "range": 32,
+      "upkeep": 0,
+      "food": 0,
+      "can_ride": false,
+      "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
+      "attack_seconds": 4,
+      "heal": 0,
+      "heal_range": 0,
+      "siege": {
+        "size": 1,
+        "crew": 1,
+        "min_range": 3,
+        "scatter": 0.5,
+        "splash": 0,
+        "hits_buildings": false,
+        "hits_units": true,
+        "on_towers": true,
+        "shot_speed": 30
+      }
     }
   ],
   "army": {
@@ -2778,6 +3034,7 @@
     "horse_hit_percent": 70,
     "melee_max_levels": 1,
     "height_range_percent": 5,
-    "loot_percent": 50
+    "loot_percent": 50,
+    "builder_backpack": 5
   }
 }

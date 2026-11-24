@@ -2,6 +2,7 @@
 import type { Armor } from "./Armor";
 import type { Damage } from "./Damage";
 import type { GoodAmount } from "./GoodAmount";
+import type { SiegeDef } from "./SiegeDef";
 import type { UnitKind } from "./UnitKind";
 
 /**
@@ -85,4 +86,9 @@ heal: number,
 /**
  * Heiler: so weit (Felder) reicht er zu einem Verwundeten.
  */
-heal_range: number, };
+heal_range: number, 
+/**
+ * Belagerungsgerät: Bau und Bedienung. `cost` sind dann die Baustoffe, die zur Baustelle
+ * gebracht werden, `seconds` die Bauzeit für einen Baumeister.
+ */
+siege: SiegeDef | null, };

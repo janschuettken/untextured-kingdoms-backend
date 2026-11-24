@@ -46,7 +46,7 @@ impl World {
     }
 
     /// Wie hoch ragt dieses Gebäude über den Boden?
-    fn building_height(&self, b: &BuildingState) -> f32 {
+    pub(super) fn building_height(&self, b: &BuildingState) -> f32 {
         let Some(def) = self.economy.building(b.kind) else { return 0.0 };
         let storeys = if def.category == protocol::BuildingCategory::Fortification { 0.0 } else { b.level.saturating_sub(1) as f32 * 0.6 };
         def.height + storeys

@@ -570,6 +570,26 @@ impl World {
                 }
             }
         }
+        // Baustellen der Belagerungsgeräte: Karren fahren Baustoffe hin, egal wie weit
+        // (auch außerhalb ihres Umkreises), mit Vorrang vor allem anderen.
+        if cart {
+            for b in self.buildings.iter().filter(|b| b.owner == owner) {
+                let Some(site) = &b.site else { continue };
+                for g in &site.needed {
+                    let need = site.missing(g.good).saturating_sub(Reserved::get(&reserved.incoming, (b.id, g.good))).min(cap);
+                    if need == 0 {
+                        continue;
+                    }
+                    let Some((hub, via)) = self.supply_hub(owner, u.pos, b, g.good) else { continue };
+                    let there = stock.amount(g.good).saturating_sub(Reserved::get(&reserved.central, (owner, g.good)));
+                    let amount = need.min(there);
+                    if amount > 0 {
+                        let job = Job { kind: JobKind::Supply { to: b.id }, good: g.good, amount, stage: Stage::Load(hub), rest: NO_REST };
+                        offer(&mut best, via - 2.0 * STALL_BONUS, job);
+                    }
+                }
+            }
+        }
         // Karren: reicht ein Betrieb allein nicht, mehrere gleiche nacheinander anfahren.
         if cart && best.is_none() {
             for ((_, good), mut list) in groups {
@@ -712,6 +732,12 @@ impl World {
                         self.dirty_stocks.insert(owner);
                         self.hub_add(at, load.good, fits);
                         load.amount - fits
+                    }
+                    JobKind::Supply { to } | JobKind::Direct { to, .. } if self.buildings[bi].site.is_some() => {
+                        // Baustelle: nur so viel, wie noch fehlt.
+                        let used = self.buildings[bi].site.as_mut().map_or(0, |s| s.deliver(load));
+                        self.dirty_buildings.insert(to);
+                        load.amount - used
                     }
                     JobKind::Supply { to } | JobKind::Direct { to, .. } => {
                         let Some(inv) = self.inventories.get_mut(&to) else {

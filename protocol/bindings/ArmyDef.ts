@@ -88,4 +88,8 @@ arrow_hit_radius: number,
 /**
  * Beute: wer einen König tötet, bekommt so viel Prozent der Waren und Taler des Besiegten.
  */
-loot_percent: number, };
+loot_percent: number, 
+/**
+ * Belagerung: so viele Baustoffe trägt ein Baumeister im Rucksack zur Baustelle („provisorisch mitnehmen“).
+ */
+builder_backpack: number, };

@@ -908,6 +908,7 @@ async fn handle_msg(
         | ClientMsg::MoveBuilding { .. }
         | ClientMsg::UpgradeBuilding { .. }
         | ClientMsg::TrainUnits { .. }
+        | ClientMsg::BuildSiege { .. }
         | ClientMsg::CancelTraining { .. }
         | ClientMsg::PrioritizeTraining { .. }
         | ClientMsg::Attack { .. }
@@ -1055,6 +1056,14 @@ pub fn apply_command(
         ClientMsg::UpgradeBuilding { building_id } => {
             let building = world.upgrade(player_id, building_id)?;
             send(ServerMsg::BuildingChanged { building });
+        }
+        ClientMsg::BuildSiege { unit_ids, kind, x, y, backpack } => {
+            let building = world.build_siege(player_id, &unit_ids, kind, (x, y), backpack)?;
+            if building.kind == protocol::BuildingKind::SiegeSite {
+                send(ServerMsg::BuildingPlaced { building });
+            } else {
+                send(ServerMsg::BuildingChanged { building });
+            }
         }
         ClientMsg::TrainUnits {
             building_id,

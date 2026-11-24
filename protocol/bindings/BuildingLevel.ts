@@ -32,6 +32,10 @@ spawns: Array<UnitCount>,
  */
 trains: Array<UnitKind>, 
 /**
+ * Belagerungswerkstatt: Geräte, die Baumeister ab dieser Stufe bauen dürfen (zusätzlich zu den vorigen).
+ */
+siege: Array<UnitKind>, 
+/**
  * Lebenspunkte auf dieser Stufe.
  */
 max_hp: number, 

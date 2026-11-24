@@ -3,4 +3,4 @@
 /**
  * Art eines Gebäudes.
  */
-export type BuildingKind = "wall" | "high_wall" | "tower" | "high_tower" | "keep" | "storehouse" | "woodcutter" | "sawmill" | "quarry" | "stonemason" | "mine" | "smelter" | "smithy" | "spear_maker" | "bowyer" | "tannery" | "farm" | "mill" | "bakery" | "orchard" | "pig_farm" | "cattle_farm" | "horse_farm" | "cart_shed" | "house" | "market" | "gate" | "palisade" | "staircase" | "barracks" | "armory" | "granary" | "wood_path" | "stone_path" | "gatehouse" | "apothecary" | "bridge";
+export type BuildingKind = "wall" | "high_wall" | "tower" | "high_tower" | "keep" | "storehouse" | "woodcutter" | "sawmill" | "quarry" | "stonemason" | "mine" | "smelter" | "smithy" | "spear_maker" | "bowyer" | "tannery" | "farm" | "mill" | "bakery" | "orchard" | "pig_farm" | "cattle_farm" | "horse_farm" | "cart_shed" | "house" | "market" | "gate" | "palisade" | "staircase" | "barracks" | "armory" | "granary" | "wood_path" | "stone_path" | "gatehouse" | "apothecary" | "siege_workshop" | "siege_site" | "bridge";

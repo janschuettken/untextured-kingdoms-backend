@@ -18,7 +18,7 @@ append?: boolean, } | { "type": "attack", unit_ids: Array<number>, target: Attac
 /**
  * Gleich auf dieser Stufe bauen (0 oder 1 = erste Stufe). Kostet alle Stufen bis dahin.
  */
-level: number, } | { "type": "place_bridge", x: number, y: number, w: number, h: number, } | { "type": "demolish_building", building_id: number, } | { "type": "upgrade_building", building_id: number, } | { "type": "repair_building", building_id: number, } | { "type": "configure_building", building_id: number, settings: BuildingSettings, } | { "type": "release_trees", building_id: number, } | { "type": "set_rally_point", building_id: number, point: [number, number] | null, } | { "type": "watch_unit", unit_id: number | null, } | { "type": "request_nav_costs" } | { "type": "train_units", building_id: number, kind: UnitKind, count: number, 
+level: number, } | { "type": "place_bridge", x: number, y: number, w: number, h: number, } | { "type": "demolish_building", building_id: number, } | { "type": "upgrade_building", building_id: number, } | { "type": "repair_building", building_id: number, } | { "type": "configure_building", building_id: number, settings: BuildingSettings, } | { "type": "release_trees", building_id: number, } | { "type": "set_rally_point", building_id: number, point: [number, number] | null, } | { "type": "watch_unit", unit_id: number | null, } | { "type": "request_nav_costs" } | { "type": "build_siege", unit_ids: Array<number>, kind: UnitKind, x: number, y: number, backpack: boolean, } | { "type": "train_units", building_id: number, kind: UnitKind, count: number, 
 /**
  * Auf alle eigenen Kasernen verteilen, die diese Einheit ausbilden können.
  */

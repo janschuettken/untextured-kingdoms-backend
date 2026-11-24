@@ -90,6 +90,17 @@ pub enum ClientMsg {
     WatchUnit { unit_id: Option<u32> },
     /// Laufkosten aller Felder anfordern (Heatmap). Antwort: `NavCosts`.
     RequestNavCosts,
+    /// Baumeister bauen ein Belagerungsgerät: Baustelle mit der linken oberen Ecke bei (x, y),
+    /// bei der Balliste ein Feld eines eigenen Turms. `backpack`: jeder nimmt gleich
+    /// `army.builder_backpack` Baustoffe aus dem Vorrat mit.
+    BuildSiege {
+        unit_ids: Vec<u32>,
+        kind: UnitKind,
+        x: u32,
+        y: u32,
+        #[serde(default)]
+        backpack: bool,
+    },
     /// In einer eigenen Kaserne `count` Soldaten dieser Art in Auftrag geben.
     /// Waren und Taler werden sofort bezahlt (alle, die bezahlbar sind).
     TrainUnits {
@@ -850,12 +861,25 @@ pub enum UnitKind {
     TradeCart,
     /// Heiler aus der Apotheke: kämpft nicht, heilt verwundete eigene und verbündete Einheiten in der Nähe.
     Healer,
+    /// Baumeister aus der Belagerungswerkstatt: baut Belagerungsgeräte im Feld und bedient sie.
+    Builder,
+    /// Katapult: rollt langsam, wirft Steine auf Gebäude und Einheiten.
+    Catapult,
+    /// Tribok: steht fest, wirft weit und schwer, nur auf Gebäude.
+    Trebuchet,
+    /// Balliste: steht auf einem eigenen Turm und schießt schwere Bolzen auf Einheiten.
+    Ballista,
 }
 
 impl UnitKind {
     /// Soldaten: werden in der Kaserne ausgebildet und kosten Sold.
     pub fn is_soldier(self) -> bool {
-        matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer)
+        matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer | UnitKind::Builder)
+    }
+
+    /// Belagerungsgeräte: entstehen auf einer Baustelle und brauchen Baumeister als Bedienung.
+    pub fn is_siege(self) -> bool {
+        matches!(self, UnitKind::Catapult | UnitKind::Trebuchet | UnitKind::Ballista)
     }
 
     /// Zivilisten: Arbeiter, Träger und Karren. Sie kämpfen nicht, können aber angegriffen werden.
@@ -954,6 +978,9 @@ pub struct UnitState {
     /// Zählt jeden Schlag und Schuss: ändert er sich, holt die Figur aus (Animation).
     #[serde(default)]
     pub strikes: u32,
+    /// Belagerungsgerät: so viele Baumeister bedienen es gerade (nötig: `siege.crew`).
+    #[serde(default)]
+    pub crew: u32,
 }
 
 /// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.
@@ -1187,6 +1214,10 @@ pub enum BuildingKind {
     Gatehouse,
     /// Apotheke: rührt Heilsalbe an und bildet daraus Heiler aus.
     Apothecary,
+    /// Belagerungswerkstatt: bildet Baumeister aus; ihre Stufen schalten Belagerungsgeräte frei.
+    SiegeWorkshop,
+    /// Baustelle eines Belagerungsgeräts im Feld (entsteht nur über `build_siege`).
+    SiegeSite,
     /// Brücke über einen Fluss: eine gerade Reihe Wasserfelder (höchstens `max_span`),
     /// an beiden Enden Ufer. Kosten der Stufe gelten je Feld.
     Bridge,
@@ -1225,6 +1256,8 @@ pub struct BuildingLevel {
     pub spawns: Vec<UnitCount>,
     /// Kaserne: Soldaten, die diese Stufe ausbilden kann (zusätzlich zu den vorigen).
     pub trains: Vec<UnitKind>,
+    /// Belagerungswerkstatt: Geräte, die Baumeister ab dieser Stufe bauen dürfen (zusätzlich zu den vorigen).
+    pub siege: Vec<UnitKind>,
     /// Lebenspunkte auf dieser Stufe.
     pub max_hp: u32,
     /// Arbeiter, die der Betrieb auf dieser Stufe braucht (sie wohnen in Häusern und essen).
@@ -1525,6 +1558,105 @@ pub struct UnitDef {
     /// Heiler: so weit (Felder) reicht er zu einem Verwundeten.
     #[serde(default)]
     pub heal_range: f32,
+    /// Belagerungsgerät: Bau und Bedienung. `cost` sind dann die Baustoffe, die zur Baustelle
+    /// gebracht werden, `seconds` die Bauzeit für einen Baumeister.
+    #[serde(default)]
+    pub siege: Option<SiegeDef>,
+}
+
+fn amount(list: &[GoodAmount], good: Good) -> u32 {
+    list.iter().filter(|g| g.good == good).map(|g| g.amount).sum()
+}
+
+fn add(list: &mut Vec<GoodAmount>, good: Good, n: u32) {
+    match list.iter_mut().find(|g| g.good == good) {
+        Some(g) => g.amount += n,
+        None => list.push(GoodAmount { good, amount: n }),
+    }
+}
+
+impl SiteState {
+    /// Wie viel von `good` fehlt noch?
+    pub fn missing(&self, good: Good) -> u32 {
+        amount(&self.needed, good).saturating_sub(amount(&self.delivered, good))
+    }
+
+    /// Anteil der gelieferten Baustoffe (1 = alles da).
+    pub fn supplied(&self) -> f32 {
+        let total: u32 = self.needed.iter().map(|g| g.amount).sum();
+        if total == 0 {
+            return 1.0;
+        }
+        let have: u32 = self.needed.iter().map(|g| amount(&self.delivered, g.good).min(g.amount)).sum();
+        have as f32 / total as f32
+    }
+
+    /// Bringt Baustoffe; liefert, wie viel davon gebraucht wurde.
+    pub fn deliver(&mut self, load: GoodAmount) -> u32 {
+        let n = load.amount.min(self.missing(load.good));
+        if n > 0 {
+            add(&mut self.delivered, load.good, n);
+        }
+        n
+    }
+}
+
+/// Was ein Belagerungsgerät ausmacht (siehe `UnitDef::siege`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct SiegeDef {
+    /// Seitenlänge der Baustelle in Feldern (nicht bei `on_towers`).
+    pub size: u32,
+    /// So viele Baumeister müssen es bedienen, sonst schießt und fährt es nicht.
+    pub crew: u32,
+    /// Näher als so viele Felder schießt es nicht.
+    pub min_range: f32,
+    /// Streuung am Einschlag (Felder) auf volle Reichweite; näher entsprechend weniger.
+    pub scatter: f32,
+    /// Einheiten in diesem Umkreis (Felder) um den Einschlag werden alle getroffen. 0 = nur eine.
+    pub splash: f32,
+    /// Schießt auf Gebäude (Mauern, Türme …).
+    pub hits_buildings: bool,
+    /// Schießt auf Einheiten.
+    pub hits_units: bool,
+    /// Wird oben auf einem eigenen Turm gebaut und bleibt dort.
+    pub on_towers: bool,
+    /// So schnell fliegt das Geschoss (Felder pro Sekunde).
+    pub shot_speed: f32,
+}
+
+impl Default for SiegeDef {
+    fn default() -> Self {
+        SiegeDef {
+            size: 2,
+            crew: 1,
+            min_range: 0.0,
+            scatter: 0.0,
+            splash: 0.0,
+            hits_buildings: true,
+            hits_units: true,
+            on_towers: false,
+            shot_speed: 15.0,
+        }
+    }
+}
+
+/// Baustelle eines Belagerungsgeräts (an der Baustelle im Feld oder am Turm der Balliste).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SiteState {
+    /// Was hier entsteht.
+    pub unit: UnitKind,
+    /// Baustoffe insgesamt …
+    pub needed: Vec<GoodAmount>,
+    /// … und was davon schon da ist (Karren und mitgebrachte Rucksäcke).
+    pub delivered: Vec<GoodAmount>,
+    /// Geleistete Arbeit und die nötige (Sekunden für einen Baumeister).
+    pub work: f32,
+    pub work_total: f32,
+    /// Baumeister, die gerade hier arbeiten.
+    pub builders: u32,
 }
 
 /// Regeln für das Heer.
@@ -1577,6 +1709,8 @@ pub struct ArmyDef {
     pub arrow_hit_radius: f32,
     /// Beute: wer einen König tötet, bekommt so viel Prozent der Waren und Taler des Besiegten.
     pub loot_percent: u32,
+    /// Belagerung: so viele Baustoffe trägt ein Baumeister im Rucksack zur Baustelle („provisorisch mitnehmen“).
+    pub builder_backpack: u32,
 }
 
 impl Default for ArmyDef {
@@ -1602,6 +1736,7 @@ impl Default for ArmyDef {
             arrow_speed: 22.0,
             arrow_hit_radius: 0.6,
             loot_percent: 50,
+            builder_backpack: 5,
         }
     }
 }
@@ -1962,6 +2097,9 @@ pub struct BuildingState {
     /// Nur Kaserne: Sammelpunkt (Feldkoordinaten). Neue Soldaten laufen hierhin. `None` = vor die Tür.
     #[serde(default)]
     pub rally: Option<(f32, f32)>,
+    /// Baustelle eines Belagerungsgeräts (Baustelle im Feld, Turm mit Balliste im Bau).
+    #[serde(default)]
+    pub site: Option<SiteState>,
 }
 
 fn default_enemy_radius() -> f32 {

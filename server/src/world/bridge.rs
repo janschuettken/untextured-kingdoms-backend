@@ -116,6 +116,7 @@ impl World {
             capacity: 0,
             mature_in: 0.0,
             rally: None,
+            site: None,
         };
         self.next_building_id += 1;
         self.set_footprint(&b, true);

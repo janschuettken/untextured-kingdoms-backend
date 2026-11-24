@@ -3,6 +3,7 @@ import type { BuildingKind } from "./BuildingKind";
 import type { BuildingSettings } from "./BuildingSettings";
 import type { BuildingStatus } from "./BuildingStatus";
 import type { GoodAmount } from "./GoodAmount";
+import type { SiteState } from "./SiteState";
 import type { UnitKind } from "./UnitKind";
 
 /**
@@ -63,4 +64,8 @@ mature_in: number,
 /**
  * Nur Kaserne: Sammelpunkt (Feldkoordinaten). Neue Soldaten laufen hierhin. `None` = vor die Tür.
  */
-rally: [number, number] | null, };
+rally: [number, number] | null, 
+/**
+ * Baustelle eines Belagerungsgeräts (Baustelle im Feld, Turm mit Balliste im Bau).
+ */
+site: SiteState | null, };

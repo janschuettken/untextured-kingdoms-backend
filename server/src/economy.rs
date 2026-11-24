@@ -37,6 +37,7 @@ fn default_king(speed: f32) -> UnitDef {
         attack_seconds: 1.5,
         heal: 0,
         heal_range: 0.0,
+        siege: None,
     }
 }
 
@@ -61,6 +62,12 @@ fn fill_from_builtin(def: &mut EconomyDef) {
             }
         }
         def.buildings.push(b.clone());
+    }
+    // Neue Einheiten (z. B. Baumeister, Belagerungsgeräte).
+    for u in &builtin.units {
+        if !def.units.iter().any(|x| x.kind == u.kind) {
+            def.units.push(u.clone());
+        }
     }
 }
 
@@ -359,7 +366,7 @@ impl Economy {
             }
         }
         for (i, u) in def.units.iter().enumerate() {
-            if !u.kind.is_soldier() && u.kind != UnitKind::King && !u.kind.is_civilian() {
+            if !u.kind.is_soldier() && u.kind != UnitKind::King && !u.kind.is_civilian() && !u.kind.is_siege() {
                 return Err(format!("Einheit {:?}: hat keine Kampfwerte", u.kind));
             }
             if def.units[..i].iter().any(|v| v.kind == u.kind) {
@@ -371,7 +378,12 @@ impl Economy {
                 }
                 continue;
             }
-            if !(u.seconds > 0.0 && u.seconds.is_finite() && u.speed > 0.0 && u.speed.is_finite()) {
+            // Belagerungsgeräte dürfen feststehen (Tempo 0); `seconds` ist dort die Bauzeit.
+            let speed_ok = if u.kind.is_siege() { u.speed >= 0.0 } else { u.speed > 0.0 };
+            if u.kind.is_siege() != u.siege.is_some() {
+                return Err(format!("Einheit {:?}: nur Belagerungsgeräte haben „siege“", u.kind));
+            }
+            if !(u.seconds > 0.0 && u.seconds.is_finite() && speed_ok && u.speed.is_finite()) {
                 return Err(format!("Einheit {:?}: Ausbildungszeit und Tempo müssen größer als 0 sein", u.kind));
             }
             if u.hp == 0 {
@@ -547,6 +559,20 @@ impl Economy {
     /// Schaden eines Treffers dieser Einheit gegen diese Rüstung: die Art, die am meisten anrichtet.
     pub fn hit_damage(&self, attacker: &UnitDef, armor: &[protocol::Armor]) -> u32 {
         self.damage_of(attacker).iter().map(|d| self.damage_against(d.value, d.kind, armor)).max().unwrap_or(0)
+    }
+
+    /// Wie `hit_damage`, aber gegen Einheiten: Belagerungsschaden gilt bei Belagerungsgeräten nur
+    /// gegen Gebäude (ihr Stein trifft Einheiten mit den übrigen Schadensarten).
+    pub fn unit_hit_damage(&self, attacker: &UnitDef, armor: &[protocol::Armor]) -> u32 {
+        if attacker.siege.is_none() {
+            return self.hit_damage(attacker, armor);
+        }
+        self.damage_of(attacker)
+            .iter()
+            .filter(|d| d.kind != DamageType::Siege)
+            .map(|d| self.damage_against(d.value, d.kind, armor))
+            .max()
+            .unwrap_or(0)
     }
 
     /// Zählt ein Angriff mit dieser Reichweite als Fernkampf?
@@ -760,7 +786,7 @@ mod tests {
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 37);
+        assert_eq!(eco.def.buildings.len(), 39);
         assert!(eco.def.buildings.iter().any(|b| b.hub), "ohne Lager kein Transport");
     }
 
@@ -817,7 +843,10 @@ mod tests {
             assert_eq!(b.delivery, protocol::DeliveryDefaults::default(), "Voreinstellung: Träger, Karren und Arbeiter");
         }
         let old_attack = old["army"]["attack_seconds"].as_f64().unwrap() as f32;
-        assert!(eco.def.units.iter().all(|u| u.attack_seconds == old_attack), "jede Einheit bekommt den alten Takt");
+        // Einheiten, die die alte Datei schon hatte (neue wie die Belagerungsgeräte kommen aus den eingebauten Werten).
+        let old_units: Vec<&str> = old["units"].as_array().map_or(Vec::new(), |a| a.iter().filter_map(|u| u["kind"].as_str()).collect());
+        let had = |u: &&protocol::UnitDef| old_units.contains(&serde_json::to_value(u.kind).unwrap().as_str().unwrap_or(""));
+        assert!(eco.def.units.iter().filter(had).all(|u| u.attack_seconds == old_attack), "jede Einheit bekommt den alten Takt");
         // Umgewandelt gespeichert und wieder geladen: dasselbe.
         let text = eco.to_json();
         assert_eq!(Economy::parse(&text).unwrap().to_json(), text);

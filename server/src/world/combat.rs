@@ -78,7 +78,7 @@ pub(super) struct Projectile {
 }
 
 /// Ein Treffer: (Ziel (Index), Angreifer (Id), Art des Angreifers, Spieler des Angreifers, Fernkampf).
-type Hit = (usize, u32, UnitKind, u32, bool);
+pub(super) type Hit = (usize, u32, UnitKind, u32, bool);
 
 /// So weit darf die Höhe am Ziel von der Höhe am Einschlagpunkt abweichen (Weltmaß), sonst fliegt
 /// der Pfeil drüber oder schlägt darunter ein (z. B. oben auf der Mauer gezielt, unten getroffen).
@@ -202,6 +202,21 @@ impl World {
             return false;
         }
         let ranged = self.economy.is_ranged(def.range);
+        // Belagerungsgeräte: was sie laut `siege` treffen.
+        if let Some(sd) = &def.siege {
+            return match target {
+                AttackTarget::Building { id } => {
+                    sd.hits_buildings
+                        && self
+                            .buildings
+                            .iter()
+                            .find(|b| b.id == id)
+                            .and_then(|b| self.economy.building(b.kind).map(|d| self.economy.hit_damage(def, &d.at(b.level).armor)))
+                            .is_some_and(|y| y > 0)
+                }
+                AttackTarget::Unit { id } => sd.hits_units && self.units.iter().find(|t| t.id == id).is_some_and(|t| self.can_damage(def, t)),
+            };
+        }
         match target {
             AttackTarget::Building { id } => {
                 !ranged
@@ -219,7 +234,7 @@ impl World {
     /// Richtet diese Einheitenart gegen das Ziel etwas aus (gegen Reiter: an Pferd oder Reiter)?
     pub(crate) fn can_damage(&self, attacker: &protocol::UnitDef, t: &Unit) -> bool {
         let Some(tdef) = self.economy.unit(t.kind) else { return false };
-        self.economy.hit_damage(attacker, &tdef.armor) > 0 || (t.mounted && self.economy.hit_damage(attacker, &tdef.horse_armor) > 0)
+        self.economy.unit_hit_damage(attacker, &tdef.armor) > 0 || (t.mounted && self.economy.unit_hit_damage(attacker, &tdef.horse_armor) > 0)
     }
 
     /// Deckung (Prozent) für eine Einheit: oben auf einem Gebäude dessen `cover_percent`, sonst 0.
@@ -287,6 +302,10 @@ impl World {
             if u.down > 0.0 {
                 continue;
             }
+            // Belagerungsgeräte zielen selbst (siehe `siege.rs`).
+            if u.kind.is_siege() {
+                continue;
+            }
             if u.attack_order.is_some() {
                 ordered.push(k);
             } else if def.attack > 0 && def.range > 0.0 && u.attack_cooldown <= 0.0 && may_attack(def, u.mounted, !u.path.is_empty()) {
@@ -295,14 +314,17 @@ impl World {
         }
         // Pfeile, die jetzt aufschlagen.
         let mut hits: Vec<Hit> = self.land_projectiles(dt, &index, &grid);
+        // Steine und Bolzen der Belagerungsgeräte.
+        let (siege_hits, siege_building_hits) = self.land_siege(dt, &grid, CELL);
+        hits.extend(siege_hits);
         // Neue Schüsse: (Schütze, Ziel (Indizes), Reichweite, Bahn).
         let mut launches: Vec<(usize, usize, f32, super::ballistics::Flight)> = Vec::new();
-        if teams.len() < 2 && ordered.is_empty() && hits.is_empty() {
+        if teams.len() < 2 && ordered.is_empty() && hits.is_empty() && siege_building_hits.is_empty() {
             return;
         }
-        // (Gebäude, Angreifer (Index))
-        let mut building_hits: Vec<(u32, usize)> = Vec::new();
-        let mut shots: Vec<Shot> = Vec::new();
+        // (Gebäude, Art des Angreifers)
+        let mut building_hits: Vec<(u32, UnitKind)> = siege_building_hits;
+        let mut shots: Vec<Shot> = self.siege_fire(dt, &grid, CELL);
         // Angriffsbefehle: hingehen, verfolgen, zuschlagen.
         for k in ordered {
             let u = &self.units[k];
@@ -405,7 +427,7 @@ impl World {
                             Some(f) if ranged => launches.push((k, j, range, f)),
                             _ => hits.push((j, u.id, u.kind, by, ranged)),
                         },
-                        (AttackTarget::Building { id }, _) => building_hits.push((id, k)),
+                        (AttackTarget::Building { id }, _) => building_hits.push((id, u.kind)),
                         _ => {}
                     }
                 }
@@ -457,8 +479,8 @@ impl World {
         }
         // Gebäude: Schaden, bei 0 eingerissen.
         let mut building_alerts = Vec::new();
-        for (id, k) in building_hits {
-            let Some(adef) = self.economy.unit(self.units[k].kind) else { continue };
+        for (id, kind) in building_hits {
+            let Some(adef) = self.economy.unit(kind) else { continue };
             let attack = self
                 .buildings
                 .iter()
@@ -496,7 +518,7 @@ impl World {
             }
             let horse = self.units[j].mounted && self.misses(horse_percent);
             let (Some(adef), Some(tdef)) = (self.economy.unit(kind), self.economy.unit(self.units[j].kind)) else { continue };
-            let attack = self.economy.hit_damage(adef, if horse { &tdef.horse_armor } else { &tdef.armor });
+            let attack = self.economy.unit_hit_damage(adef, if horse { &tdef.horse_armor } else { &tdef.armor });
             if attack > 0 {
                 landed.push((j, attack, by, horse));
             }

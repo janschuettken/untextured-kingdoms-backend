@@ -42,4 +42,8 @@ attack_target: AttackTarget | null,
 /**
  * Zählt jeden Schlag und Schuss: ändert er sich, holt die Figur aus (Animation).
  */
-strikes: number, };
+strikes: number, 
+/**
+ * Belagerungsgerät: so viele Baumeister bedienen es gerade (nötig: `siege.crew`).
+ */
+crew: number, };
