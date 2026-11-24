@@ -4,4 +4,4 @@ members = ["server", "protocol"]
 
 [workspace.package]
 edition = "2021"
-version = "0.1.33"
+version = "0.1.34"
