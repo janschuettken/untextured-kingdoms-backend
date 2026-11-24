@@ -951,6 +951,9 @@ pub struct UnitState {
     /// Wen die Einheit gerade angreift (Angriffsbefehl oder zuletzt selbst gewähltes Ziel).
     #[serde(default)]
     pub attack_target: Option<AttackTarget>,
+    /// Zählt jeden Schlag und Schuss: ändert er sich, holt die Figur aus (Animation).
+    #[serde(default)]
+    pub strikes: u32,
 }
 
 /// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.

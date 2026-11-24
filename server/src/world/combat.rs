@@ -323,6 +323,7 @@ impl World {
                     u.chase_timer = 0.0;
                     if u.attack_cooldown <= 0.0 {
                         u.attack_cooldown = def.attack_seconds;
+                        u.strikes = u.strikes.wrapping_add(1);
                         match flight {
                             Some(f) if ranged => launches.push((k, j, range, f)),
                             _ => hits.push((j, me, kind, by, ranged)),
@@ -398,6 +399,7 @@ impl World {
                 }
                 if u.attack_cooldown <= 0.0 {
                     u.attack_cooldown = def.attack_seconds;
+                    u.strikes = u.strikes.wrapping_add(1);
                     match (order, j) {
                         (AttackTarget::Unit { .. }, Some((j, flight, range))) => match flight {
                             Some(f) if ranged => launches.push((k, j, range, f)),
@@ -437,6 +439,7 @@ impl World {
                     None => hits.push((j, u.id, u.kind, u.owner, self.economy.is_ranged(def.range))),
                 }
                 self.units[k].attack_cooldown = def.attack_seconds;
+                self.units[k].strikes = self.units[k].strikes.wrapping_add(1);
                 let foe = self.units[j].id;
                 self.units[k].last_foe = Some((foe, 0.0));
             }

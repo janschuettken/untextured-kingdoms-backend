@@ -76,6 +76,9 @@ pub struct Unit {
     /// Sekunden bis zum nächsten Schlag oder Schuss.
     #[serde(default)]
     attack_cooldown: f32,
+    /// Zähler der Schläge und Schüsse (für die Animation im Client).
+    #[serde(default)]
+    strikes: u32,
     /// Angriffsbefehl: dieses Ziel verfolgen und angreifen, bis es fällt.
     #[serde(default)]
     attack_order: Option<protocol::AttackTarget>,
@@ -164,6 +167,7 @@ impl Unit {
             trade: None,
             damage: 0,
             attack_cooldown: 0.0,
+            strikes: 0,
             attack_order: None,
             attack_force: false,
             chase_timer: 0.0,
@@ -1800,6 +1804,7 @@ impl World {
                 horse_hp: if u.mounted { self.economy.def.army.horse_hp.saturating_sub(u.horse_damage) } else { 0 },
                 down: u.down,
                 attack_target: u.attack_order.or(u.last_foe.map(|(id, _)| protocol::AttackTarget::Unit { id })),
+                strikes: u.strikes,
             })
             .collect()
     }
