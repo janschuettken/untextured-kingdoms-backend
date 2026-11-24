@@ -210,6 +210,8 @@ impl PendingSave {
 
 struct LobbyConn {
     token: String,
+    /// Admin beim Verbinden (Login/Abmelden verbindet neu): sieht alle Spiele.
+    admin: bool,
     tx: tokio::sync::mpsc::Sender<LobbyServerMsg>,
 }
 
@@ -266,6 +268,12 @@ type Reply = Result<(), Text>;
 
 /// Platz im Spiel: Spieler-Nummer und Startfeld.
 pub type Seat = (u32, (u32, u32));
+
+/// Steht das Spiel in der Lobby-Liste dieses Spielers? Admins sehen alle,
+/// sonst nur eigene (Mitspieler oder Gastgeber) und wartende, denen man beitreten kann.
+fn visible(admin: bool, game: &GameSummary) -> bool {
+    admin || game.mine || game.phase == GamePhase::Waiting
+}
 
 fn err(key: &str) -> Reply {
     Err(Text::new(key))
@@ -639,6 +647,7 @@ impl Hub {
             for (s, (_, tokens)) in games.iter_mut().zip(&details) {
                 s.mine = tokens.contains(&c.token);
             }
+            games.retain(|s| visible(c.admin, s));
             // Der Raum: nur das wartende Spiel, laufende stehen in der Liste.
             let current = details
                 .iter()
@@ -1076,6 +1085,7 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
             _ => return,
         }
     };
+    let admin = hub.admin.check(&token).await;
     let conn = hub.next_conn.fetch_add(1, Ordering::Relaxed);
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<LobbyServerMsg>(32);
     let _ = out_tx.try_send(LobbyServerMsg::Welcome {
@@ -1087,6 +1097,7 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
         conn,
         LobbyConn {
             token: token.clone(),
+            admin,
             tx: out_tx.clone(),
         },
     );
@@ -1373,6 +1384,43 @@ mod tests {
         assert!(p.buildings.iter().any(|b| b.owner == 3 && b.look == protocol::PreviewLook::Keep));
         assert!(p.defeated.is_empty());
         drop(w);
+        hub.leave(A, None).unwrap();
+        hub.leave(B, None).unwrap();
+    }
+
+    #[test]
+    fn nur_admins_sehen_alle_spiele() {
+        let hub = hub();
+        hub.create(A, "Anna", "zwei-burgen").unwrap();
+        let running = hub.game_of(A).unwrap().id;
+        hub.start(A).unwrap();
+        hub.create(B, "Bert", "zwei-burgen").unwrap();
+        let waiting = hub.waiting_game_of(B).unwrap().id;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let mut seen = |token: &str, admin: bool| -> Vec<u32> {
+            hub.conns.lock().unwrap().clear();
+            hub.conns.lock().unwrap().insert(
+                0,
+                LobbyConn {
+                    token: token.into(),
+                    admin,
+                    tx: tx.clone(),
+                },
+            );
+            hub.notify();
+            let Some(LobbyServerMsg::State { games, .. }) = rx.try_recv().ok() else {
+                panic!("kein Stand")
+            };
+            let mut ids: Vec<u32> = games.iter().map(|g| g.id).collect();
+            ids.sort();
+            ids
+        };
+        let mut both = vec![running, waiting];
+        both.sort();
+        assert_eq!(seen(A, false), both, "eigenes laufendes + wartendes");
+        assert_eq!(seen(C, false), vec![waiting], "fremdes laufendes Spiel bleibt verborgen");
+        assert_eq!(seen(C, true), both, "Admin sieht alle");
+        hub.conns.lock().unwrap().clear();
         hub.leave(A, None).unwrap();
         hub.leave(B, None).unwrap();
     }
