@@ -790,6 +790,10 @@ impl World {
         if kind == BuildingKind::SiegeSite {
             return Err(Text::new("error.unknown_building"));
         }
+        // Belagerungslager erst mit eigener Belagerungswerkstatt.
+        if kind == BuildingKind::SiegeCamp && !self.buildings.iter().any(|b| b.owner == player && b.kind == BuildingKind::SiegeWorkshop) {
+            return Err(Text::new("error.needs_workshop"));
+        }
         let rotation = rotation % 4;
         let level = level.max(1);
         if level as usize > def.levels.len() {
@@ -854,7 +858,11 @@ impl World {
         }
 
         // Grenzen aus dem Ressourcen-Fenster für die Waren, die der Betrieb nutzt.
-        let (keep_in_stock, stop_at) = self.default_limits(player, &def, level as u32);
+        let (mut keep_in_stock, stop_at) = self.default_limits(player, &def, level as u32);
+        // Belagerungslager: was dort anfangs bereitliegen soll (im Infofeld änderbar).
+        if kind == BuildingKind::SiegeCamp {
+            keep_in_stock = storage::CAMP_DEFAULT.iter().map(|&(good, amount)| protocol::GoodAmount { good, amount }).collect();
+        }
         let settings = BuildingSettings {
             recipe: def.levels[0].recipes.first().cloned(),
             paused: false,

@@ -85,6 +85,8 @@ enum JobKind {
     Supply { to: u32 },
     /// Ware vom Betrieb `from` direkt zum Betrieb `to` bringen, der sie gerade braucht.
     Direct { from: u32, to: u32 },
+    /// Ware aus einem Lager der Burg ins Belagerungslager `to` bringen (bleibt im Vorrat).
+    Restock { to: u32 },
     /// Nachschub aus dem Vorrat zum Belagerungsgerät `to` (Einheit) bringen.
     /// Abladen: `Stage::Unload(to)` mit der Einheiten-Id.
     Ammo { to: u32 },
@@ -124,6 +126,12 @@ impl Reserved {
                 }
             }
             (JobKind::Supply { to }, stage) => {
+                *self.incoming.entry((to, job.good)).or_default() += job.amount;
+                if matches!(stage, Stage::Load(_)) {
+                    *self.central.entry((owner, job.good)).or_default() += job.amount;
+                }
+            }
+            (JobKind::Restock { to }, stage) => {
                 *self.incoming.entry((to, job.good)).or_default() += job.amount;
                 if matches!(stage, Stage::Load(_)) {
                     *self.central.entry((owner, job.good)).or_default() += job.amount;
@@ -257,7 +265,8 @@ impl World {
     pub(super) fn nearest_hub(&self, owner: u32, p: (f32, f32), good: Good) -> Option<u32> {
         self.buildings
             .iter()
-            .filter(|b| b.owner == owner && self.is_hub(b) && self.hub_accepts(b, good))
+            // Belagerungslager füllen nur Karren gezielt auf: dort wird nichts abgeladen.
+            .filter(|b| b.owner == owner && self.is_hub(b) && b.kind != protocol::BuildingKind::SiegeCamp && self.hub_accepts(b, good))
             .min_by(|a, b| dist_to(a, p).total_cmp(&dist_to(b, p)))
             .map(|b| b.id)
     }
@@ -639,6 +648,36 @@ impl World {
                 offer(&mut best, via - 2.0 * STALL_BONUS, job);
             }
         }
+        // Belagerungslager auffüllen, bis die eingestellten Mengen dort liegen (aus einem Lager
+        // der Burg, nicht aus einem anderen Belagerungslager).
+        if cart {
+            for camp in self.buildings.iter().filter(|b| b.owner == owner && b.kind == protocol::BuildingKind::SiegeCamp && b.hp > 0) {
+                let room = self.hub_capacity(camp.id).saturating_sub(self.hub_total(camp.id));
+                for want in &camp.settings.keep_in_stock {
+                    let have = self.hub_amount(camp.id, want.good) + Reserved::get(&reserved.incoming, (camp.id, want.good));
+                    let need = want.amount.saturating_sub(have).min(cap).min(room);
+                    if need < cart_min.min(want.amount) || need == 0 {
+                        continue;
+                    }
+                    let there = stock.amount(want.good).saturating_sub(Reserved::get(&reserved.central, (owner, want.good)));
+                    let source = self
+                        .buildings
+                        .iter()
+                        .filter(|h| h.owner == owner && h.id != camp.id && h.kind != protocol::BuildingKind::SiegeCamp && self.is_hub(h))
+                        .map(|h| (h, self.hub_amount(h.id, want.good)))
+                        .filter(|&(_, n)| n > 0)
+                        .map(|(h, n)| (h.id, n, dist_to(h, u.pos) + dist_to(camp, center(h))))
+                        .min_by(|a, b| a.2.total_cmp(&b.2));
+                    let Some((hub, n, via)) = source else { continue };
+                    let amount = need.min(there).min(n);
+                    if amount == 0 {
+                        continue;
+                    }
+                    let job = Job { kind: JobKind::Restock { to: camp.id }, good: want.good, amount, stage: Stage::Load(hub), rest: NO_REST };
+                    offer(&mut best, via, job);
+                }
+            }
+        }
         // Karren: reicht ein Betrieb allein nicht, mehrere gleiche nacheinander anfahren.
         if cart && best.is_none() {
             for ((_, good), mut list) in groups {
@@ -679,7 +718,7 @@ impl World {
                 self.transport_wait.remove(&from);
                 self.transport_wait.remove(&to);
             }
-            JobKind::Ammo { .. } => {}
+            JobKind::Ammo { .. } | JobKind::Restock { .. } => {}
         }
         self.units[k].job = Some(job);
         if !self.route(k, at, index) {
@@ -715,7 +754,7 @@ impl World {
                         self.dirty_buildings.insert(from);
                         n
                     }
-                    JobKind::Supply { .. } | JobKind::Ammo { .. } => {
+                    JobKind::Supply { .. } | JobKind::Ammo { .. } | JobKind::Restock { .. } => {
                         let Some(stock) = self.stocks.get_mut(&owner) else {
                             return self.fail(k, index);
                         };
@@ -768,7 +807,7 @@ impl World {
                 }
                 let dest = match kind {
                     JobKind::Pickup { .. } => self.nearest_hub(owner, self.units[k].pos, job.good),
-                    JobKind::Supply { to } | JobKind::Direct { to, .. } => Some(to),
+                    JobKind::Supply { to } | JobKind::Direct { to, .. } | JobKind::Restock { to } => Some(to),
                     JobKind::Ammo { .. } => None,
                 };
                 let Some(dest) = dest else {
@@ -785,6 +824,16 @@ impl World {
                     return;
                 };
                 let left = match job.kind {
+                    JobKind::Restock { .. } => {
+                        // War nur unterwegs, gehört weiter zum Vorrat: ohne Platzprüfung zurück.
+                        let Some(stock) = self.stocks.get_mut(&owner) else {
+                            return;
+                        };
+                        stock.add_unlimited(load.good, load.amount);
+                        self.dirty_stocks.insert(owner);
+                        self.hub_add(at, load.good, load.amount);
+                        0
+                    }
                     JobKind::Pickup { .. } => {
                         let Some(stock) = self.stocks.get_mut(&owner) else {
                             return;
@@ -819,7 +868,7 @@ impl World {
                     good: load.good,
                     amount: left,
                 });
-                if let JobKind::Supply { .. } | JobKind::Direct { .. } = job.kind {
+                if let JobKind::Supply { .. } | JobKind::Direct { .. } | JobKind::Restock { .. } = job.kind {
                     // Passt nicht mehr hinein: Rest zurück ins Lager.
                     self.return_load(k, index);
                 } else {
@@ -868,7 +917,7 @@ impl World {
         ) || matches!(
             self.units[k].job,
             Some(Job {
-                kind: JobKind::Supply { .. } | JobKind::Direct { .. } | JobKind::Ammo { .. },
+                kind: JobKind::Supply { .. } | JobKind::Direct { .. } | JobKind::Ammo { .. } | JobKind::Restock { .. },
                 ..
             })
         );
@@ -1153,7 +1202,7 @@ mod tests {
         let index: std::collections::HashMap<u32, usize> = w.buildings.iter().enumerate().map(|(i, b)| (b.id, i)).collect();
         let target = |w: &World| match w.find_job(k, &super::Reserved::default(), &index).map(|j| j.kind) {
             Some(super::JobKind::Supply { to } | super::JobKind::Direct { to, .. } | super::JobKind::Pickup { from: to }) => to,
-            Some(super::JobKind::Ammo { .. }) | None => 0,
+            Some(super::JobKind::Ammo { .. } | super::JobKind::Restock { .. }) | None => 0,
         };
         let set = |w: &mut World, id: u32, st: BuildingStatus| w.buildings.iter_mut().find(|b| b.id == id).unwrap().status = st;
         // Beide brauchen Holz, keiner steht: der nähere zuerst.

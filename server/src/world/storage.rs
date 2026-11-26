@@ -13,6 +13,9 @@ use protocol::{BuildingKind, Good, GoodAmount};
 
 use super::World;
 
+/// Was ein neues Belagerungslager anfangs bereithalten will (Ware, Menge).
+pub(super) const CAMP_DEFAULT: [(Good, u32); 4] = [(Good::Stone, 50), (Good::Boards, 40), (Good::Wood, 30), (Good::Iron, 10)];
+
 /// Waren in einem Lager.
 pub type HubGoods = BTreeMap<Good, u32>;
 
@@ -78,6 +81,7 @@ impl World {
             .map(|b| (b.id, b.owner, self.hub_allowed(b)))
             .collect();
         let alive: BTreeSet<u32> = hubs.iter().map(|h| h.0).collect();
+        let camps: BTreeSet<u32> = self.buildings.iter().filter(|b| b.kind == BuildingKind::SiegeCamp).map(|b| b.id).collect();
         self.hub_goods.retain(|id, _| alive.contains(id));
         let owners: Vec<u32> = self.stocks.keys().copied().collect();
         for owner in owners {
@@ -93,7 +97,8 @@ impl World {
             for good in goods {
                 let want = total.iter().find(|g| g.good == good).map_or(0, |g| g.amount);
                 let have: u32 = mine.iter().map(|h| self.hub_amount(h.0, good)).sum();
-                let stores = |h: &&&(u32, u32, Option<Vec<Good>>)| h.2.as_ref().is_none_or(|s| s.contains(&good));
+                // Belagerungslager bekommen nichts zugeteilt (nur, was Karren hinbringen).
+                let stores = |h: &&&(u32, u32, Option<Vec<Good>>)| !camps.contains(&h.0) && h.2.as_ref().is_none_or(|s| s.contains(&good));
                 if want > have {
                     // Erst dorthin, wo die Ware hin darf und Platz ist; Rest ins erste passende Lager.
                     let mut left = want - have;
@@ -109,8 +114,10 @@ impl World {
                     }
                 } else if have > want {
                     let mut extra = have - want;
-                    let mut order: Vec<(u32, u32)> = mine.iter().map(|h| (self.hub_amount(h.0, good), h.0)).collect();
+                    // Aus den Belagerungslagern zuletzt.
+                    let mut order: Vec<(bool, u32, u32)> = mine.iter().map(|h| (!camps.contains(&h.0), self.hub_amount(h.0, good), h.0)).collect();
                     order.sort_by(|a, b| b.cmp(a));
+                    let order: Vec<(u32, u32)> = order.into_iter().map(|(_, n, id)| (n, id)).collect();
                     for (n, id) in order {
                         let take = n.min(extra);
                         self.hub_take(id, good, take);

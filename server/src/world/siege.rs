@@ -1212,4 +1212,46 @@ mod tests {
         assert!(w.units.iter().find(|u| u.id == 9100).unwrap().dock.is_none());
         assert!(!w.units.iter().find(|u| u.id == 9200).unwrap().on_wall, "ohne Turm nicht mehr oben");
     }
+
+    #[test]
+    fn belagerungslager_wird_aufgefuellt_und_beliefert_baustellen() {
+        let mut w = world();
+        w.place_building_rotated(1, BuildingKind::Storehouse, 14, 30, 0, 1).unwrap();
+        let shed = w.place_building_rotated(1, BuildingKind::CartShed, 26, 30, 0, 1).unwrap().id;
+        let _ = w.upgrade(1, shed);
+        assert!(w.place_building_rotated(2, BuildingKind::SiegeCamp, 60, 20, 0, 1).is_err(), "ohne Werkstatt kein Lager");
+        let camp = w.place_building_rotated(1, BuildingKind::SiegeCamp, 90, 40, 0, 1).unwrap();
+        assert!(camp.settings.keep_in_stock.iter().any(|g| g.good == Good::Stone && g.amount > 0), "Voreinstellung");
+        let stone = |w: &World| w.hub_amount(camp.id, Good::Stone);
+        let total = w.stocks[&1].amount(Good::Stone);
+        let mut filled = false;
+        for _ in 0..600 {
+            run(&mut w, 1.0);
+            if stone(&w) >= 50 && w.hub_amount(camp.id, Good::Boards) >= 40 {
+                filled = true;
+                break;
+            }
+        }
+        assert!(filled, "Karren füllen das Lager: {}", stone(&w));
+        assert_eq!(w.stocks[&1].amount(Good::Stone), total, "Waren bleiben im Vorrat");
+        // Kein Abladeplatz für Hersteller: nächstes Lager für Holz bleibt das Vorratslager.
+        assert_ne!(w.nearest_hub(1, (91.5, 41.5), Good::Wood), Some(camp.id));
+        // Baustelle daneben: die Bretter kommen aus dem Belagerungslager.
+        let d = w.economy.def.units.iter_mut().find(|u| u.kind == UnitKind::Catapult).unwrap();
+        d.cost = vec![GoodAmount { good: Good::Boards, amount: 20 }];
+        d.seconds = 3.0;
+        builder(&mut w, 9001, 1, (85.5, 50.5));
+        let before = w.hub_amount(camp.id, Good::Boards);
+        assert!(before >= 20, "Bretter liegen bereit: {before}");
+        w.build_siege(1, &[9001], UnitKind::Catapult, (86, 52), false).unwrap();
+        let mut took = false;
+        for _ in 0..120 {
+            run(&mut w, 1.0);
+            if w.hub_amount(camp.id, Good::Boards) < before {
+                took = true;
+                break;
+            }
+        }
+        assert!(took, "Baustelle bekommt Bretter aus dem Belagerungslager");
+    }
 }

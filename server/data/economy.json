@@ -2282,6 +2282,52 @@
           "siege": []
         }
       ]
+    },
+    {
+      "kind": "siege_camp",
+      "category": "military",
+      "w": 3,
+      "h": 3,
+      "height": 1.4,
+      "release_after_seconds": 0,
+      "build_radius": 0,
+      "no_entrance": false,
+      "hub": true,
+      "on_walls": false,
+      "on_ramps": false,
+      "first_free": false,
+      "hub_goods": ["wood", "boards", "stone", "iron"],
+      "delivery": {"carriers": false, "carts": true, "worker": false},
+      "horse_capacity": 0,
+      "max_span": 0,
+      "enemy_radius": 8,
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 20}, {"good": "boards", "amount": 10}],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": [],
+          "max_hp": 300,
+          "workers": 0,
+          "gather_radius": 0,
+          "service_radius": 0,
+          "walkway": false,
+          "stairs": false,
+          "gate_radius": 0,
+          "garrison": 0,
+          "cover_percent": 0,
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 0.8},
+            {"type": "heavy_ranged", "min": 0, "block": 0.5}
+          ],
+          "road_speed_percent": 0,
+          "hub_capacity": 150,
+          "storage_inputs": 0,
+          "storage_outputs": 0,
+          "siege": []
+        }
+      ]
     }
   ],
   "recipes": [

@@ -1233,6 +1233,9 @@ pub enum BuildingKind {
     SiegeWorkshop,
     /// Baustelle eines Belagerungsgeräts im Feld (entsteht nur über `build_siege`).
     SiegeSite,
+    /// Belagerungslager: kleines Lager im Feld für Baustoffe und Steine. Karren füllen es
+    /// aus der Burg auf, bis die eingestellten Mengen (`keep_in_stock`) dort liegen.
+    SiegeCamp,
     /// Brücke über einen Fluss: eine gerade Reihe Wasserfelder (höchstens `max_span`),
     /// an beiden Enden Ufer. Kosten der Stufe gelten je Feld.
     Bridge,
