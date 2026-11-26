@@ -54,4 +54,8 @@ crew_of: number | null,
 /**
  * Belagerungsgerät mit begrenztem Vorrat: so viele Schüsse sind noch da (sonst None).
  */
-shots_left: number | null, };
+shots_left: number | null, 
+/**
+ * Belagerungsturm: liegt an diesem Gebäude (Mauer) an.
+ */
+docked_at: number | null, };

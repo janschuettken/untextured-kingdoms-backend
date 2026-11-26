@@ -48,4 +48,8 @@ shots: number,
 /**
  * Nachschub je Schuss (Karren bringen ihn aus dem Lager). Ohne: füllt sich nicht auf.
  */
-ammo: GoodAmount | null, };
+ammo: GoodAmount | null, 
+/**
+ * Belagerungsturm: dockt an Mauern mit Wehrgang an und wird zur Treppe hinauf.
+ */
+docks: boolean, };

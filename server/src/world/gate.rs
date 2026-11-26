@@ -158,8 +158,11 @@ impl World {
 
     /// Darf dieser Spieler hinauf? Auf eigene und verbündete Bauwerke immer, auf einen
     /// zerstörten Bergfried (Tür eingeschlagen) jeder.
+    /// Ein angedockter Belagerungsturm (eigener oder verbündeter) öffnet alle Wehrgänge dieses Gegners.
     pub(super) fn climbable(&self, b: &protocol::BuildingState, owner: u32) -> bool {
-        self.allied(b.owner, owner) || (b.kind == protocol::BuildingKind::Keep && b.hp == 0)
+        self.allied(b.owner, owner)
+            || (b.kind == protocol::BuildingKind::Keep && b.hp == 0)
+            || self.storms.iter().any(|s| s.0 == b.owner && self.allied(s.1, owner))
     }
 
     /// Felder, auf denen Einheiten dieses Spielers oben laufen können (auch bei Verbündeten).
@@ -213,6 +216,14 @@ impl World {
                 };
                 ((cy * self.map.width + cx) as usize, feet)
             })
+            .chain(
+                // Angedockte Belagerungstürme: für Angreifer wie Verteidiger ein Weg hinauf und hinunter.
+                self.storms
+                    .iter()
+                    .filter(|s| self.allied(s.0, owner) || self.allied(s.1, owner))
+                    .filter(|s| open(&s.3))
+                    .map(|s| (s.2, vec![s.3])),
+            )
             .collect()
     }
 

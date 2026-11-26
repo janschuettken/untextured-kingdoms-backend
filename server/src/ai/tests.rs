@@ -447,3 +447,42 @@ fn lastprofil() {
     }
 }
 
+
+#[test]
+fn baut_belagerungsgeraete_wenn_der_gegner_zu_ist() {
+    let map = GameMap::parse(MAP).unwrap();
+    let economy = Economy::parse(crate::economy::ECONOMY_JSON).unwrap();
+    let spawns = map.spawns.clone();
+    let mut world = World::new(map, economy);
+    world.spawn_player_at(1, spawns[0]);
+    world.spawn_player_at(2, spawns[1]);
+    let goods: Vec<protocol::GoodAmount> = [protocol::Good::Wood, protocol::Good::Boards, protocol::Good::Stone, protocol::Good::Iron]
+        .into_iter()
+        .map(|good| protocol::GoodAmount { good, amount: 400 })
+        .collect();
+    world.admin_give(1, &goods, 3000);
+    world.place_building_rotated(1, BuildingKind::Storehouse, spawns[0].0 + 8, spawns[0].1 + 8, 0, 1).ok();
+    let mut ai = Computer::with_level(1, AiLevel::Hard, &world.economy);
+    // So tun, als wäre die Burg des Gegners schon zu.
+    ai.siege_wanted = true;
+    ai.next_siege_check = f32::MAX;
+    let (ticks, _) = tokio::sync::broadcast::channel(64);
+    let dt = 0.25;
+    let mut engine = false;
+    for _ in 0..(8.0 * 60.0 / dt) as u32 {
+        world.self_carry.insert(1);
+        for cmd in ai.think(&world, dt) {
+            let _ = apply_command(&mut world, &ticks, 1, cmd);
+        }
+        world.step(dt);
+        let _ = world.take_events();
+        let _ = world.take_dirty_stocks();
+        if world.units.iter().any(|u| u.owner == 1 && u.kind == protocol::UnitKind::Catapult) {
+            engine = true;
+            break;
+        }
+    }
+    assert!(count(&world, BuildingKind::SiegeWorkshop) >= 1, "Werkstatt gebaut");
+    assert!(world.units.iter().any(|u| u.owner == 1 && u.kind == protocol::UnitKind::Builder), "Baumeister ausgebildet");
+    assert!(engine, "ein Katapult steht");
+}

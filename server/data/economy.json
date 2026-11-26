@@ -2237,7 +2237,7 @@
           "hub_capacity": 0,
           "storage_inputs": 0,
           "storage_outputs": 0,
-          "siege": ["trebuchet"]
+          "siege": ["trebuchet", "siege_tower"]
         }
       ]
     },
@@ -3024,6 +3024,47 @@
         "shot_speed": 30,
         "shots": 20,
         "ammo": {"good": "boards", "amount": 1}
+      }
+    },
+    {
+      "kind": "siege_tower",
+      "cost": [{"good": "boards", "amount": 60}, {"good": "wood", "amount": 40}, {"good": "iron", "amount": 10}],
+      "taler": 0,
+      "seconds": 90,
+      "speed": 0.5,
+      "hp": 600,
+      "attack": 0,
+      "damage": [],
+      "armor": [
+        {"type": "melee", "min": 2, "block": 0.4},
+        {"type": "ranged", "min": 0, "block": 0.9},
+        {"type": "heavy_ranged", "min": 0, "block": 0.5}
+      ],
+      "horse_armor": [],
+      "range": 0,
+      "upkeep": 0,
+      "food": 0,
+      "can_ride": false,
+      "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
+      "attack_seconds": 1,
+      "heal": 0,
+      "heal_range": 0,
+      "siege": {
+        "size": 2,
+        "crew": 2,
+        "min_range": 0,
+        "auto_units": false,
+        "splash": 0,
+        "hits_buildings": false,
+        "hits_units": false,
+        "on_towers": false,
+        "shot_speed": 15,
+        "shots": 0,
+        "ammo": null,
+        "docks": true
       }
     }
   ],

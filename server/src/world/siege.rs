@@ -95,6 +95,18 @@ impl World {
         })
     }
 
+    /// Passt eine Baustelle für dieses Gerät (nicht auf Türmen) hierher? Für die Computergegner.
+    pub fn siege_site_free(&self, player: u32, kind: UnitKind, (x, y): (u32, u32)) -> bool {
+        let Some(sd) = self.economy.unit(kind).and_then(|d| d.siege.as_ref()) else { return false };
+        let Some(sdef) = self.economy.building(BuildingKind::SiegeSite) else { return false };
+        let s = sd.size.max(1);
+        if sd.on_towers || x + s > self.map.width || y + s > self.map.height || self.check_site(sdef, (x, y), (s, s), 0, &[]).is_err() {
+            return false;
+        }
+        let covers = |p: (f32, f32)| p.0 >= x as f32 - 0.5 && p.1 >= y as f32 - 0.5 && p.0 < (x + s) as f32 + 0.5 && p.1 < (y + s) as f32 + 0.5;
+        !self.units.iter().any(|u| !u.is_civilian() && !(u.kind == UnitKind::Builder && u.owner == player) && covers(u.pos))
+    }
+
     /// Baumeister setzen eine Baustelle für ein Belagerungsgerät (siehe Modul-Text).
     pub fn build_siege(&mut self, player: u32, unit_ids: &[u32], kind: UnitKind, (x, y): (u32, u32), backpack: bool) -> Result<BuildingState, Refusal> {
         let def = self.economy.unit(kind).filter(|d| d.siege.is_some()).ok_or_else(|| Text::new("error.not_siege"))?.clone();
@@ -246,6 +258,10 @@ impl World {
     pub(super) fn step_siege(&mut self, dt: f32) {
         let has_siege = self.units.iter().any(|u| u.kind.is_siege() || u.kind == UnitKind::Builder) || self.buildings.iter().any(|b| b.site.is_some());
         if !has_siege {
+            if !self.storms.is_empty() {
+                self.storms.clear();
+                self.drop_from_walls();
+            }
             return;
         }
         let index: HashMap<u32, usize> = self.units.iter().enumerate().map(|(k, u)| (u.id, k)).collect();
@@ -281,6 +297,7 @@ impl World {
         }
         self.step_sites(dt);
         self.assign_crew();
+        self.step_towers(dt);
         self.crew_follow(dt);
     }
 
@@ -419,6 +436,118 @@ impl World {
             u.ammo_part = 0;
         }
         used
+    }
+
+    /// Fährt ein Belagerungsturm an diese Mauer heran, oder liegt er schon an?
+    pub fn order_dock(&mut self, player: u32, unit_ids: &[u32], building: u32) -> bool {
+        let Some(b) = self.buildings.iter().find(|b| b.id == building && b.hp > 0) else { return false };
+        if !self.dockable(b, player) {
+            return false;
+        }
+        let mut any = false;
+        for u in self.units.iter_mut().filter(|u| u.owner == player && unit_ids.contains(&u.id)) {
+            if !self.economy.unit(u.kind).and_then(|d| d.siege.as_ref()).is_some_and(|s| s.docks) {
+                continue;
+            }
+            u.dock_target = Some(building);
+            u.dock = None;
+            u.path.clear();
+            u.layers.clear();
+            u.chase_timer = 0.0;
+            u.attack_order = None;
+            any = true;
+        }
+        any
+    }
+
+    /// Fremde Mauer (Gegner) mit Wehrgang: dort kann ein Turm andocken.
+    fn dockable(&self, b: &BuildingState, player: u32) -> bool {
+        b.hp > 0 && self.can_attack(player, b.owner) && self.economy.building(b.kind).is_some_and(|d| d.at(b.level).walkway)
+    }
+
+    /// Feld des Wehrgangs von `b` direkt neben diesem Bodenfeld (Höhe passt), falls es eins gibt.
+    fn dock_tile(&self, b: &BuildingState, (x, y): (i64, i64)) -> Option<usize> {
+        let w = self.map.width as i64;
+        let here = self.tile_of((x as f32 + 0.5, y as f32 + 0.5))?;
+        let step = self.economy.def.movement.walkway_step_levels;
+        [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().find_map(|(dx, dy)| {
+            let (nx, ny) = (x + dx, y + dy);
+            if nx < b.x as i64 || ny < b.y as i64 || nx >= (b.x + b.w) as i64 || ny >= (b.y + b.h) as i64 {
+                return None;
+            }
+            let n = (ny * w + nx) as usize;
+            (self.map.levels[n].abs_diff(self.map.levels[here]) <= step).then_some(n)
+        })
+    }
+
+    /// Belagerungstürme an ihre Mauer fahren und andocken lassen; merkt sich, welche Wehrgänge offen sind.
+    fn step_towers(&mut self, dt: f32) {
+        let mut storms = Vec::new();
+        for k in 0..self.units.len() {
+            let u = &self.units[k];
+            if !u.kind.is_siege() || (u.dock_target.is_none() && u.dock.is_none()) {
+                continue;
+            }
+            let target = u.dock.map(|d| d.0).or(u.dock_target);
+            let b = target.and_then(|id| self.buildings.iter().find(|b| b.id == id)).filter(|b| self.dockable(b, u.owner)).cloned();
+            let Some(b) = b else {
+                let u = &mut self.units[k];
+                u.dock = None;
+                u.dock_target = None;
+                continue;
+            };
+            let tile = (u.pos.0.floor() as i64, u.pos.1.floor() as i64);
+            if let Some((_, top)) = u.dock {
+                storms.push((b.owner, u.owner, top, tile));
+                continue;
+            }
+            // Angekommen: an der Mauer andocken.
+            if u.path.is_empty() {
+                if let Some(top) = self.dock_tile(&b, tile) {
+                    let (owner, wall) = (u.owner, b.owner);
+                    let u = &mut self.units[k];
+                    u.dock = Some((b.id, top));
+                    u.dock_target = None;
+                    u.target = None;
+                    storms.push((wall, owner, top, tile));
+                    continue;
+                }
+            }
+            let u = &mut self.units[k];
+            u.chase_timer = (u.chase_timer - dt).max(0.0);
+            if !u.path.is_empty() || u.chase_timer > 0.0 {
+                continue;
+            }
+            u.chase_timer = 2.0;
+            // Freie Felder direkt vor der Mauer, das nächste, das man erreicht.
+            let (from, owner) = (u.pos, u.owner);
+            let (x0, y0, x1, y1) = (b.x as i64, b.y as i64, (b.x + b.w) as i64, (b.y + b.h) as i64);
+            let mut spots: Vec<(i64, i64)> = (x0..x1)
+                .flat_map(|x| [(x, y0 - 1), (x, y1)])
+                .chain((y0..y1).flat_map(|y| [(x0 - 1, y), (x1, y)]))
+                .filter(|&(x, y)| self.map.nav.is_open(x as i32, y as i32) && self.dock_tile(&b, (x, y)).is_some())
+                .collect();
+            let d2 = |p: &(i64, i64)| (p.0 as f32 + 0.5 - from.0).powi(2) + (p.1 as f32 + 0.5 - from.1).powi(2);
+            spots.sort_by(|a, b| d2(a).total_cmp(&d2(b)));
+            for spot in spots.into_iter().take(6) {
+                let goal = (spot.0 as f32 + 0.5, spot.1 as f32 + 0.5);
+                let (pts, layers) = self.plan(owner, from, false, goal, false);
+                let end = pts.last().copied().unwrap_or(from);
+                if (end.0.floor() as i64, end.1.floor() as i64) == spot {
+                    let u = &mut self.units[k];
+                    u.path = pts;
+                    u.layers = layers;
+                    u.target = Some(goal);
+                    break;
+                }
+            }
+        }
+        // Ein Turm ist weg oder abgefahren: wer oben auf den fremden Mauern steht, muss herunter.
+        let lost = self.storms.iter().any(|s| !storms.contains(s));
+        self.storms = storms;
+        if lost {
+            self.drop_from_walls();
+        }
     }
 
     /// Die Bedienung steht fest am Gerät und fährt mit (sie läuft nicht selbst).
@@ -1046,5 +1175,41 @@ mod tests {
         }
         assert!(again, "nach dem Nachschub schießt es wieder");
         assert!(w.stocks[&1].amount(Good::Stone) < stone, "Steine kamen aus dem Vorrat");
+    }
+
+    #[test]
+    fn belagerungsturm_dockt_an_und_truppen_steigen_auf_die_mauer() {
+        let mut w = world();
+        for x in 0..120 {
+            w.place_building_rotated(2, BuildingKind::Wall, x, 45, 0, 2).unwrap();
+        }
+        let wall = w.buildings.iter().find(|b| b.kind == BuildingKind::Wall && b.x == 62).unwrap().id;
+        w.units.push(Unit::new(9100, 1, UnitKind::SiegeTower, (60.5, 35.5)));
+        builder(&mut w, 9001, 1, (59.5, 35.5));
+        builder(&mut w, 9002, 1, (59.5, 36.5));
+        w.units.push(Unit::new(9200, 1, UnitKind::Spearman, (55.5, 33.5)));
+        run(&mut w, 0.5);
+        assert!(!w.order_move(1, &[9200], (70.5, 45.5)) || !w.units.iter().find(|u| u.id == 9200).unwrap().layers.iter().any(|&l| l), "ohne Turm nicht hinauf");
+        assert!(w.order_dock(1, &[9100], wall));
+        assert!(!w.order_dock(2, &[9100], wall), "nur eigene Türme");
+        let mut docked = false;
+        for _ in 0..60 {
+            run(&mut w, 1.0);
+            if w.units.iter().find(|u| u.id == 9100).unwrap().dock.is_some() {
+                docked = true;
+                break;
+            }
+        }
+        assert!(docked, "Turm liegt an: {:?}", w.units.iter().find(|u| u.id == 9100).unwrap().pos);
+        assert!(w.order_move(1, &[9200], (70.5, 45.5)));
+        run(&mut w, 40.0);
+        let sp = w.units.iter().find(|u| u.id == 9200).unwrap();
+        assert!(sp.on_wall, "oben auf der feindlichen Mauer: {:?}", sp.pos);
+        assert!((sp.pos.0 - 70.5).abs() < 1.0 && (sp.pos.1 - 45.5).abs() < 1.0, "{:?}", sp.pos);
+        // Turm fährt weg: Wer oben steht, muss herunter.
+        w.order_move(1, &[9100], (40.5, 30.5));
+        run(&mut w, 1.0);
+        assert!(w.units.iter().find(|u| u.id == 9100).unwrap().dock.is_none());
+        assert!(!w.units.iter().find(|u| u.id == 9200).unwrap().on_wall, "ohne Turm nicht mehr oben");
     }
 }

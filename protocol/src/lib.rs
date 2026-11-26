@@ -101,6 +101,8 @@ pub enum ClientMsg {
         #[serde(default)]
         backpack: bool,
     },
+    /// Diese eigenen Belagerungstürme fahren an das Gebäude (feindliche Mauer mit Wehrgang) und docken an.
+    Dock { unit_ids: Vec<u32>, building_id: u32 },
     /// Die Bedienung dieser eigenen Belagerungsgeräte steigt ab und steht wieder frei.
     ReleaseCrew { unit_ids: Vec<u32> },
     /// In einer eigenen Kaserne `count` Soldaten dieser Art in Auftrag geben.
@@ -871,6 +873,8 @@ pub enum UnitKind {
     Trebuchet,
     /// Balliste: steht auf einem eigenen Turm und schießt schwere Bolzen auf Einheiten.
     Ballista,
+    /// Belagerungsturm: rollt an eine feindliche Mauer, dockt an, Truppen steigen über ihn hinauf.
+    SiegeTower,
 }
 
 impl UnitKind {
@@ -881,7 +885,7 @@ impl UnitKind {
 
     /// Belagerungsgeräte: entstehen auf einer Baustelle und brauchen Baumeister als Bedienung.
     pub fn is_siege(self) -> bool {
-        matches!(self, UnitKind::Catapult | UnitKind::Trebuchet | UnitKind::Ballista)
+        matches!(self, UnitKind::Catapult | UnitKind::Trebuchet | UnitKind::Ballista | UnitKind::SiegeTower)
     }
 
     /// Zivilisten: Arbeiter, Träger und Karren. Sie kämpfen nicht, können aber angegriffen werden.
@@ -989,6 +993,9 @@ pub struct UnitState {
     /// Belagerungsgerät mit begrenztem Vorrat: so viele Schüsse sind noch da (sonst None).
     #[serde(default)]
     pub shots_left: Option<u32>,
+    /// Belagerungsturm: liegt an diesem Gebäude (Mauer) an.
+    #[serde(default)]
+    pub docked_at: Option<u32>,
 }
 
 /// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.
@@ -1640,6 +1647,8 @@ pub struct SiegeDef {
     pub shots: u32,
     /// Nachschub je Schuss (Karren bringen ihn aus dem Lager). Ohne: füllt sich nicht auf.
     pub ammo: Option<GoodAmount>,
+    /// Belagerungsturm: dockt an Mauern mit Wehrgang an und wird zur Treppe hinauf.
+    pub docks: bool,
 }
 
 impl Default for SiegeDef {
@@ -1656,6 +1665,7 @@ impl Default for SiegeDef {
             shot_speed: 15.0,
             shots: 0,
             ammo: None,
+            docks: false,
         }
     }
 }
