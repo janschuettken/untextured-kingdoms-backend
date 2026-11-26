@@ -138,6 +138,18 @@ pub struct Unit {
     /// Balliste: steht auf diesem Turm (Gebäude-Id).
     #[serde(default)]
     perch: Option<u32>,
+    /// Belagerungsgerät: seit dem letzten vollen Vorrat abgegebene Schüsse.
+    #[serde(default)]
+    shots_fired: u32,
+    /// Belagerungsgerät: angelieferter Nachschub, der noch keinen ganzen Schuss ergibt.
+    #[serde(default)]
+    ammo_part: u32,
+    /// Belagerungsturm: soll an dieses Gebäude andocken.
+    #[serde(default)]
+    dock_target: Option<u32>,
+    /// Belagerungsturm: liegt an (Gebäude, Feld oben auf dem Wehrgang).
+    #[serde(default)]
+    dock: Option<(u32, usize)>,
 }
 
 /// Ein späteres Ziel eines Laufbefehls (siehe `Unit::waypoints`).
@@ -194,6 +206,10 @@ impl Unit {
             vel: (0.0, 0.0),
             crew_of: None,
             perch: None,
+            shots_fired: 0,
+            ammo_part: 0,
+            dock_target: None,
+            dock: None,
         }
     }
 
@@ -210,6 +226,11 @@ impl Unit {
     /// Laufender Angriffsbefehl (für die Computergegner).
     pub fn attack_order(&self) -> Option<protocol::AttackTarget> {
         self.attack_order
+    }
+
+    /// Baumeister: bedient dieses Belagerungsgerät (für die Computergegner).
+    pub fn crew_of(&self) -> Option<u32> {
+        self.crew_of
     }
 
     /// Wohin sie zuletzt geschickt wurde und ob das oben auf dem Wehrgang liegt.
@@ -296,6 +317,8 @@ pub struct World {
     pub phase_us: crate::profile::PhaseTimes,
     /// Zufall für Treffer im Fernkampf (Deckung), siehe `combat.rs`.
     combat_rng: u64,
+    /// Angedockte Belagerungstürme: (Besitzer der Mauer, Besitzer des Turms, Feld oben, Feld des Turms).
+    storms: Vec<(u32, u32, usize, (i64, i64))>,
     /// Pfeile und Bolzen in der Luft: Schaden erst beim Aufschlag (siehe `combat.rs`).
     projectiles: Vec<combat::Projectile>,
     /// Steine und Bolzen der Belagerungsgeräte in der Luft (siehe `siege.rs`).
@@ -370,6 +393,11 @@ fn resource_key(r: ResourceKind) -> String {
 }
 
 impl World {
+    #[cfg(test)]
+    pub(crate) fn snapshot_unit_shots(&self, u: &Unit) -> Option<u32> {
+        self.economy.unit(u.kind).and_then(|d| d.siege.as_ref()).filter(|s| s.shots > 0).map(|s| s.shots.saturating_sub(u.shots_fired))
+    }
+
     pub fn new(mut map: GameMap, economy: Economy) -> World {
         map.nav.set_slope_percent(economy.def.movement.slope_speed_percent);
         let n = (map.width * map.height) as usize;
@@ -421,6 +449,7 @@ impl World {
             self_carry: HashSet::new(),
             phase_us: Default::default(),
             combat_rng: 0x9E37_79B9_7F4A_7C15,
+            storms: Vec::new(),
             projectiles: Vec::new(),
             siege_shots: Vec::new(),
             site_clock: 0.0,
@@ -1429,6 +1458,8 @@ impl World {
         // Ein Laufbefehl holt Baumeister von ihrem Gerät weg.
         for &k in &chosen {
             self.units[k].crew_of = None;
+            self.units[k].dock_target = None;
+            self.units[k].dock = None;
         }
         // Reiter kommen nicht auf Wehrgänge: sie stellen sich unten an den Fuß des Bauwerks.
         if target_wall && chosen.iter().any(|&k| self.units[k].mounted) {
@@ -1759,7 +1790,7 @@ impl World {
                 UnitKind::Cart | UnitKind::TradeCart => cart * civil[k],
                 UnitKind::Worker => worker * civil[k],
                 UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer | UnitKind::Builder => soldier[k],
-                UnitKind::Catapult | UnitKind::Trebuchet | UnitKind::Ballista => siege[k],
+                UnitKind::Catapult | UnitKind::Trebuchet | UnitKind::Ballista | UnitKind::SiegeTower => siege[k],
             };
             // Zu Pferd mindestens so schnell wie das Pferd; nach einem Sturz liegt man still.
             let full = if unit.down > 0.0 { 0.0 } else if unit.mounted { full.max(horse) } else { full };
@@ -1844,6 +1875,9 @@ impl World {
                 attack_target: u.attack_order.or(u.last_foe.map(|(id, _)| protocol::AttackTarget::Unit { id })),
                 strikes: u.strikes,
                 crew: if u.kind.is_siege() { crews.get(&u.id).copied().unwrap_or(0) } else { 0 },
+                crew_of: u.crew_of,
+                docked_at: u.dock.map(|d| d.0),
+                shots_left: self.economy.unit(u.kind).and_then(|d| d.siege.as_ref()).filter(|s| s.shots > 0).map(|s| s.shots.saturating_sub(u.shots_fired)),
             })
             .collect()
     }

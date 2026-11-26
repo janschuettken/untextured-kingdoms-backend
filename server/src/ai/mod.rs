@@ -19,6 +19,7 @@ mod attack;
 mod layout;
 pub mod personality;
 mod profile;
+mod siege;
 
 use std::collections::HashMap;
 
@@ -130,6 +131,11 @@ pub struct Computer {
     /// Posten, zu denen kein Weg führte, bis zu dieser Zeit (sonst jede Überlegung eine
     /// teure, vergebliche Wegsuche je Schütze).
     post_skip: HashMap<(i64, i64), f32>,
+    /// Belagerung: ist ein Gegner zu (dann Werkstatt, Baumeister, Geräte)?
+    siege_wanted: bool,
+    next_siege_check: f32,
+    /// Zähler für die Stelle der nächsten Baustelle.
+    siege_try: u32,
 }
 
 impl Computer {
@@ -165,6 +171,9 @@ impl Computer {
             next_closed_check: 0.0,
             post_sent: HashMap::new(),
             post_skip: HashMap::new(),
+            siege_wanted: false,
+            next_siege_check: 0.0,
+            siege_try: 0,
         }
     }
 
@@ -281,6 +290,7 @@ impl Computer {
         self.repair(world, &stock, &mut cmds);
         self.trade(world, &stock, &missing, &mut cmds);
         self.train(world, &stock, &mut cmds);
+        self.siege_works(world, &stock, layout, &mut cmds);
         self.guard_king(world, &mut cmds);
         let defending = self.defend(world, layout, &mut cmds);
         if defending {
@@ -1094,7 +1104,9 @@ impl Computer {
                 .copied()
                 .filter(|u| c.arrived.is_some() || (u.pos.0 - c.goal.0).hypot(u.pos.1 - c.goal.1) < 12.0 || !u.is_moving())
                 .collect();
-            cmds.extend(attack::siege(world, p, c.target, &busy));
+            let (engines, troops): (Vec<&crate::world::Unit>, Vec<&crate::world::Unit>) = busy.iter().copied().partition(|u| u.kind.is_siege());
+            cmds.extend(attack::siege(world, p, c.target, &troops));
+            cmds.extend(attack::bombard(world, p, c.target, &engines));
             // Wer unterwegs hängen geblieben ist (weit vom Ziel, steht, ohne Angriff), läuft weiter.
             if c.arrived.is_none() {
                 let ordered: std::collections::HashSet<u32> = cmds
@@ -1125,13 +1137,13 @@ impl Computer {
         let mut ready: Vec<&crate::world::Unit> = world
             .units
             .iter()
-            .filter(|u| u.owner == p && u.kind.is_soldier() && !u.is_moving() && !u.is_on_wall() && !self.on_relief(u.id))
+            .filter(|u| u.owner == p && fighter(u.kind) && !u.is_moving() && !u.is_on_wall() && !self.on_relief(u.id))
             .collect();
         ready.sort_by(|x, y| {
             let d = |u: &crate::world::Unit| (u.pos.0 - home.0).hypot(u.pos.1 - home.1);
             d(x).total_cmp(&d(y))
         });
-        let wave: Vec<&crate::world::Unit> = ready.into_iter().skip(a.home_guard as usize).collect();
+        let mut wave: Vec<&crate::world::Unit> = ready.into_iter().skip(a.home_guard as usize).collect();
         // Später wieder nachsehen (nicht jede Überlegung die ganze Karte absuchen).
         self.next_attack = self.clock + 30.0;
         if (wave.len() as u32) < a.wave_min {
@@ -1151,6 +1163,16 @@ impl Computer {
         }
         self.weak_since = None;
         debug!("Computer {p}: greift Spieler {target} an ({} Soldaten, {power:.0} gegen {enemy:.0})", wave.len());
+        // Bediente, fahrbare Belagerungsgeräte ziehen mit (ihre Bedienung fährt mit).
+        let crews = world.units.iter().filter_map(|u| u.crew_of()).fold(HashMap::<u32, u32>::new(), |mut m, d| {
+            *m.entry(d).or_default() += 1;
+            m
+        });
+        wave.extend(world.units.iter().filter(|u| {
+            u.owner == p
+                && u.kind == UnitKind::Catapult
+                && world.economy.unit(u.kind).and_then(|d| d.siege.as_ref()).is_some_and(|s| crews.get(&u.id).copied().unwrap_or(0) >= s.crew)
+        }));
         let units: Vec<u32> = wave.iter().map(|u| u.id).collect();
         cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: goal.0, y: goal.1, fast: None, append: None });
         self.campaign = Some(Campaign { target, units, start_power: power, goal, arrived: None, last_progress: self.clock });
@@ -1193,7 +1215,7 @@ impl Computer {
         let defenders: Vec<u32> = world
             .units
             .iter()
-            .filter(|u| u.owner == p && u.kind.is_soldier() && !u.is_on_wall() && !self.on_campaign(u.id))
+            .filter(|u| u.owner == p && fighter(u.kind) && !u.is_on_wall() && !self.on_campaign(u.id))
             .filter(|u| !outside || ranged(u.kind))
             // Wer schon ein Ziel hat, bleibt dabei.
             .filter(|u| u.attack_order().is_none())
@@ -1268,7 +1290,7 @@ impl Computer {
         let mut free: Vec<&crate::world::Unit> = world
             .units
             .iter()
-            .filter(|u| u.owner == p && u.kind.is_soldier() && !u.is_on_wall() && !self.on_campaign(u.id))
+            .filter(|u| u.owner == p && fighter(u.kind) && !u.is_on_wall() && !self.on_campaign(u.id))
             .collect();
         // Die nächsten am Sammelpunkt bleiben als Wache, geschickt werden die dem Verbündeten nächsten.
         free.sort_by(|x, y| {
@@ -1363,7 +1385,7 @@ impl Computer {
             let up: Vec<(f32, f32)> = world
                 .units
                 .iter()
-                .filter(|u| u.owner == p && u.kind.is_soldier())
+                .filter(|u| u.owner == p && fighter(u.kind))
                 .filter_map(|u| match u.destination() {
                     Some((t, true)) => Some(t),
                     _ if u.is_on_wall() => Some(u.pos),
@@ -1398,7 +1420,7 @@ impl Computer {
         let idle: Vec<&crate::world::Unit> = world
             .units
             .iter()
-            .filter(|u| u.owner == p && u.kind.is_soldier() && !u.is_moving() && !u.is_on_wall() && !self.on_campaign(u.id) && !self.on_relief(u.id))
+            .filter(|u| u.owner == p && fighter(u.kind) && !u.is_moving() && !u.is_on_wall() && !self.on_campaign(u.id) && !self.on_relief(u.id))
             .collect();
         let mut to_rally = Vec::new();
         for u in idle {
@@ -1528,6 +1550,11 @@ impl Budget {
             *left = left.saturating_sub(c.amount);
         }
     }
+}
+
+/// Eigene Kämpfer für Wellen, Wache und Posten: Soldaten ohne die Baumeister (die bauen und bedienen Geräte).
+fn fighter(kind: UnitKind) -> bool {
+    kind.is_soldier() && kind != UnitKind::Builder
 }
 
 fn is_gate(kind: BuildingKind) -> bool {

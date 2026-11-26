@@ -48,6 +48,11 @@ horse_armor: Array<Armor>,
  */
 range: number, 
 /**
+ * Streuradius am Einschlag (Felder) auf volle Reichweite, näher entsprechend weniger.
+ * 0 = trifft genau den Zielpunkt (die Schützen halten trotzdem vor).
+ */
+scatter: number, 
+/**
  * Sold in Talern je Zahltag (siehe `army.upkeep_seconds`).
  */
 upkeep: number, 

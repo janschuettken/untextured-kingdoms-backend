@@ -122,6 +122,19 @@ pub fn siege(world: &World, me: u32, target: u32, wave: &[&Unit]) -> Vec<ClientM
     orders.into_iter().map(|(target, unit_ids)| ClientMsg::Attack { unit_ids, target, force: None }).collect()
 }
 
+/// Belagerungsgeräte der Welle: wer gerade nichts beschießt, wirft auf die Bresche
+/// (dasselbe Mauerstück, das die Nahkämpfer einreißen würden).
+pub fn bombard(world: &World, me: u32, target: u32, engines: &[&Unit]) -> Vec<ClientMsg> {
+    let free: Vec<&Unit> = engines.iter().copied().filter(|u| u.attack_order().is_none()).collect();
+    if free.is_empty() {
+        return Vec::new();
+    }
+    match breach_target(world, me, target, &free) {
+        Some(t @ AttackTarget::Building { .. }) => vec![ClientMsg::Attack { unit_ids: free.iter().map(|u| u.id).collect(), target: t, force: None }],
+        _ => Vec::new(),
+    }
+}
+
 /// Was die Nahkämpfer als Nächstes einreißen: steht der König unten und ist erreichbar, ihn;
 /// sonst den Bergfried, wenn man hinkommt; sonst das schwächste Tor- oder Mauerstück nahe
 /// der Stelle, an der der Weg zum Bergfried endet (die Bresche).

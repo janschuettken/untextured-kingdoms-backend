@@ -931,6 +931,8 @@ async fn handle_msg(
         | ClientMsg::Mount { .. }
         | ClientMsg::Dismount { .. }
         | ClientMsg::Stop { .. }
+        | ClientMsg::ReleaseCrew { .. }
+        | ClientMsg::Dock { .. }
         | ClientMsg::RepairBuilding { .. }
         | ClientMsg::Trade { .. }
         | ClientMsg::SetAutoTrade { .. }
@@ -1011,6 +1013,12 @@ pub fn apply_command(
             world.order_dismount(player_id, &unit_ids)?;
         }
         ClientMsg::Stop { unit_ids } => world.order_stop(player_id, &unit_ids),
+        ClientMsg::Dock { unit_ids, building_id } => {
+            world.order_dock(player_id, &unit_ids, building_id);
+        }
+        ClientMsg::ReleaseCrew { unit_ids } => {
+            world.release_crew(player_id, &unit_ids);
+        }
         ClientMsg::PlaceBuilding {
             kind,
             x,

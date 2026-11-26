@@ -2237,7 +2237,7 @@
           "hub_capacity": 0,
           "storage_inputs": 0,
           "storage_outputs": 0,
-          "siege": ["trebuchet"]
+          "siege": ["trebuchet", "siege_tower"]
         }
       ]
     },
@@ -2716,6 +2716,7 @@
         {"type": "ranged", "min": 0, "block": 0.15}
       ],
       "range": 22,
+      "scatter": 0.3,
       "upkeep": 0,
       "food": 0,
       "can_ride": true,
@@ -2742,6 +2743,7 @@
       ],
       "horse_armor": [],
       "range": 22,
+      "scatter": 0.2,
       "upkeep": 0,
       "food": 1,
       "can_ride": false,
@@ -2916,6 +2918,7 @@
       ],
       "horse_armor": [],
       "range": 30,
+      "scatter": 2.0,
       "upkeep": 0,
       "food": 0,
       "can_ride": false,
@@ -2930,12 +2933,14 @@
         "size": 2,
         "crew": 2,
         "min_range": 6,
-        "scatter": 1.5,
+        "auto_units": false,
         "splash": 1.5,
         "hits_buildings": true,
         "hits_units": true,
         "on_towers": false,
-        "shot_speed": 14
+        "shot_speed": 14,
+        "shots": 10,
+        "ammo": {"good": "stone", "amount": 1}
       }
     },
     {
@@ -2959,6 +2964,7 @@
       ],
       "horse_armor": [],
       "range": 45,
+      "scatter": 2.5,
       "upkeep": 0,
       "food": 0,
       "can_ride": false,
@@ -2973,12 +2979,14 @@
         "size": 3,
         "crew": 3,
         "min_range": 12,
-        "scatter": 1.0,
+        "auto_units": false,
         "splash": 0,
         "hits_buildings": true,
         "hits_units": false,
         "on_towers": false,
-        "shot_speed": 12
+        "shot_speed": 12,
+        "shots": 6,
+        "ammo": {"good": "stone", "amount": 2}
       }
     },
     {
@@ -2993,6 +3001,7 @@
       "armor": [{"type": "ranged", "min": 0, "block": 0.5}],
       "horse_armor": [],
       "range": 32,
+      "scatter": 0.5,
       "upkeep": 0,
       "food": 0,
       "can_ride": false,
@@ -3007,12 +3016,55 @@
         "size": 1,
         "crew": 1,
         "min_range": 3,
-        "scatter": 0.5,
+        "auto_units": true,
         "splash": 0,
         "hits_buildings": false,
         "hits_units": true,
         "on_towers": true,
-        "shot_speed": 30
+        "shot_speed": 30,
+        "shots": 20,
+        "ammo": {"good": "boards", "amount": 1}
+      }
+    },
+    {
+      "kind": "siege_tower",
+      "cost": [{"good": "boards", "amount": 60}, {"good": "wood", "amount": 40}, {"good": "iron", "amount": 10}],
+      "taler": 0,
+      "seconds": 90,
+      "speed": 0.5,
+      "hp": 600,
+      "attack": 0,
+      "damage": [],
+      "armor": [
+        {"type": "melee", "min": 2, "block": 0.4},
+        {"type": "ranged", "min": 0, "block": 0.9},
+        {"type": "heavy_ranged", "min": 0, "block": 0.5}
+      ],
+      "horse_armor": [],
+      "range": 0,
+      "upkeep": 0,
+      "food": 0,
+      "can_ride": false,
+      "mounted": false,
+      "attack_standing": true,
+      "attack_moving": false,
+      "attack_mounted": true,
+      "attack_seconds": 1,
+      "heal": 0,
+      "heal_range": 0,
+      "siege": {
+        "size": 2,
+        "crew": 2,
+        "min_range": 0,
+        "auto_units": false,
+        "splash": 0,
+        "hits_buildings": false,
+        "hits_units": false,
+        "on_towers": false,
+        "shot_speed": 15,
+        "shots": 0,
+        "ammo": null,
+        "docks": true
       }
     }
   ],

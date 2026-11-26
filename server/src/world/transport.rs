@@ -65,6 +65,8 @@ impl Job {
     pub(super) fn describe(&self) -> (bool, u32, Good) {
         match self.stage {
             Stage::Load(b) => (true, b, self.good),
+            // Nachschub fährt zu einer Einheit, nicht zu einem Gebäude.
+            Stage::Unload(_) if matches!(self.kind, JobKind::Ammo { .. }) => (false, 0, self.good),
             Stage::Unload(b) => (false, b, self.good),
         }
     }
@@ -83,7 +85,15 @@ enum JobKind {
     Supply { to: u32 },
     /// Ware vom Betrieb `from` direkt zum Betrieb `to` bringen, der sie gerade braucht.
     Direct { from: u32, to: u32 },
+    /// Nachschub aus dem Vorrat zum Belagerungsgerät `to` (Einheit) bringen.
+    /// Abladen: `Stage::Unload(to)` mit der Einheiten-Id.
+    Ammo { to: u32 },
 }
+
+/// Schlüssel für Nachschub in `Reserved::incoming` (Einheiten-Ids neben Gebäude-Ids).
+const AMMO_KEY: u32 = 1 << 31;
+/// So nah muss der Karren am Gerät sein, um abzuladen.
+const AMMO_REACH: f32 = 3.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum Stage {
@@ -115,6 +125,12 @@ impl Reserved {
             }
             (JobKind::Supply { to }, stage) => {
                 *self.incoming.entry((to, job.good)).or_default() += job.amount;
+                if matches!(stage, Stage::Load(_)) {
+                    *self.central.entry((owner, job.good)).or_default() += job.amount;
+                }
+            }
+            (JobKind::Ammo { to }, stage) => {
+                *self.incoming.entry((to | AMMO_KEY, job.good)).or_default() += job.amount;
                 if matches!(stage, Stage::Load(_)) {
                     *self.central.entry((owner, job.good)).or_default() += job.amount;
                 }
@@ -590,6 +606,39 @@ impl World {
                 }
             }
         }
+        // Nachschub für Belagerungsgeräte: sobald ein Drittel des Vorrats verschossen ist
+        // (oder alles), mit Vorrang wie die Baustellen.
+        if cart {
+            for dev in self.units.iter().filter(|d| d.owner == owner && d.kind.is_siege()) {
+                let Some((good, need)) = self.ammo_need(dev) else { continue };
+                let need = need.saturating_sub(Reserved::get(&reserved.incoming, (dev.id | AMMO_KEY, good))).min(cap);
+                let sd = self.economy.unit(dev.kind).and_then(|d| d.siege.as_ref());
+                let full = sd.map_or(0, |s| s.shots * s.ammo.map_or(0, |a| a.amount));
+                let empty = sd.is_some_and(|s| dev.shots_fired >= s.shots);
+                if need == 0 || (need * 3 < full && !empty) {
+                    continue;
+                }
+                let there = stock.amount(good).saturating_sub(Reserved::get(&reserved.central, (owner, good)));
+                let amount = need.min(there);
+                if amount == 0 {
+                    continue;
+                }
+                let hub = self
+                    .buildings
+                    .iter()
+                    .filter(|h| h.owner == owner && self.is_hub(h) && self.hub_amount(h.id, good) > 0)
+                    .map(|h| (h.id, dist_to(h, u.pos) + dist_to(h, dev.pos)))
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .or_else(|| {
+                        let id = self.nearest_hub_having(owner, u.pos, good)?;
+                        let h = self.buildings.iter().find(|h| h.id == id)?;
+                        Some((id, dist_to(h, u.pos) + dist_to(h, dev.pos)))
+                    });
+                let Some((hub, via)) = hub else { continue };
+                let job = Job { kind: JobKind::Ammo { to: dev.id }, good, amount, stage: Stage::Load(hub), rest: NO_REST };
+                offer(&mut best, via - 2.0 * STALL_BONUS, job);
+            }
+        }
         // Karren: reicht ein Betrieb allein nicht, mehrere gleiche nacheinander anfahren.
         if cart && best.is_none() {
             for ((_, good), mut list) in groups {
@@ -630,6 +679,7 @@ impl World {
                 self.transport_wait.remove(&from);
                 self.transport_wait.remove(&to);
             }
+            JobKind::Ammo { .. } => {}
         }
         self.units[k].job = Some(job);
         if !self.route(k, at, index) {
@@ -639,6 +689,9 @@ impl World {
 
     /// Weg ist zu Ende: aufladen, abladen oder aufgeben.
     fn arrive(&mut self, k: usize, job: Job, index: &HashMap<u32, usize>) {
+        if let (JobKind::Ammo { to }, Stage::Unload(_)) = (job.kind, job.stage) {
+            return self.arrive_ammo(k, to, index);
+        }
         let (Stage::Load(at) | Stage::Unload(at)) = job.stage;
         let Some(&bi) = index.get(&at) else {
             return self.fail(k, index);
@@ -662,7 +715,7 @@ impl World {
                         self.dirty_buildings.insert(from);
                         n
                     }
-                    JobKind::Supply { .. } => {
+                    JobKind::Supply { .. } | JobKind::Ammo { .. } => {
                         let Some(stock) = self.stocks.get_mut(&owner) else {
                             return self.fail(k, index);
                         };
@@ -706,9 +759,17 @@ impl World {
                         }
                     }
                 }
+                if let JobKind::Ammo { to } = kind {
+                    self.units[k].job = Some(Job { kind, amount: carried, stage: Stage::Unload(to), rest: NO_REST, ..job });
+                    if !self.route_to_unit(k, to) {
+                        self.fail(k, index);
+                    }
+                    return;
+                }
                 let dest = match kind {
                     JobKind::Pickup { .. } => self.nearest_hub(owner, self.units[k].pos, job.good),
                     JobKind::Supply { to } | JobKind::Direct { to, .. } => Some(to),
+                    JobKind::Ammo { .. } => None,
                 };
                 let Some(dest) = dest else {
                     return self.fail(k, index);
@@ -739,6 +800,7 @@ impl World {
                         self.dirty_buildings.insert(to);
                         load.amount - used
                     }
+                    JobKind::Ammo { .. } => load.amount,
                     JobKind::Supply { to } | JobKind::Direct { to, .. } => {
                         let Some(inv) = self.inventories.get_mut(&to) else {
                             return self.fail(k, index);
@@ -806,7 +868,7 @@ impl World {
         ) || matches!(
             self.units[k].job,
             Some(Job {
-                kind: JobKind::Supply { .. } | JobKind::Direct { .. },
+                kind: JobKind::Supply { .. } | JobKind::Direct { .. } | JobKind::Ammo { .. },
                 ..
             })
         );
@@ -835,6 +897,48 @@ impl World {
         let Some(&bi) = index.get(&home) else { return };
         if !self.at_door(&self.buildings[bi], self.units[k].pos) {
             self.route(k, home, index);
+        }
+    }
+
+    /// Weg zum Belagerungsgerät `unit` planen (bis an ein freies Feld daneben).
+    fn route_to_unit(&mut self, k: usize, unit: u32) -> bool {
+        let Some(dev) = self.units.iter().find(|u| u.id == unit) else { return false };
+        // Auf dem Turm (Balliste): an den Fuß des Turms.
+        let goal = dev.perch.and_then(|t| self.buildings.iter().find(|b| b.id == t)).and_then(|b| self.door(b, self.units[k].pos)).unwrap_or(dev.pos);
+        let pos = self.units[k].pos;
+        let u = &mut self.units[k];
+        u.path = self.map.nav.waypoints(pos, goal);
+        u.target = Some(goal);
+        !u.path.is_empty() || (pos.0 - goal.0).hypot(pos.1 - goal.1) <= AMMO_REACH
+    }
+
+    /// Karren mit Nachschub ist am Gerät angekommen (oder dort, wo es war).
+    fn arrive_ammo(&mut self, k: usize, to: u32, index: &HashMap<u32, usize>) {
+        let Some(load) = self.units[k].carrying else {
+            self.units[k].job = None;
+            return;
+        };
+        let owner = self.units[k].owner;
+        let Some(d) = self.units.iter().position(|u| u.id == to && u.owner == owner) else {
+            return self.fail(k, index);
+        };
+        let reach = if self.units[d].perch.is_some() { AMMO_REACH + 2.0 } else { AMMO_REACH };
+        let (p, q) = (self.units[k].pos, self.units[d].pos);
+        if (p.0 - q.0).hypot(p.1 - q.1) > reach {
+            // Das Gerät ist weitergefahren: hinterher.
+            if !self.route_to_unit(k, to) {
+                self.fail(k, index);
+            }
+            return;
+        }
+        let used = self.load_ammo(d, load);
+        let left = load.amount - used;
+        if left == 0 {
+            self.units[k].carrying = None;
+            self.units[k].job = None;
+        } else {
+            self.units[k].carrying = Some(GoodAmount { good: load.good, amount: left });
+            self.return_load(k, index);
         }
     }
 
@@ -1049,7 +1153,7 @@ mod tests {
         let index: std::collections::HashMap<u32, usize> = w.buildings.iter().enumerate().map(|(i, b)| (b.id, i)).collect();
         let target = |w: &World| match w.find_job(k, &super::Reserved::default(), &index).map(|j| j.kind) {
             Some(super::JobKind::Supply { to } | super::JobKind::Direct { to, .. } | super::JobKind::Pickup { from: to }) => to,
-            None => 0,
+            Some(super::JobKind::Ammo { .. }) | None => 0,
         };
         let set = |w: &mut World, id: u32, st: BuildingStatus| w.buildings.iter_mut().find(|b| b.id == id).unwrap().status = st;
         // Beide brauchen Holz, keiner steht: der nähere zuerst.

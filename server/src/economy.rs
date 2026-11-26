@@ -37,6 +37,7 @@ fn default_king(speed: f32) -> UnitDef {
         attack_seconds: 1.5,
         heal: 0,
         heal_range: 0.0,
+        scatter: 0.0,
         siege: None,
     }
 }

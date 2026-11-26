@@ -20,7 +20,7 @@ const SLACK: f32 = 0.02;
 impl Unit {
     /// Nimmt am Auseinanderrücken teil (als Schieber oder Geschobener).
     fn crowds(&self) -> bool {
-        !self.is_civilian() && !self.kind.is_siege()
+        !self.is_civilian() && !self.kind.is_siege() && self.crew_of.is_none()
     }
 
     /// Steht still und darf geschoben werden. Wer läuft, schiebt nur.
