@@ -468,7 +468,8 @@ impl World {
         }
         // Abschuss: vorhalten, Pfeil in die Luft. Das Ziel merkt schon jetzt, wer auf es schießt.
         for (k, j, range, flight) in launches {
-            let (shot, arrow) = self.launch(k, j, range, flight);
+            let jitter = (self.rand01(), self.rand01());
+            let (shot, arrow) = self.launch(k, j, range, flight, jitter);
             shots.push(shot);
             self.projectiles.push(arrow);
             let shooter = self.units[k].id;
@@ -688,7 +689,8 @@ impl World {
 
     /// Schuss von `k` auf `j`: vorhalten (wo steht das Ziel, wenn der Pfeil ankommt?) und den Pfeil
     /// auf den Weg schicken. Ohne freie Bahn zum Vorhaltepunkt geht er dorthin, wo das Ziel jetzt steht.
-    fn launch(&self, k: usize, j: usize, range: f32, flight: super::ballistics::Flight) -> (Shot, Projectile) {
+    /// `jitter`: zwei Zufallszahlen 0..1 für die Streuung (`UnitDef::scatter`).
+    fn launch(&self, k: usize, j: usize, range: f32, flight: super::ballistics::Flight, jitter: (f32, f32)) -> (Shot, Projectile) {
         let (u, t) = (&self.units[k], &self.units[j]);
         let dist = |p: (f32, f32)| (p.0 - u.pos.0).hypot(p.1 - u.pos.1);
         let dh = self.feet_h(t) - self.feet_h(u);
@@ -711,7 +713,16 @@ impl World {
                 }
             }
         }
-        let (to, to_wall, flight, range) = aim;
+        let (mut to, mut to_wall, flight, range) = aim;
+        // Streuung: zufällig in einer Scheibe um den Zielpunkt, je weiter, desto größer.
+        let scatter = self.economy.unit(u.kind).map_or(0.0, |d| d.scatter);
+        if scatter > 0.0 {
+            let r = scatter * (dist(to) / range.max(0.1)).min(1.0) * jitter.1.sqrt();
+            let a = jitter.0 * std::f32::consts::TAU;
+            let (w, h) = (self.map.width as f32 - 0.01, self.map.height as f32 - 0.01);
+            to = ((to.0 + a.cos() * r).clamp(0.0, w), (to.1 + a.sin() * r).clamp(0.0, h));
+            to_wall = to_wall && self.tile_of(to).is_some_and(|i| self.occupied[i] != 0);
+        }
         let mut ghost = Unit::new(t.id, t.owner, t.kind, to);
         ghost.on_wall = to_wall;
         let to_feet = self.feet_h(&ghost);

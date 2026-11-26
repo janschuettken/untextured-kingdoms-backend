@@ -14,7 +14,7 @@
 //! - **Bedienung:** Ein fertiges Gerät braucht `siege.crew` Baumeister in der Nähe, sonst
 //!   schießt und fährt es nicht. Freie Baumeister daneben übernehmen das von selbst; ein
 //!   Laufbefehl holt sie wieder weg. Rollt das Gerät, laufen sie mit.
-//! - **Schießen:** Geschosse fliegen mit `siege.shot_speed` und streuen (`siege.scatter`);
+//! - **Schießen:** Geschosse fliegen mit `siege.shot_speed` und streuen (`scatter`);
 //!   Schaden gibt es erst beim Einschlag: am Gebäude auf dem Feld und an Einheiten im Umkreis
 //!   `siege.splash` (0 = nur die nächste). Näher als `siege.min_range` schießt es nicht.
 
@@ -394,34 +394,95 @@ impl World {
         }
     }
 
-    /// Rollt das Gerät, läuft die Bedienung hinterher.
-    fn crew_follow(&mut self, dt: f32) {
-        let pos: HashMap<u32, (f32, f32)> = self.units.iter().filter(|u| u.kind.is_siege()).map(|u| (u.id, u.pos)).collect();
+    /// Wie viel Nachschub braucht dieses Gerät, bis es wieder voll ist? (Ware, Menge)
+    pub(super) fn ammo_need(&self, u: &Unit) -> Option<(protocol::Good, u32)> {
+        let sd = self.economy.unit(u.kind)?.siege.as_ref()?;
+        let per = sd.ammo.filter(|a| a.amount > 0 && sd.shots > 0)?;
+        let need = (u.shots_fired * per.amount).saturating_sub(u.ammo_part);
+        (need > 0).then_some((per.good, need))
+    }
+
+    /// Nachschub anliefern; liefert, wie viel davon gebraucht wurde.
+    pub(super) fn load_ammo(&mut self, k: usize, load: GoodAmount) -> u32 {
+        let Some((good, need)) = self.ammo_need(&self.units[k]) else { return 0 };
+        if good != load.good {
+            return 0;
+        }
+        let per = self.economy.unit(self.units[k].kind).and_then(|d| d.siege.as_ref()).and_then(|s| s.ammo).map_or(1, |a| a.amount.max(1));
+        let used = load.amount.min(need);
+        let u = &mut self.units[k];
+        u.ammo_part += used;
+        let shots = (u.ammo_part / per).min(u.shots_fired);
+        u.shots_fired -= shots;
+        u.ammo_part -= shots * per;
+        if u.shots_fired == 0 {
+            u.ammo_part = 0;
+        }
+        used
+    }
+
+    /// Die Bedienung steht fest am Gerät und fährt mit (sie läuft nicht selbst).
+    fn crew_follow(&mut self, _dt: f32) {
+        let devices: HashMap<u32, ((f32, f32), (f32, f32), bool, f32)> = self
+            .units
+            .iter()
+            .filter(|u| u.kind.is_siege())
+            .map(|u| {
+                let size = self.economy.unit(u.kind).and_then(|d| d.siege.as_ref()).map_or(1, |s| if s.on_towers { 1 } else { s.size.max(1) });
+                let r = if u.perch.is_some() { 0.6 } else { size as f32 * 0.5 + 0.35 };
+                (u.id, (u.pos, u.vel, u.on_wall, r))
+            })
+            .collect();
+        let mut slot: HashMap<u32, usize> = HashMap::new();
         for k in 0..self.units.len() {
             let Some(d) = self.units[k].crew_of else { continue };
-            let Some(&p) = pos.get(&d) else { continue };
+            let Some(&(p, vel, wall, r)) = devices.get(&d) else { continue };
+            let i = slot.entry(d).or_insert(0);
+            // Hinter dem Gerät aufgereiht (gegen die Fahrtrichtung, sonst nach Süden).
+            let speed = vel.0.hypot(vel.1);
+            let back = if speed > 1e-3 { (-vel.1).atan2(-vel.0) } else { std::f32::consts::FRAC_PI_2 };
+            let a = back + (*i as f32 - 1.0) * 0.7;
+            *i += 1;
+            let (w, h) = (self.map.width as f32 - 0.01, self.map.height as f32 - 0.01);
+            let spot = ((p.0 + a.cos() * r).clamp(0.0, w), (p.1 + a.sin() * r).clamp(0.0, h));
             let u = &mut self.units[k];
-            u.chase_timer = (u.chase_timer - dt).max(0.0);
-            let dist = (u.pos.0 - p.0).hypot(u.pos.1 - p.1);
-            if dist <= CREW_REACH - 0.5 || u.chase_timer > 0.0 {
-                continue;
-            }
-            u.chase_timer = 1.0;
-            // Etwas hinter das Gerät, von der Bedienung aus gesehen.
-            let back = if dist > 1e-3 { ((u.pos.0 - p.0) / dist, (u.pos.1 - p.1) / dist) } else { (1.0, 0.0) };
-            let spot = (p.0 + back.0 * 1.2, p.1 + back.1 * 1.2);
-            let (owner, from, wall) = (u.owner, u.pos, u.on_wall);
-            let (path, layers) = self.plan(owner, from, wall, spot, false);
-            let u = &mut self.units[k];
-            u.path = path;
-            u.layers = layers;
-            u.target = Some(spot);
-            u.target_wall = false;
+            u.pos = spot;
+            u.vel = vel;
+            u.on_wall = wall;
+            u.path.clear();
+            u.layers.clear();
+            u.target = None;
         }
     }
 
+    /// Die Bedienung dieser eigenen Geräte steigt ab und tritt ein Stück zur Seite.
+    pub fn release_crew(&mut self, player: u32, device_ids: &[u32]) -> bool {
+        let mut any = false;
+        for &did in device_ids {
+            let Some(dev) = self.units.iter().find(|u| u.id == did && u.owner == player && u.kind.is_siege()) else { continue };
+            let (pos, wall, perch) = (dev.pos, dev.on_wall, dev.perch);
+            let crew: Vec<usize> = (0..self.units.len()).filter(|&k| self.units[k].crew_of == Some(did)).collect();
+            // Auf dem Turm: zum Fuß des Turms, sonst neben das Gerät.
+            let base = perch.and_then(|t| self.buildings.iter().find(|b| b.id == t)).map(|b| center(b)).unwrap_or(pos);
+            for (n, k) in crew.into_iter().enumerate() {
+                let a = n as f32 * 1.3;
+                let spot = (base.0 + a.cos() * (CREW_REACH + 1.0), base.1 + a.sin() * (CREW_REACH + 1.0));
+                let (owner, from) = (self.units[k].owner, self.units[k].pos);
+                let (path, layers) = self.plan(owner, from, wall, spot, false);
+                let u = &mut self.units[k];
+                u.crew_of = None;
+                u.path = path;
+                u.layers = layers;
+                u.target = Some(spot);
+                u.target_wall = false;
+                any = true;
+            }
+        }
+        any
+    }
+
     /// Zufallszahl 0..1 (Streuung der Belagerungsgeräte).
-    fn rand01(&mut self) -> f32 {
+    pub(super) fn rand01(&mut self) -> f32 {
         let mut x = self.combat_rng;
         x ^= x >> 12;
         x ^= x << 25;
@@ -450,6 +511,10 @@ impl World {
             let def = &def;
             let Some(sd) = def.siege.clone() else { continue };
             if def.range <= 0.0 || !self.crewed(u, &counts) || u.down > 0.0 {
+                continue;
+            }
+            // Vorrat leer: wartet auf Nachschub.
+            if sd.shots > 0 && u.shots_fired >= sd.shots {
                 continue;
             }
             let range = def.range;
@@ -492,7 +557,7 @@ impl World {
                 continue;
             }
             if u.attack_order.is_none() {
-                if sd.hits_units {
+                if sd.hits_units && sd.auto_units {
                     let reach = range * 2.0;
                     let (cx, cy) = ((u.pos.0 / cell) as i32, (u.pos.1 / cell) as i32);
                     let r = (reach / cell).ceil() as i32;
@@ -580,7 +645,7 @@ impl World {
                 None => continue,
             };
             let d = (target_pos.0 - u.pos.0).hypot(target_pos.1 - u.pos.1);
-            let spread = sd.scatter * (d / range).min(1.0);
+            let spread = def.scatter * (d / range).min(1.0);
             let (a, r) = (self.rand01() * std::f32::consts::TAU, self.rand01().sqrt() * spread);
             let (mw, mh) = (self.map.width as f32 - 0.01, self.map.height as f32 - 0.01);
             let to = ((target_pos.0 + a.cos() * r).clamp(0.0, mw), (target_pos.1 + a.sin() * r).clamp(0.0, mh));
@@ -611,6 +676,9 @@ impl World {
             let shooter = u.id;
             let u = &mut self.units[k];
             u.attack_cooldown = def.attack_seconds;
+            if sd.shots > 0 {
+                u.shots_fired += 1;
+            }
             u.strikes = u.strikes.wrapping_add(1);
             if let Some(j) = foe {
                 let fid = self.units[j].id;
@@ -799,7 +867,7 @@ mod tests {
         let wall = w.place_building(2, BuildingKind::Wall, 80, 50).unwrap().id;
         let hp0 = w.buildings.iter().find(|b| b.id == wall).unwrap().hp;
         let d = w.economy.def.units.iter_mut().find(|u| u.kind == UnitKind::Trebuchet).unwrap();
-        d.siege.as_mut().unwrap().scatter = 0.0;
+        d.scatter = 0.0;
         d.attack_seconds = 2.0;
         let range = d.range;
         let x = 80.5 - range + 3.0;
@@ -859,5 +927,124 @@ mod tests {
         assert!(c.0 > 48.0, "gerollt: {c:?}");
         let crew_near = w.units.iter().filter(|u| u.kind == UnitKind::Builder && (u.pos.0 - c.0).hypot(u.pos.1 - c.1) < 3.5).count();
         assert_eq!(crew_near, 2, "Bedienung ist mitgelaufen");
+    }
+
+    #[test]
+    fn bedienung_faehrt_fest_mit_und_steigt_auf_befehl_ab() {
+        let mut w = world();
+        w.units.push(Unit::new(9100, 1, UnitKind::Catapult, (40.5, 40.5)));
+        builder(&mut w, 9001, 1, (39.5, 40.5));
+        builder(&mut w, 9002, 1, (39.5, 41.5));
+        run(&mut w, 0.5);
+        w.order_move(1, &[9100], (50.5, 40.5));
+        for _ in 0..200 {
+            w.step(0.05);
+            let c = device(&w, UnitKind::Catapult).unwrap().pos;
+            for u in w.units.iter().filter(|u| u.kind == UnitKind::Builder) {
+                assert_eq!(u.crew_of, Some(9100));
+                assert!((u.pos.0 - c.0).hypot(u.pos.1 - c.1) < 2.0, "dicht am Gerät");
+            }
+        }
+        assert!(w.release_crew(1, &[9100]));
+        assert!(!w.release_crew(2, &[9100]), "nur eigene Geräte");
+        run(&mut w, 6.0);
+        assert!(w.units.iter().filter(|u| u.kind == UnitKind::Builder).all(|u| u.crew_of.is_none()), "steigt ab und bleibt frei");
+    }
+
+    #[test]
+    fn katapult_greift_einheiten_nur_auf_befehl_an() {
+        let mut w = world();
+        w.units.push(Unit::new(9100, 1, UnitKind::Catapult, (40.5, 40.5)));
+        builder(&mut w, 9001, 1, (39.5, 40.5));
+        builder(&mut w, 9002, 1, (39.5, 41.5));
+        let mut foe = Unit::new(9500, 2, UnitKind::Spearman, (55.5, 40.5));
+        foe.attack_order = None;
+        w.units.push(foe);
+        run(&mut w, 15.0);
+        assert!(w.siege_shots.is_empty() && w.units.iter().find(|u| u.id == 9500).is_some_and(|u| u.damage == 0), "kein Schuss von selbst");
+        assert!(w.order_attack(1, &[9100], protocol::AttackTarget::Unit { id: 9500 }));
+        let mut shot = false;
+        for _ in 0..300 {
+            w.step(0.05);
+            shot |= !w.siege_shots.is_empty();
+        }
+        assert!(shot, "mit Befehl wirft es");
+    }
+
+    #[test]
+    fn streuung_verteilt_die_einschlaege() {
+        let mut w = world();
+        w.economy.def.units.iter_mut().find(|u| u.kind == UnitKind::Archer).unwrap().scatter = 3.0;
+        w.economy.def.army.arrow_hit_radius = 0.1;
+        let mut archer = Unit::new(9200, 1, UnitKind::Archer, (40.5, 30.5));
+        archer.attack_order = None;
+        w.units.push(archer);
+        let mut foe = Unit::new(9500, 2, UnitKind::Knight, (58.5, 30.5));
+        foe.attack_order = None;
+        w.units.push(foe);
+        let mut spots = Vec::new();
+        for _ in 0..600 {
+            w.step(0.05);
+            for e in w.take_events() {
+                if let protocol::ServerMsg::Shots { shots } = e {
+                    spots.extend(shots.iter().filter(|s| s.kind == UnitKind::Archer).map(|s| s.to));
+                }
+            }
+            if let Some(f) = w.units.iter_mut().find(|u| u.id == 9500) {
+                f.pos = (58.5, 30.5);
+                f.damage = 0;
+            }
+        }
+        assert!(spots.len() >= 5, "geschossen: {}", spots.len());
+        let off = spots.iter().filter(|p| (p.0 - 58.5).hypot(p.1 - 30.5) > 0.3).count();
+        assert!(off * 2 > spots.len(), "die meisten streuen: {off} von {}", spots.len());
+        assert!(spots.iter().all(|p| (p.0 - 58.5).hypot(p.1 - 30.5) <= 3.01), "nicht weiter als der Radius");
+    }
+
+    #[test]
+    fn vorrat_leer_dann_bringen_karren_nachschub() {
+        let mut w = world();
+        let d = w.economy.def.units.iter_mut().find(|u| u.kind == UnitKind::Catapult).unwrap();
+        d.attack_seconds = 0.5;
+        let sd = d.siege.as_mut().unwrap();
+        sd.shots = 3;
+        sd.ammo = Some(GoodAmount { good: Good::Stone, amount: 2 });
+        // Mauer des Gegners als Ziel, weit weg vom eigenen Lager.
+        let wall = w.place_building_rotated(2, BuildingKind::Wall, 80, 50, 0, 1).unwrap().id;
+        w.buildings.iter_mut().find(|b| b.id == wall).unwrap().hp = 100_000;
+        w.units.push(Unit::new(9100, 1, UnitKind::Catapult, (60.5, 50.5)));
+        builder(&mut w, 9001, 1, (59.5, 50.5));
+        builder(&mut w, 9002, 1, (59.5, 51.5));
+        let mut fired = 0;
+        for _ in 0..400 {
+            w.step(0.05);
+            for e in w.take_events() {
+                if let protocol::ServerMsg::Shots { shots } = e {
+                    fired += shots.iter().filter(|s| s.kind == UnitKind::Catapult).count();
+                }
+            }
+        }
+        assert_eq!(fired, 3, "nur so viele Schüsse, wie im Vorrat sind");
+        let cat = w.units.iter().find(|u| u.id == 9100).unwrap();
+        assert_eq!(w.snapshot_unit_shots(cat), Some(0));
+        // Jetzt Lager und Karren: Nachschub kommt, es schießt wieder.
+        let stone = w.stocks[&1].amount(Good::Stone);
+        w.place_building_rotated(1, BuildingKind::Storehouse, 14, 30, 0, 1).unwrap();
+        let shed = w.place_building_rotated(1, BuildingKind::CartShed, 26, 30, 0, 1).unwrap().id;
+        let _ = w.upgrade(1, shed);
+        let mut again = false;
+        for _ in 0..240 {
+            run(&mut w, 1.0);
+            for e in w.take_events() {
+                if let protocol::ServerMsg::Shots { shots } = e {
+                    again |= shots.iter().any(|s| s.kind == UnitKind::Catapult);
+                }
+            }
+            if again {
+                break;
+            }
+        }
+        assert!(again, "nach dem Nachschub schießt es wieder");
+        assert!(w.stocks[&1].amount(Good::Stone) < stone, "Steine kamen aus dem Vorrat");
     }
 }

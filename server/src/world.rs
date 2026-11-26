@@ -138,6 +138,12 @@ pub struct Unit {
     /// Balliste: steht auf diesem Turm (Gebäude-Id).
     #[serde(default)]
     perch: Option<u32>,
+    /// Belagerungsgerät: seit dem letzten vollen Vorrat abgegebene Schüsse.
+    #[serde(default)]
+    shots_fired: u32,
+    /// Belagerungsgerät: angelieferter Nachschub, der noch keinen ganzen Schuss ergibt.
+    #[serde(default)]
+    ammo_part: u32,
 }
 
 /// Ein späteres Ziel eines Laufbefehls (siehe `Unit::waypoints`).
@@ -194,6 +200,8 @@ impl Unit {
             vel: (0.0, 0.0),
             crew_of: None,
             perch: None,
+            shots_fired: 0,
+            ammo_part: 0,
         }
     }
 
@@ -370,6 +378,11 @@ fn resource_key(r: ResourceKind) -> String {
 }
 
 impl World {
+    #[cfg(test)]
+    pub(crate) fn snapshot_unit_shots(&self, u: &Unit) -> Option<u32> {
+        self.economy.unit(u.kind).and_then(|d| d.siege.as_ref()).filter(|s| s.shots > 0).map(|s| s.shots.saturating_sub(u.shots_fired))
+    }
+
     pub fn new(mut map: GameMap, economy: Economy) -> World {
         map.nav.set_slope_percent(economy.def.movement.slope_speed_percent);
         let n = (map.width * map.height) as usize;
@@ -1844,6 +1857,8 @@ impl World {
                 attack_target: u.attack_order.or(u.last_foe.map(|(id, _)| protocol::AttackTarget::Unit { id })),
                 strikes: u.strikes,
                 crew: if u.kind.is_siege() { crews.get(&u.id).copied().unwrap_or(0) } else { 0 },
+                crew_of: u.crew_of,
+                shots_left: self.economy.unit(u.kind).and_then(|d| d.siege.as_ref()).filter(|s| s.shots > 0).map(|s| s.shots.saturating_sub(u.shots_fired)),
             })
             .collect()
     }

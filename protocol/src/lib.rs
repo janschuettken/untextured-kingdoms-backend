@@ -101,6 +101,8 @@ pub enum ClientMsg {
         #[serde(default)]
         backpack: bool,
     },
+    /// Die Bedienung dieser eigenen Belagerungsgeräte steigt ab und steht wieder frei.
+    ReleaseCrew { unit_ids: Vec<u32> },
     /// In einer eigenen Kaserne `count` Soldaten dieser Art in Auftrag geben.
     /// Waren und Taler werden sofort bezahlt (alle, die bezahlbar sind).
     TrainUnits {
@@ -981,6 +983,12 @@ pub struct UnitState {
     /// Belagerungsgerät: so viele Baumeister bedienen es gerade (nötig: `siege.crew`).
     #[serde(default)]
     pub crew: u32,
+    /// Baumeister: bedient gerade dieses Gerät (fährt mit, wird nicht als eigene Einheit gezeigt).
+    #[serde(default)]
+    pub crew_of: Option<u32>,
+    /// Belagerungsgerät mit begrenztem Vorrat: so viele Schüsse sind noch da (sonst None).
+    #[serde(default)]
+    pub shots_left: Option<u32>,
 }
 
 /// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.
@@ -1528,6 +1536,10 @@ pub struct UnitDef {
     /// Reichweite in Feldern, 1 = Nahkampf (für den Kampf, kommt noch).
     #[serde(default)]
     pub range: f32,
+    /// Streuradius am Einschlag (Felder) auf volle Reichweite, näher entsprechend weniger.
+    /// 0 = trifft genau den Zielpunkt (die Schützen halten trotzdem vor).
+    #[serde(default)]
+    pub scatter: f32,
     /// Sold in Talern je Zahltag (siehe `army.upkeep_seconds`).
     #[serde(default)]
     pub upkeep: u32,
@@ -1612,8 +1624,8 @@ pub struct SiegeDef {
     pub crew: u32,
     /// Näher als so viele Felder schießt es nicht.
     pub min_range: f32,
-    /// Streuung am Einschlag (Felder) auf volle Reichweite; näher entsprechend weniger.
-    pub scatter: f32,
+    /// Sucht sich Einheiten von selbst als Ziel. Aus: auf Einheiten nur mit Angriffsbefehl.
+    pub auto_units: bool,
     /// Einheiten in diesem Umkreis (Felder) um den Einschlag werden alle getroffen. 0 = nur eine.
     pub splash: f32,
     /// Schießt auf Gebäude (Mauern, Türme …).
@@ -1624,6 +1636,10 @@ pub struct SiegeDef {
     pub on_towers: bool,
     /// So schnell fliegt das Geschoss (Felder pro Sekunde).
     pub shot_speed: f32,
+    /// Vorrat an Schüssen; ist er leer, schießt das Gerät erst nach Nachschub wieder. 0 = unbegrenzt.
+    pub shots: u32,
+    /// Nachschub je Schuss (Karren bringen ihn aus dem Lager). Ohne: füllt sich nicht auf.
+    pub ammo: Option<GoodAmount>,
 }
 
 impl Default for SiegeDef {
@@ -1632,12 +1648,14 @@ impl Default for SiegeDef {
             size: 2,
             crew: 1,
             min_range: 0.0,
-            scatter: 0.0,
+            auto_units: true,
             splash: 0.0,
             hits_buildings: true,
             hits_units: true,
             on_towers: false,
             shot_speed: 15.0,
+            shots: 0,
+            ammo: None,
         }
     }
 }

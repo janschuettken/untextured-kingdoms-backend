@@ -46,4 +46,12 @@ strikes: number,
 /**
  * Belagerungsgerät: so viele Baumeister bedienen es gerade (nötig: `siege.crew`).
  */
-crew: number, };
+crew: number, 
+/**
+ * Baumeister: bedient gerade dieses Gerät (fährt mit, wird nicht als eigene Einheit gezeigt).
+ */
+crew_of: number | null, 
+/**
+ * Belagerungsgerät mit begrenztem Vorrat: so viele Schüsse sind noch da (sonst None).
+ */
+shots_left: number | null, };
