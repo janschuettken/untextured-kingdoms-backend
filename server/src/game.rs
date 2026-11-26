@@ -41,6 +41,13 @@ const VIEW_MARGIN: f32 = 24.0;
 const AUTOSAVE_SECONDS: u64 = 60;
 /// So oft prüft er, ob die Burgen der verbundenen Spieler geschlossen sind.
 const CASTLE_CHECK_SECONDS: u64 = 2;
+/// So oft schickt der Server jedem Browser ein WebSocket-Ping. Der Browser antwortet von
+/// selbst (auch in einem Hintergrund-Tab, dessen Timer gedrosselt sind).
+const WS_PING: Duration = Duration::from_secs(10);
+/// Kommt so lange gar nichts (keine Nachricht, kein Pong), ist die Verbindung tot: Browser
+/// zu, Handy im Standby, Netz weg, ohne dass ein Close ankam. Dann zählt der Spieler nicht
+/// mehr als online, und ohne Menschen hält das Spiel an.
+const WS_SILENCE: Duration = Duration::from_secs(30);
 
 /// Ein verbundener Client.
 pub struct Client {
@@ -783,10 +790,18 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
 
     // Ausgehend: direkte Antworten + Ticks an diesen Client schreiben.
     let mut writer = tokio::spawn(async move {
+        let mut ping = tokio::time::interval(WS_PING);
+        ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             let msg = tokio::select! {
                 // Direkte Nachrichten zuerst, damit `welcome` vor allem anderen ankommt.
                 biased;
+                _ = ping.tick() => {
+                    if tx.send(Message::Ping(Default::default())).await.is_err() {
+                        break;
+                    }
+                    continue;
+                }
                 m = out_rx.recv() => match m {
                     Some(m) => m,
                     None => break,
@@ -823,7 +838,8 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
     // Eingehend: Nachrichten des Clients verarbeiten.
     let reader = async {
         let mut is_admin = false;
-        while let Some(Ok(msg)) = rx.next().await {
+        // Jede Nachricht und jedes Pong zählt als Lebenszeichen.
+        while let Ok(Some(Ok(msg))) = tokio::time::timeout(WS_SILENCE, rx.next()).await {
             let Message::Text(text) = msg else { continue };
             match serde_json::from_str::<ClientMsg>(&text) {
                 Ok(msg) => handle_msg(&hub, &state, conn, player_id, &out_tx, &mut is_admin, msg).await,
