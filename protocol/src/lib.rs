@@ -469,6 +469,9 @@ pub enum LobbyClientMsg {
         #[serde(default)]
         #[ts(optional)]
         helpfulness: Option<u8>,
+        #[serde(default)]
+        #[ts(optional)]
+        growth: Option<u8>,
     },
     /// Nur Gastgeber, nur vor dem Start: wie Waren zwischen Verbündeten ankommen.
     SetTradeMode { mode: TradeMode },
@@ -609,6 +612,9 @@ pub struct LobbyMember {
     /// Computergegner: eigener Wert für „Hilfsbereitschaft“ (sonst der des Charakters).
     #[serde(default)]
     pub helpfulness: Option<u8>,
+    /// Computergegner: eigener Wert für „Weiterbauen nach fertiger Burg“ (sonst der des Charakters).
+    #[serde(default)]
+    pub growth: Option<u8>,
     /// Laufendes Spiel: sein König ist gefallen, er ist ausgeschieden.
     #[serde(default)]
     pub defeated: bool,
@@ -709,6 +715,11 @@ pub struct AiPersonality {
     /// Verbündeter angegriffen wird.
     #[serde(default = "helpfulness_default")]
     pub helpfulness: u32,
+    /// Weiterbauen, wenn die Burg fertig ist, 0 bis 100: 0 = hört nach Bauliste und Mauer auf;
+    /// sonst baut er die Wirtschaft weiter aus (mehr Betriebe, Ausbauten, größere Armee),
+    /// umso schneller und weiter, je höher der Wert.
+    #[serde(default = "growth_default")]
+    pub growth: u32,
     /// Gebäude in Prozent: 100 = wie die Stufe, 0 = baut es nie, 50 = halb so viele,
     /// 200 = doppelt so viele. Steht es nicht in der Bauliste der Stufe, baut er ab 200 eins
     /// (300 zwei, ...). Fehlende Gebäude gelten als 100.
@@ -748,6 +759,10 @@ fn daring_default() -> u32 {
 }
 
 fn helpfulness_default() -> u32 {
+    50
+}
+
+fn growth_default() -> u32 {
     50
 }
 

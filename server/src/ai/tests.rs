@@ -1,6 +1,6 @@
 //! Ein Computergegner spielt allein auf der Standardkarte.
 
-use protocol::{AiLevel, BuildingKind};
+use protocol::{AiLevel, BuildingKind, ClientMsg};
 
 use super::Computer;
 use crate::{economy::Economy, game::apply_command, map::GameMap, world::World};
@@ -44,10 +44,11 @@ fn play_seats(
         let player = i as u32 + 1;
         world.spawn_player_at(player, spawns[i]);
         ais.push(match all {
-            Some(all) => Computer::new(super::Seat { player, level, personality: personality.into(), daring: None, helpfulness: None }, all, &world.economy),
+            Some(all) => Computer::new(super::Seat { player, level, personality: personality.into(), daring: None, helpfulness: None, growth: None }, all, &world.economy),
             None => Computer::with_level(player, level, &world.economy),
         });
     }
+    super::link(&mut ais);
     let (ticks, _) = tokio::sync::broadcast::channel(64);
     // Gröbere Schritte als im Spiel (20 je Sekunde), damit der Test schnell bleibt.
     let dt = 0.25;
@@ -56,8 +57,9 @@ fn play_seats(
         for ai in &mut ais {
             world.self_carry.insert(ai.player);
             for cmd in ai.think(&world, dt) {
+                let what = format!("{cmd:?}");
                 if let Err(e) = apply_command(&mut world, &ticks, ai.player, cmd) {
-                    println!("Spieler {}: abgelehnt {}", ai.player, e.key);
+                    println!("Spieler {}: abgelehnt {} ({what:.120})", ai.player, e.key);
                     rejected += 1;
                 }
             }
@@ -120,7 +122,8 @@ fn normaler_computer_baut_mehr() {
 
 #[test]
 fn schwerer_computer_baut_torhaus_wege_und_grosse_armee() {
-    let world = play(AiLevel::Hard, 60);
+    let mut grown = 0;
+    let world = play_watch(MAP, &[AiLevel::Hard], 60, |_, ais| grown = grown.max(ais[0].grow_round));
     let stock = world.stock_state(1);
     let roads = count(&world, BuildingKind::StonePath);
     let mut kinds = std::collections::BTreeMap::new();
@@ -142,6 +145,12 @@ fn schwerer_computer_baut_torhaus_wege_und_grosse_armee() {
     assert!(count(&world, BuildingKind::Apothecary) >= 1, "{kinds:?}");
     let healers = world.units.iter().filter(|u| u.owner == 1 && u.kind == protocol::UnitKind::Healer).count();
     assert!(healers >= 1, "keine Heiler");
+    // Burg zu, Bauliste durch: er baut weiter aus.
+    assert!(grown > 0, "baut nach fertiger Burg nicht weiter");
+    // Wagenschuppen mit Karren: in seinem Umkreis tragen die Arbeiter nicht mehr selbst.
+    assert!(world.buildings.iter().any(|b| b.owner == 1 && b.kind == BuildingKind::CartShed && b.level >= 2), "{kinds:?}");
+    let carted = world.buildings.iter().filter(|b| b.owner == 1 && b.settings.recipe.is_some() && !b.settings.worker_carries).count();
+    assert!(carted >= 3, "nur {carted} Betriebe ohne Selbsttragen");
 }
 
 #[test]
@@ -210,7 +219,7 @@ fn friedlicher_charakter_greift_nicht_an() {
     p.aggression = 0;
     let eco = crate::economy::Economy::parse(crate::economy::ECONOMY_JSON).unwrap();
     let all = protocol::AiPersonalities { personalities: vec![p] };
-    let c = Computer::new(super::Seat { player: 1, level: AiLevel::Hard, personality: String::new(), daring: None, helpfulness: None }, &all, &eco);
+    let c = Computer::new(super::Seat { player: 1, level: AiLevel::Hard, personality: String::new(), daring: None, helpfulness: None, growth: None }, &all, &eco);
     assert!(c.profile.attack.is_none());
 }
 
@@ -269,7 +278,7 @@ fn verlauf() {
             let g = |good: protocol::Good| st.goods.iter().find(|x| x.good == good).map_or(0, |x| x.amount);
             let camp = ais[(p - 1) as usize].campaign.as_ref().map_or(String::new(), |c| format!(" WELLE {}→{}", c.units.len(), c.target));
             println!(
-                "min {:>2} P{p}: geb {:>3} stbr {} pal {:>3} zu {} mauer {:>3} (L2 {:>3}) tore {}+{} türme {} sold {:>2} oben {:>2} armb {} | holz {} br {} st {} bl {} eisen {} taler {}{camp}",
+                "min {:>2} P{p}: geb {:>3} stbr {} pal {:>3} zu {} mauer {:>3} (L2 {:>3}) tore {}+{} türme {} sold {:>2} oben {:>2} armb {} heil {} | holz {} br {} st {} bl {} eisen {} salbe {} taler {} | wagen L{} selbst {}/{} brücken {}{camp}",
                 ais[0].clock as u32 / 60,
                 world.buildings.iter().filter(|b| b.owner == p).count(),
                 kinds(BuildingKind::Quarry),
@@ -283,15 +292,28 @@ fn verlauf() {
                 st.army.soldiers,
                 world.units.iter().filter(|u| u.owner == p && u.is_on_wall()).count(),
                 world.units.iter().filter(|u| u.owner == p && u.kind == protocol::UnitKind::Crossbowman).count(),
+                world.units.iter().filter(|u| u.owner == p && u.kind == protocol::UnitKind::Healer).count(),
                 g(protocol::Good::Wood),
                 g(protocol::Good::Boards),
                 g(protocol::Good::Stone),
                 g(protocol::Good::Blocks),
                 g(protocol::Good::Iron),
+                g(protocol::Good::Salve),
                 st.taler,
+                world.buildings.iter().filter(|b| b.owner == p && b.kind == BuildingKind::CartShed).map(|b| b.level.to_string()).collect::<Vec<_>>().join("/"),
+                world.buildings.iter().filter(|b| b.owner == p && b.settings.worker_carries && b.settings.recipe.is_some()).count(),
+                world.buildings.iter().filter(|b| b.owner == p && b.settings.recipe.is_some()).count(),
+                kinds(BuildingKind::Bridge),
             );
         }
     });
+    for p in 1..=n {
+        let mut kinds = std::collections::BTreeMap::new();
+        for b in world.buildings.iter().filter(|b| b.owner == p) {
+            *kinds.entry(format!("{:?}", b.kind)).or_insert(0) += 1;
+        }
+        println!("Spieler {p}, Gebäude: {kinds:?}");
+    }
     for p in 1..=n {
         println!("Spieler {p}: ausgeschieden {}", world.is_eliminated(p));
     }
@@ -323,7 +345,7 @@ fn hilft_dem_verbuendeten_aber_nicht_mit_allen() {
             world.units.push(crate::world::Unit::new(60_000 + i, 3, UnitKind::Swordsman, (ally.0 + 8.0 + i as f32, ally.1 + 8.0)));
         }
         let all = protocol::AiPersonalities { personalities: vec![super::personality::neutral()] };
-        let seat = super::Seat { player: 1, level: AiLevel::Normal, personality: String::new(), daring: None, helpfulness: Some(help) };
+        let seat = super::Seat { player: 1, level: AiLevel::Normal, personality: String::new(), daring: None, helpfulness: Some(help), growth: None };
         let mut ai = Computer::new(seat, &all, &world.economy);
         let mut cmds = Vec::new();
         for _ in 0..20 {
@@ -372,7 +394,7 @@ fn lastprofil() {
     for (i, p) in all.personalities.iter().take(players).enumerate() {
         let player = i as u32 + 1;
         world.spawn_player_at(player, spawns[i]);
-        let seat = super::Seat { player, level: AiLevel::Hard, personality: p.id.clone(), daring: None, helpfulness: None };
+        let seat = super::Seat { player, level: AiLevel::Hard, personality: p.id.clone(), daring: None, helpfulness: None, growth: None };
         ais.push(Computer::new(seat, &all, &world.economy));
     }
     let (ticks, _) = tokio::sync::broadcast::channel(64);
@@ -485,4 +507,113 @@ fn baut_belagerungsgeraete_wenn_der_gegner_zu_ist() {
     assert!(count(&world, BuildingKind::SiegeWorkshop) >= 1, "Werkstatt gebaut");
     assert!(world.units.iter().any(|u| u.owner == 1 && u.kind == protocol::UnitKind::Builder), "Baumeister ausgebildet");
     assert!(engine, "ein Katapult steht");
+}
+
+
+/// Flache Karte `w` x `h` für Einzeltests, Gelände und Vorkommen je Feld.
+fn flat_world(w: usize, h: usize, spawns: &[(u32, u32)], water: impl Fn(usize, usize) -> bool, forest: impl Fn(usize, usize) -> bool) -> World {
+    let terrain: Vec<String> = (0..h).map(|y| (0..w).map(|x| if water(x, y) { '~' } else { '0' }).collect()).collect();
+    let resources: Vec<String> = (0..h).map(|y| (0..w).map(|x| if forest(x, y) { 'W' } else { '.' }).collect()).collect();
+    let spawn: Vec<String> = spawns.iter().map(|s| format!("spawn {} {}", s.0, s.1)).collect();
+    let text = format!("{}\n[terrain]\n{}\n[resources]\n{}\n", spawn.join("\n"), terrain.join("\n"), resources.join("\n"));
+    let map = GameMap::parse(&text).unwrap();
+    let economy = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people().without_build_radius();
+    let mut world = World::new(map, economy);
+    for (i, &s) in spawns.iter().enumerate() {
+        world.spawn_player_at(i as u32 + 1, s);
+        world.give_everything_for_tests(i as u32 + 1);
+    }
+    world
+}
+
+fn keep_door(world: &World, p: u32) -> (u32, u32) {
+    super::attack::keep_door(world, p).unwrap()
+}
+
+/// Ein Fluss trennt die beiden Burgen: der Computer schlägt eine Brücke, danach führt ein Weg hinüber.
+#[test]
+fn baut_eine_bruecke_zum_feind_ueber_den_fluss() {
+    let mut world = flat_world(140, 70, &[(25, 35), (115, 35)], |x, _| (66..70).contains(&x), |_, _| false);
+    let (ticks, _) = tokio::sync::broadcast::channel(64);
+    let from = keep_door(&world, 1);
+    let door = keep_door(&world, 2);
+    let reaches = |world: &World| {
+        let path = world.map.nav.find_path((from.0 as i32, from.1 as i32), (door.0 as i32, door.1 as i32));
+        path.last().is_some_and(|&(x, y)| (x - door.0 as i32).abs() + (y - door.1 as i32).abs() <= 2)
+    };
+    assert!(!reaches(&world), "ohne Brücke gibt es keinen Weg");
+    let mut ai = Computer::with_level(1, AiLevel::Hard, &world.economy);
+    let stock = world.stock_state(1);
+    let cmd = ai.plan_bridge(&world, &stock, &[], (from.0 as f32 + 0.5, from.1 as f32 + 0.5), door).expect("keine Brücke geplant");
+    assert!(matches!(cmd, ClientMsg::PlaceBridge { w: 4, h: 1, .. }), "{cmd:?}");
+    apply_command(&mut world, &ticks, 1, cmd).expect("Brücke abgelehnt");
+    assert!(reaches(&world), "auch mit Brücke kein Weg");
+    // Gleich danach keine zweite.
+    assert!(ai.plan_bridge(&world, &world.stock_state(1), &[], (from.0 as f32, from.1 as f32), door).is_none());
+}
+
+/// Ist der Wald um einen Holzfäller abgeholzt, zieht er zum nächsten Wald.
+#[test]
+fn holzfaeller_zieht_zum_naechsten_wald() {
+    let mut world = flat_world(140, 140, &[(30, 30)], |_, _| false, |x, y| (85..115).contains(&x) && (85..115).contains(&y));
+    let (ticks, _) = tokio::sync::broadcast::channel(64);
+    let cutter = world.place_building_rotated(1, BuildingKind::Woodcutter, 50, 30, 0, 1).unwrap().id;
+    let mut ai = Computer::with_level(1, AiLevel::Easy, &world.economy);
+    let mut moved = None;
+    for _ in 0..40 {
+        for cmd in ai.think(&world, 5.0) {
+            if let ClientMsg::MoveBuilding { building_id, .. } = cmd {
+                assert_eq!(building_id, cutter);
+                moved = Some(cmd.clone());
+            }
+            let _ = apply_command(&mut world, &ticks, 1, cmd);
+        }
+        if moved.is_some() {
+            break;
+        }
+    }
+    assert!(moved.is_some(), "Holzfäller ist nicht umgezogen");
+    let b = world.buildings.iter().find(|b| b.id == cutter).unwrap();
+    assert!(b.x >= 70 && b.y >= 70, "steht jetzt bei {},{}", b.x, b.y);
+}
+
+/// Nach einem abgebrochenen Angriff will er mehr Soldaten (und Essen für sie), und die
+/// nächste Welle gegen denselben Gegner muss stärker sein.
+#[test]
+fn nach_abgebrochenem_angriff_eine_groessere_armee() {
+    let world = flat_world(100, 100, &[(30, 30)], |_, _| false, |_, _| false);
+    let mut ai = Computer::with_level(1, AiLevel::Normal, &world.economy);
+    let before = ai.army_target();
+    ai.attack_failed(&world, 2, 120.0);
+    assert!(ai.army_target() > before, "{} nicht mehr als {before}", ai.army_target());
+    assert!(ai.extra.get(&BuildingKind::Orchard).copied().unwrap_or(0) >= 1, "keine Obstplantage mehr fürs Heer");
+    assert_eq!(ai.failed_power.get(&2).copied(), Some(120.0));
+    for _ in 0..10 {
+        ai.attack_failed(&world, 2, 80.0);
+    }
+    assert!(ai.army_target() <= before * 2, "höchstens doppelt so groß");
+    assert_eq!(ai.failed_power.get(&2).copied(), Some(120.0), "die stärkste gescheiterte Welle zählt");
+}
+
+/// Verbündete Computer sehen die Angriffe des anderen und ziehen gegen denselben Gegner.
+#[test]
+fn verbuendete_stimmen_ihre_angriffe_ab() {
+    let mut world = flat_world(200, 100, &[(30, 30), (30, 70), (170, 20), (170, 80)], |_, _| false, |_, _| false);
+    world.set_team(1, 1);
+    world.set_team(2, 1);
+    let eco = Economy::parse(crate::economy::ECONOMY_JSON).unwrap();
+    let mut ais = vec![Computer::with_level(1, AiLevel::Hard, &eco), Computer::with_level(2, AiLevel::Hard, &eco), Computer::with_level(3, AiLevel::Hard, &eco)];
+    super::link(&mut ais);
+    ais[0].post(&world, Some((4, 50.0, true)));
+    let calls = ais[1].ally_calls(&world);
+    assert_eq!(calls.len(), 1, "der Verbündete sieht den Angriff");
+    assert_eq!(calls[0].target, 4);
+    assert!(ais[2].ally_calls(&world).is_empty(), "ein Gegner sieht ihn nicht");
+    // Das Ziel des Verbündeten geht vor (sonst wäre es der nähere Spieler 3).
+    let from = (40.0, 50.0);
+    assert_eq!(super::attack::choose_target(&world, 2, from, None).unwrap().0, 3);
+    assert_eq!(super::attack::choose_target(&world, 2, from, Some(4)).unwrap().0, 4);
+    // Zurückgezogen: weg von der Tafel.
+    ais[0].post(&world, None);
+    assert!(ais[1].ally_calls(&world).is_empty());
 }

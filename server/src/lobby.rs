@@ -70,6 +70,8 @@ pub struct Member {
     pub daring: Option<u8>,
     #[serde(default)]
     pub helpfulness: Option<u8>,
+    #[serde(default)]
+    pub growth: Option<u8>,
 }
 
 impl Member {
@@ -82,6 +84,7 @@ impl Member {
             team: 0,
             daring: None,
             helpfulness: None,
+            growth: None,
         }
     }
 
@@ -147,6 +150,7 @@ impl Meta {
                     personality: m.personality.clone(),
                     daring: m.daring,
                     helpfulness: m.helpfulness,
+                    growth: m.growth,
                 })
             })
             .collect()
@@ -616,6 +620,7 @@ impl Hub {
                         team: m.team,
                         daring: m.daring,
                         helpfulness: m.helpfulness,
+                        growth: m.growth,
                         defeated: defeated.contains(&(i as u32 + 1)),
                     }),
                 })
@@ -893,6 +898,7 @@ impl Hub {
             team: 0,
             daring: None,
             helpfulness: None,
+            growth: None,
         });
         Ok(())
     }
@@ -945,7 +951,7 @@ impl Hub {
     }
 
     /// Gastgeber: Regler eines Computergegners für dieses Spiel (leer = wie sein Charakter).
-    fn set_computer_traits(&self, token: &str, slot: u32, daring: Option<u8>, helpfulness: Option<u8>) -> Reply {
+    fn set_computer_traits(&self, token: &str, slot: u32, daring: Option<u8>, helpfulness: Option<u8>, growth: Option<u8>) -> Reply {
         let Some(game) = self.game_of(token) else {
             return err("lobby.not_in_game");
         };
@@ -961,6 +967,7 @@ impl Hub {
         };
         m.daring = daring.map(|d| d.min(100));
         m.helpfulness = helpfulness.map(|h| h.min(100));
+        m.growth = growth.map(|g| g.min(100));
         Ok(())
     }
 
@@ -1081,7 +1088,7 @@ impl Hub {
             LobbyClientMsg::AddComputer { slot, level, personality } => self.add_computer(token, slot, level, personality),
             LobbyClientMsg::RemoveComputer { slot } => self.remove_computer(token, slot),
             LobbyClientMsg::SetTeam { slot, team } => self.set_team(token, slot, team),
-            LobbyClientMsg::SetComputerTraits { slot, daring, helpfulness } => self.set_computer_traits(token, slot, daring, helpfulness),
+            LobbyClientMsg::SetComputerTraits { slot, daring, helpfulness, growth } => self.set_computer_traits(token, slot, daring, helpfulness, growth),
             LobbyClientMsg::SetTradeMode { mode } => self.set_trade_mode(token, mode),
             LobbyClientMsg::SetShotMode { mode } => self.set_shot_mode(token, mode),
             LobbyClientMsg::SetRules { rules } => self.set_rules(token, rules),
@@ -1240,7 +1247,7 @@ mod tests {
         let token = {
             let game = hub.game(id).unwrap();
             let meta = game.meta.lock().unwrap();
-            assert_eq!(meta.computers(), vec![ai::Seat { player: 3, level: AiLevel::Normal, personality: "balanced".into(), daring: None, helpfulness: None }]);
+            assert_eq!(meta.computers(), vec![ai::Seat { player: 3, level: AiLevel::Normal, personality: "balanced".into(), daring: None, helpfulness: None, growth: None }]);
             meta.slots[2].as_ref().unwrap().token.clone()
         };
         assert!(

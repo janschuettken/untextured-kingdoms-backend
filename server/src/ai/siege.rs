@@ -35,7 +35,8 @@ impl Computer {
             self.siege_wanted = foes.into_iter().any(|f| crate::world::castle_closed(world, f));
         }
         let workshops: Vec<_> = world.buildings.iter().filter(|b| b.owner == p && b.kind == BuildingKind::SiegeWorkshop).collect();
-        if !self.siege_wanted && workshops.is_empty() {
+        // Erst die eigene Burg zu: vorher braucht er Holz und Bretter für Mauer und Tore.
+        if workshops.is_empty() && (!self.siege_wanted || (self.profile.walls && !self.closed)) {
             return;
         }
         if workshops.is_empty() {

@@ -194,9 +194,29 @@ fn breach_target(world: &World, me: u32, target: u32, group: &[&Unit]) -> Option
         .or(Some(AttackTarget::Building { id: keep.id }))
 }
 
+/// Eingang des Bergfrieds eines Spielers (sonst seine Mitte).
+pub fn keep_door(world: &World, player: u32) -> Option<(u32, u32)> {
+    world
+        .buildings
+        .iter()
+        .find(|b| b.owner == player && b.kind == BuildingKind::Keep)
+        .map(|b| b.entrance.unwrap_or((b.x + b.w / 2, b.y + b.h / 2)))
+}
+
+/// Eingang des Bergfrieds des schwächsten Gegners, ob erreichbar oder nicht (für Brücken).
+pub fn weakest_keep(world: &World, me: u32) -> Option<(u32, u32)> {
+    world
+        .buildings
+        .iter()
+        .filter(|b| b.owner != me && b.owner != 0 && b.kind == BuildingKind::Keep && world.can_attack(me, b.owner))
+        .min_by(|a, b| estimate(world, a.owner).total_cmp(&estimate(world, b.owner)).then(a.owner.cmp(&b.owner)))
+        .map(|b| b.entrance.unwrap_or((b.x + b.w / 2, b.y + b.h / 2)))
+}
+
 /// Ziel einer Welle: der Spieler mit der kleinsten geschätzten Stärke, dazu die Stelle,
 /// bis zu der man von `from` aus kommt. Ohne Weg dorthin (Insel) der nächste.
-pub fn choose_target(world: &World, me: u32, from: (f32, f32)) -> Option<(u32, f32, (f32, f32))> {
+/// `prefer`: diesen Gegner zuerst (ein Verbündeter greift ihn gerade an).
+pub fn choose_target(world: &World, me: u32, from: (f32, f32), prefer: Option<u32>) -> Option<(u32, f32, (f32, f32))> {
     let mut targets: Vec<(u32, f32, f32, (u32, u32))> = world
         .buildings
         .iter()
@@ -207,7 +227,7 @@ pub fn choose_target(world: &World, me: u32, from: (f32, f32)) -> Option<(u32, f
             (b.owner, estimate(world, b.owner), d, c)
         })
         .collect();
-    targets.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.2.total_cmp(&b.2)));
+    targets.sort_by(|a, b| (Some(b.0) == prefer).cmp(&(Some(a.0) == prefer)).then(a.1.total_cmp(&b.1)).then(a.2.total_cmp(&b.2)));
     let start = (from.0 as i32, from.1 as i32);
     // Feindliche Tore gelten beim Bewegen als zu: die Welle läuft bis vor das erste Tor.
     let gates: std::collections::HashSet<(i32, i32)> = world

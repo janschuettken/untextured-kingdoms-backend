@@ -302,6 +302,39 @@ impl Layout {
         self
     }
 
+    /// Höchstens `max` Tore (0 = alle): das Haupttor bleibt, dazu die, vor denen die meisten
+    /// Vorkommen (Wald, Stein, Eisen, fruchtbarer Boden) liegen. Wo kein Tor mehr hinkommt,
+    /// wird Mauer: im Ernstfall muss nicht auf jeder Seite ein Tor sein.
+    pub fn limit_gates(mut self, world: &World, max: usize) -> Layout {
+        if max == 0 || self.gates.len() <= max {
+            return self;
+        }
+        let (w, h) = (world.map.width as i64, world.map.height as i64);
+        let score = |g: &GateSpot| {
+            let (ox, oy) = self.outside_of(world, g);
+            let mut n = 0;
+            for y in (oy - 30).max(0)..(oy + 30).min(h) {
+                for x in (ox - 30).max(0)..(ox + 30).min(w) {
+                    if self.inside(x, y) {
+                        continue;
+                    }
+                    let i = (y * w + x) as usize;
+                    if world.map.resources[i] != ResourceKind::None {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        };
+        let mut rest: Vec<(usize, i64)> = self.gates.iter().enumerate().skip(1).map(|(i, g)| (i, score(g))).collect();
+        rest.sort_by_key(|&(i, s)| (-s, i));
+        let mut keep: Vec<usize> = std::iter::once(0).chain(rest.into_iter().take(max - 1).map(|(i, _)| i)).collect();
+        keep.sort();
+        self.gates = keep.iter().map(|&i| self.gates[i]).collect();
+        self.streets = keep.iter().filter_map(|&i| self.streets.get(i).cloned()).collect();
+        self
+    }
+
     /// Straße zum verschobenen Tor: bis vor die Mauer wie bisher, dann seitlich zum
     /// Durchgang, hindurch und 3 Felder hinaus.
     fn bend_street(&self, world: &World, street: &[(i64, i64)], g: &GateSpot) -> Vec<(i64, i64)> {
@@ -1043,7 +1076,8 @@ mod plan_tests {
 
     fn check_map(text: &str, players: usize) -> Vec<String> {
         let mut report = Vec::new();
-        for style in [CastleLayout::Square, CastleLayout::Octagon, CastleLayout::Narrows] {
+        // Auch mit höchstens zwei Toren (der Rest wird Mauer) muss der Ring dicht sein.
+        for (style, max_gates) in [CastleLayout::Square, CastleLayout::Octagon, CastleLayout::Narrows].into_iter().flat_map(|s| [(s, 0), (s, 2)]) {
             let map = GameMap::parse(text).unwrap();
             let spawns = map.spawns.clone();
             let economy = Economy::parse(crate::economy::ECONOMY_JSON).unwrap().without_people().without_build_radius();
@@ -1054,7 +1088,10 @@ mod plan_tests {
             for p in 1..=players as u32 {
                 world.give_everything_for_tests(p);
                 let keep = world.buildings.iter().find(|b| b.owner == p && b.kind == BuildingKind::Keep).unwrap().clone();
-                let layout = Layout::new(&world, &keep, 12, BuildingKind::Gatehouse, style);
+                let layout = Layout::new(&world, &keep, 12, BuildingKind::Gatehouse, style).limit_gates(&world, max_gates);
+                if max_gates > 0 {
+                    assert!(layout.gates().len() <= max_gates, "{style:?}: {} Tore", layout.gates().len());
+                }
                 let mut failed = 0;
                 for g in layout.gates() {
                     if let Err(e) = world.place_building_rotated(p, g.0, g.1, g.2, g.3, 1) {
@@ -1072,7 +1109,7 @@ mod plan_tests {
                 }
                 let st = world.castle_status(p);
                 report.push(format!(
-                    "{style:?} P{p} -> {:?}: {} Mauerfelder, {} Tore ({failed} nicht baubar), geschlossen {} Lücke {:?}",
+                    "{style:?} (höchstens {max_gates} Tore) P{p} -> {:?}: {} Mauerfelder, {} Tore ({failed} nicht baubar), geschlossen {} Lücke {:?}",
                     layout.style,
                     layout.ring_tiles().len(),
                     layout.gates().len(),
