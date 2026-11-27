@@ -708,7 +708,7 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
         .enumerate()
         .filter_map(|(i, s)| s.as_ref().map(|m| (i as u32 + 1, m.name.clone(), !m.is_human())))
         .collect();
-    let (map, buildings, economy, stock, diplomacy, outcome, mut ticks, shot_mode) = {
+    let (map, buildings, economy, stock, diplomacy, outcome, mut ticks, shot_mode, rules) = {
         let mut world = state.world.lock().unwrap();
         // Erstes Mal im Spiel (oder nach "Neues Spiel"): König aufs eigene Startfeld.
         if !world.has_player(player_id) {
@@ -756,6 +756,7 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
             (world.eliminated(), world.winners().map(|w| w.to_vec())),
             state.ticks.subscribe(),
             world.shot_mode(),
+            world.rules(),
         )
     };
     info!("Spiel {}: Spieler {player_id} verbunden", game.id);
@@ -771,6 +772,7 @@ async fn handle_socket(mut socket: WebSocket, hub: Arc<Hub>, q: GameQuery) {
         stock,
         buildings,
         shot_mode,
+        rules,
     };
     let _ = out_tx.send(welcome).await;
     let _ = out_tx.send(diplomacy).await;

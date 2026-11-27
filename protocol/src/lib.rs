@@ -199,6 +199,9 @@ pub enum ServerMsg {
         /// Wie Fernkämpfer schießen (für die Reichweitenanzeige).
         #[serde(default)]
         shot_mode: ShotMode,
+        /// Spielregeln (z. B. ob Munition verbraucht wird).
+        #[serde(default)]
+        rules: GameRules,
     },
     Tick {
         /// JSON-Zahl; reicht bei 20 Ticks/s für Millionen Jahre.
@@ -394,6 +397,24 @@ pub enum ShotMode {
     LineOfSight,
 }
 
+/// Spielregeln, die der Gastgeber in der Lobby wählt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GameRules {
+    /// Bogen- und Armbrustschützen verbrauchen Pfeile (sonst unbegrenzt).
+    #[serde(default = "yes")]
+    pub arrows: bool,
+    /// Belagerungsgeräte verbrauchen Munition (Steine, Bretter; sonst unbegrenzt).
+    #[serde(default = "yes")]
+    pub siege_ammo: bool,
+}
+
+impl Default for GameRules {
+    fn default() -> Self {
+        GameRules { arrows: true, siege_ammo: true }
+    }
+}
+
 /// Nachrichten vom Client an die Lobby (WebSocket `/lobby`).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -453,6 +474,8 @@ pub enum LobbyClientMsg {
     SetTradeMode { mode: TradeMode },
     /// Nur Gastgeber, nur vor dem Start: wann Fernkämpfer treffen (Wurfbahn oder Sichtlinie).
     SetShotMode { mode: ShotMode },
+    /// Nur Gastgeber, nur vor dem Start: Spielregeln (Munition).
+    SetRules { rules: GameRules },
     /// Gastgeber oder Admin, jederzeit: Namen eines Spiels setzen (leer = Standardname).
     RenameGame { game_id: u32, title: String },
 }
@@ -548,6 +571,8 @@ pub struct LobbyGame {
     /// Fernkampf: Wurfbahn oder Sichtlinie.
     #[serde(default)]
     pub shot_mode: ShotMode,
+    #[serde(default)]
+    pub rules: GameRules,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -1048,6 +1073,8 @@ pub enum Good {
     Horse,
     /// Heilsalbe aus der Apotheke, für Heiler.
     Salve,
+    /// Pfeile und Bolzen vom Pfeilmacher, für Bogen- und Armbrustschützen.
+    Arrows,
 }
 
 /// Schadensart eines Angriffs. Jede Rüstung wehrt jede Art unterschiedlich gut ab.
@@ -1192,6 +1219,8 @@ pub enum BuildingKind {
     Smelter,
     Smithy,
     SpearMaker,
+    /// Pfeilmacher: Pfeile aus Holz, einfach zu bauen.
+    Fletcher,
     Bowyer,
     Tannery,
     Farm,
@@ -1481,6 +1510,9 @@ pub struct EconomyDef {
     pub base_capacity: u32,
     /// Zusätzlicher Platz je Ware pro Vorratslager.
     pub storehouse_capacity: u32,
+    /// So viele Stück einer Ware passen auf einen Lagerplatz (fehlt sie: 1). Pfeile z. B. 10.
+    #[serde(default)]
+    pub per_slot: Vec<GoodAmount>,
     /// So viel Prozent der Bau- und Ausbaukosten gibt es beim Abriss zurück.
     pub demolish_refund_percent: u32,
     /// So viel Prozent der Bau- und Ausbaukosten kostet das Versetzen eines Gebäudes.
@@ -1580,6 +1612,14 @@ pub struct UnitDef {
     /// Heiler: so weit (Felder) reicht er zu einem Verwundeten.
     #[serde(default)]
     pub heal_range: f32,
+    /// Vorrat an Schüssen (Köcher, Steine im Gerät); ist er leer, schießt die Einheit erst nach
+    /// Nachschub wieder. 0 = unbegrenzt. Gilt nur, wenn die Spielregel Munition verlangt.
+    #[serde(default)]
+    pub shots: u32,
+    /// Nachschub je Schuss (Karren bringen ihn, Schützen holen ihn auch am nahen Lager).
+    /// Ohne: unbegrenzt.
+    #[serde(default)]
+    pub ammo: Option<GoodAmount>,
     /// Belagerungsgerät: Bau und Bedienung. `cost` sind dann die Baustoffe, die zur Baustelle
     /// gebracht werden, `seconds` die Bauzeit für einen Baumeister.
     #[serde(default)]
@@ -1646,10 +1686,6 @@ pub struct SiegeDef {
     pub on_towers: bool,
     /// So schnell fliegt das Geschoss (Felder pro Sekunde).
     pub shot_speed: f32,
-    /// Vorrat an Schüssen; ist er leer, schießt das Gerät erst nach Nachschub wieder. 0 = unbegrenzt.
-    pub shots: u32,
-    /// Nachschub je Schuss (Karren bringen ihn aus dem Lager). Ohne: füllt sich nicht auf.
-    pub ammo: Option<GoodAmount>,
     /// Belagerungsturm: dockt an Mauern mit Wehrgang an und wird zur Treppe hinauf.
     pub docks: bool,
 }
@@ -1666,8 +1702,6 @@ impl Default for SiegeDef {
             hits_units: true,
             on_towers: false,
             shot_speed: 15.0,
-            shots: 0,
-            ammo: None,
             docks: false,
         }
     }
@@ -1742,6 +1776,9 @@ pub struct ArmyDef {
     pub loot_percent: u32,
     /// Belagerung: so viele Baustoffe trägt ein Baumeister im Rucksack zur Baustelle („provisorisch mitnehmen“).
     pub builder_backpack: u32,
+    /// Munition: Schützen und Geräte so nah (Felder) an einem eigenen Lager füllen ihren
+    /// Vorrat dort selbst auf (sonst bringen Karren Nachschub). 0 = nie.
+    pub refill_radius: f32,
 }
 
 impl Default for ArmyDef {
@@ -1768,6 +1805,7 @@ impl Default for ArmyDef {
             arrow_hit_radius: 0.6,
             loot_percent: 50,
             builder_backpack: 5,
+            refill_radius: 10.0,
         }
     }
 }

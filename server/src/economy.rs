@@ -27,6 +27,8 @@ fn default_king(speed: f32) -> UnitDef {
         ],
         horse_armor: Vec::new(),
         range: 1.2,
+        shots: 0,
+        ammo: None,
         upkeep: 0,
         food: 0,
         can_ride: false,
@@ -121,6 +123,15 @@ pub fn migrate(v: &mut serde_json::Value) {
                     let entry = |t: &str| serde_json::json!({"type": t, "block": block});
                     u.insert("armor".into(), Value::Array(vec![entry("ranged"), entry("heavy_ranged")]));
                 }
+            }
+            // Vorrat an Schüssen stand früher nur bei den Belagerungsgeräten (`siege.shots`, `siege.ammo`).
+            let moved: Vec<(String, Value)> = u
+                .get_mut("siege")
+                .and_then(Value::as_object_mut)
+                .map(|s| ["shots", "ammo"].iter().filter_map(|&k| s.remove(k).map(|x| (k.to_string(), x))).collect())
+                .unwrap_or_default();
+            for (k, x) in moved {
+                u.entry(k).or_insert(x);
             }
         }
     }
@@ -264,6 +275,7 @@ impl Economy {
             }
         }
         add_apothecary(&mut def);
+        add_arrows(&mut def);
         fill_from_builtin(&mut def);
         if old_format {
             add_armor_from_builtin(&mut def);
@@ -526,6 +538,16 @@ impl Economy {
         self.buildings.get(&kind).map(|&i| &self.def.buildings[i])
     }
 
+    /// So viele Stück dieser Ware passen auf einen Lagerplatz (mindestens 1).
+    pub fn per_slot(&self, good: Good) -> u32 {
+        self.def.per_slot.iter().find(|g| g.good == good).map_or(1, |g| g.amount.max(1))
+    }
+
+    /// Alle Waren, die mehr als ein Stück je Lagerplatz haben.
+    pub fn per_slot_map(&self) -> std::collections::BTreeMap<Good, u32> {
+        self.def.per_slot.iter().filter(|g| g.amount > 1).map(|g| (g.good, g.amount)).collect()
+    }
+
     pub fn unit(&self, kind: UnitKind) -> Option<&UnitDef> {
         self.def.units.iter().find(|u| u.kind == kind)
     }
@@ -639,6 +661,36 @@ fn add_armor_from_builtin(def: &mut EconomyDef) {
             if l.armor.is_empty() {
                 l.armor = b.at(i as u32 + 1).armor.clone();
             }
+        }
+    }
+}
+
+/// Ältere Balancing-Dateien kennen noch keine Pfeile: Ware, Lagerplätze, Preis und
+/// Köcher aus den eingebauten Werten (der Pfeilmacher kommt über `fill_from_builtin`).
+fn add_arrows(def: &mut EconomyDef) {
+    use protocol::Good;
+    if def.goods.contains(&Good::Arrows) {
+        return;
+    }
+    let Some(base) = builtin_def() else { return };
+    def.goods.push(Good::Arrows);
+    // Pfeile lagern wie eingebaut (Waffenkammer, Belagerungslager), mit eigenem Platzbedarf.
+    for b in def.buildings.iter_mut().filter(|b| !b.hub_goods.is_empty()) {
+        if base.buildings.iter().any(|x| x.kind == b.kind && x.hub_goods.contains(&Good::Arrows)) {
+            b.hub_goods.push(Good::Arrows);
+        }
+    }
+    if !def.per_slot.iter().any(|g| g.good == Good::Arrows) {
+        def.per_slot.extend(base.per_slot.iter().filter(|g| g.good == Good::Arrows));
+    }
+    if !def.market.prices.iter().any(|p| p.good == Good::Arrows) {
+        def.market.prices.extend(base.market.prices.iter().filter(|p| p.good == Good::Arrows));
+    }
+    // Köcher der Schützen, nur wenn die Datei noch keinen Vorrat kennt.
+    for u in def.units.iter_mut().filter(|u| u.shots == 0 && u.ammo.is_none()) {
+        if let Some(b) = base.units.iter().find(|b| b.kind == u.kind && b.ammo.is_some_and(|a| a.good == Good::Arrows)) {
+            u.shots = b.shots;
+            u.ammo = b.ammo;
         }
     }
 }
@@ -763,6 +815,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn alte_dateien_bekommen_pfeile_und_den_vorrat_beim_geraet() {
+        let mut v: serde_json::Value = serde_json::from_str(ECONOMY_JSON).unwrap();
+        v["goods"].as_array_mut().unwrap().retain(|g| g != "arrows");
+        v["buildings"].as_array_mut().unwrap().retain(|b| b["kind"] != "fletcher");
+        for b in v["buildings"].as_array_mut().unwrap() {
+            b["hub_goods"].as_array_mut().unwrap().retain(|g| g != "arrows");
+        }
+        v["recipes"].as_array_mut().unwrap().retain(|r| r["building"] != "fletcher");
+        v["market"]["prices"].as_array_mut().unwrap().retain(|p| p["good"] != "arrows");
+        v.as_object_mut().unwrap().remove("per_slot");
+        for u in v["units"].as_array_mut().unwrap() {
+            let u = u.as_object_mut().unwrap();
+            let (shots, ammo) = (u.remove("shots"), u.remove("ammo"));
+            // Früher stand der Vorrat bei den Geräten unter `siege`.
+            if let (Some(siege), Some(shots)) = (u.get_mut("siege").and_then(|s| s.as_object_mut()), shots) {
+                siege.insert("shots".into(), shots);
+                siege.insert("ammo".into(), ammo.unwrap_or_default());
+            }
+        }
+        let eco = Economy::parse(&v.to_string()).unwrap();
+        assert!(eco.def.goods.contains(&Good::Arrows));
+        assert!(eco.building(BuildingKind::Fletcher).is_some());
+        assert!(eco.recipe("make_arrows").is_some());
+        assert!(eco.building(BuildingKind::Armory).unwrap().hub_goods.contains(&Good::Arrows));
+        assert!(eco.per_slot(Good::Arrows) > 1);
+        assert!(eco.unit(UnitKind::Archer).is_some_and(|u| u.shots > 0 && u.ammo.is_some()));
+        let cat = eco.unit(UnitKind::Catapult).unwrap();
+        assert!(cat.shots > 0 && cat.ammo.is_some_and(|a| a.good == Good::Stone), "aus `siege` übernommen");
+    }
+
+    #[test]
     fn alte_dateien_bekommen_die_apotheke() {
         let mut v: serde_json::Value = serde_json::from_str(ECONOMY_JSON).unwrap();
         v["goods"].as_array_mut().unwrap().retain(|g| g != "salve");
@@ -787,7 +870,7 @@ mod tests {
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 40);
+        assert_eq!(eco.def.buildings.len(), 41);
         assert!(eco.def.buildings.iter().any(|b| b.hub), "ohne Lager kein Transport");
     }
 
@@ -796,7 +879,7 @@ mod tests {
         // Jans Regel: aus Holz allein lässt sich alles wieder aufbauen.
         let eco = Economy::parse(ECONOMY_JSON).unwrap();
         use BuildingKind::*;
-        for kind in [Woodcutter, Sawmill, Stonemason, PigFarm, SpearMaker] {
+        for kind in [Woodcutter, Sawmill, Stonemason, PigFarm, SpearMaker, Fletcher] {
             let cost = &eco.building(kind).unwrap().levels[0].cost;
             assert!(cost.iter().all(|g| g.good == protocol::Good::Wood), "{kind:?}");
         }

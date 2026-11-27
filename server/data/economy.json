@@ -16,6 +16,7 @@
     "spear",
     "longbow",
     "crossbow",
+    "arrows",
     "sword",
     "armor",
     "light_armor",
@@ -927,7 +928,8 @@
         "armor",
         "light_armor",
         "saddle",
-        "salve"
+        "salve",
+        "arrows"
       ],
       "delivery": {"carriers": true, "carts": true, "worker": true},
       "horse_capacity": 0,
@@ -1444,6 +1446,50 @@
         {
           "cost": [{"good": "wood", "amount": 16}],
           "recipes": ["make_spear"],
+          "housing": 0,
+          "spawns": [],
+          "trains": [],
+          "max_hp": 250,
+          "workers": 1,
+          "gather_radius": 0,
+          "service_radius": 0,
+          "walkway": false,
+          "stairs": false,
+          "gate_radius": 0,
+          "garrison": 0,
+          "cover_percent": 0,
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
+          "road_speed_percent": 0,
+          "hub_capacity": 0,
+          "storage_inputs": 0,
+          "storage_outputs": 0
+        }
+      ]
+    },
+    {
+      "kind": "fletcher",
+      "category": "military",
+      "w": 3,
+      "h": 3,
+      "height": 1.8,
+      "release_after_seconds": 0,
+      "build_radius": 0,
+      "no_entrance": false,
+      "on_walls": false,
+      "on_ramps": false,
+      "first_free": false,
+      "hub_goods": [],
+      "delivery": {"carriers": true, "carts": true, "worker": true},
+      "horse_capacity": 0,
+      "max_span": 0,
+      "enemy_radius": 15,
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 12}],
+          "recipes": ["make_arrows"],
           "housing": 0,
           "spawns": [],
           "trains": [],
@@ -2206,7 +2252,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [{"type": "ranged", "min": 0, "block": 1}, {"type": "heavy_ranged", "min": 0, "block": 1}],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
           "storage_inputs": 0,
@@ -2232,7 +2281,10 @@
           "gate_radius": 0,
           "garrison": 0,
           "cover_percent": 0,
-          "armor": [{"type": "ranged", "min": 0, "block": 1}, {"type": "heavy_ranged", "min": 0, "block": 1}],
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
           "storage_inputs": 0,
@@ -2296,7 +2348,7 @@
       "on_walls": false,
       "on_ramps": false,
       "first_free": false,
-      "hub_goods": ["wood", "boards", "stone", "iron"],
+      "hub_goods": ["wood", "boards", "stone", "iron", "arrows"],
       "delivery": {"carriers": false, "carts": true, "worker": false},
       "horse_capacity": 0,
       "max_span": 0,
@@ -2385,6 +2437,14 @@
       "inputs": [{"good": "wood", "amount": 1}],
       "outputs": [{"good": "spear", "amount": 1}],
       "seconds": 8,
+      "unattended_percent": 0
+    },
+    {
+      "id": "make_arrows",
+      "building": "fletcher",
+      "inputs": [{"good": "wood", "amount": 1}],
+      "outputs": [{"good": "arrows", "amount": 10}],
+      "seconds": 10,
       "unattended_percent": 0
     },
     {
@@ -2526,6 +2586,9 @@
   "start_building": "keep",
   "base_capacity": 600,
   "storehouse_capacity": 600,
+  "per_slot": [
+    {"good": "arrows", "amount": 10}
+  ],
   "demolish_refund_percent": 75,
   "move_cost_percent": 25,
   "slope_tiles": 2,
@@ -2558,9 +2621,9 @@
     "hungry_speed_percent": 50,
     "per_transport": 1,
     "rations": [
-      { "food": 1, "speed_percent": 0 },
-      { "food": 2, "speed_percent": 15 },
-      { "food": 3, "speed_percent": 25 }
+      {"food": 1, "speed_percent": 0},
+      {"food": 2, "speed_percent": 15},
+      {"food": 3, "speed_percent": 25}
     ],
     "default_ration": 0
   },
@@ -2568,11 +2631,11 @@
     "start_taler": 100,
     "tax_per_meal": 1,
     "tax_levels": [
-      { "tax_percent": 0, "speed_percent": 15 },
-      { "tax_percent": 50, "speed_percent": 8 },
-      { "tax_percent": 100, "speed_percent": 0 },
-      { "tax_percent": 200, "speed_percent": -10 },
-      { "tax_percent": 300, "speed_percent": -25 }
+      {"tax_percent": 0, "speed_percent": 15},
+      {"tax_percent": 50, "speed_percent": 8},
+      {"tax_percent": 100, "speed_percent": 0},
+      {"tax_percent": 200, "speed_percent": -10},
+      {"tax_percent": 300, "speed_percent": -25}
     ],
     "default_tax": 2,
     "prices": [
@@ -2595,7 +2658,8 @@
       {"good": "armor", "buy": 50, "sell": 25},
       {"good": "light_armor", "buy": 24, "sell": 12},
       {"good": "saddle", "buy": 24, "sell": 12},
-      {"good": "salve", "buy": 14, "sell": 0}
+      {"good": "salve", "buy": 14, "sell": 0},
+      {"good": "arrows", "buy": 2, "sell": 1}
     ]
   },
   "units": [
@@ -2772,7 +2836,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
-      "heal_range": 0
+      "heal_range": 0,
+      "shots": 24,
+      "ammo": {"good": "arrows", "amount": 1}
     },
     {
       "kind": "crossbowman",
@@ -2799,7 +2865,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
-      "heal_range": 0
+      "heal_range": 0,
+      "shots": 20,
+      "ammo": {"good": "arrows", "amount": 1}
     },
     {
       "kind": "light_swordsman",
@@ -2984,10 +3052,10 @@
         "hits_buildings": true,
         "hits_units": true,
         "on_towers": false,
-        "shot_speed": 14,
-        "shots": 10,
-        "ammo": {"good": "stone", "amount": 1}
-      }
+        "shot_speed": 14
+      },
+      "shots": 10,
+      "ammo": {"good": "stone", "amount": 1}
     },
     {
       "kind": "trebuchet",
@@ -3030,10 +3098,10 @@
         "hits_buildings": true,
         "hits_units": false,
         "on_towers": false,
-        "shot_speed": 12,
-        "shots": 6,
-        "ammo": {"good": "stone", "amount": 2}
-      }
+        "shot_speed": 12
+      },
+      "shots": 6,
+      "ammo": {"good": "stone", "amount": 2}
     },
     {
       "kind": "ballista",
@@ -3067,14 +3135,18 @@
         "hits_buildings": false,
         "hits_units": true,
         "on_towers": true,
-        "shot_speed": 30,
-        "shots": 20,
-        "ammo": {"good": "boards", "amount": 1}
-      }
+        "shot_speed": 30
+      },
+      "shots": 20,
+      "ammo": {"good": "boards", "amount": 1}
     },
     {
       "kind": "siege_tower",
-      "cost": [{"good": "boards", "amount": 60}, {"good": "wood", "amount": 40}, {"good": "iron", "amount": 10}],
+      "cost": [
+        {"good": "boards", "amount": 60},
+        {"good": "wood", "amount": 40},
+        {"good": "iron", "amount": 10}
+      ],
       "taler": 0,
       "seconds": 90,
       "speed": 0.5,
@@ -3108,10 +3180,9 @@
         "hits_units": false,
         "on_towers": false,
         "shot_speed": 15,
-        "shots": 0,
-        "ammo": null,
         "docks": true
-      }
+      },
+      "shots": 0
     }
   ],
   "army": {
@@ -3133,6 +3204,7 @@
     "melee_max_levels": 1,
     "height_range_percent": 5,
     "loot_percent": 50,
-    "builder_backpack": 5
+    "builder_backpack": 5,
+    "refill_radius": 10
   }
 }

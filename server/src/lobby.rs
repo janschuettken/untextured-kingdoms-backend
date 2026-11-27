@@ -112,6 +112,8 @@ pub struct Meta {
     pub trade_mode: TradeMode,
     /// Fernkampf: Wurfbahn oder Sichtlinie.
     pub shot_mode: protocol::ShotMode,
+    /// Spielregeln (Munition).
+    pub rules: protocol::GameRules,
     /// Kartenvorschau für die Lobby, solange das Spiel wartet.
     pub preview: Arc<protocol::GamePreview>,
 }
@@ -447,6 +449,7 @@ impl Hub {
             slots: file.slots,
             trade_mode: world.trade_mode(),
             shot_mode: world.shot_mode(),
+            rules: world.rules(),
             preview: Arc::new(preview::of_map(&map)),
         };
         let computers = meta.computers();
@@ -515,6 +518,7 @@ impl Hub {
         id: u32,
         trade_mode: Option<TradeMode>,
         shot_mode: Option<protocol::ShotMode>,
+        rules: Option<protocol::GameRules>,
     ) -> Result<(), String> {
         let game = self.game(id).ok_or("admin.no_game")?;
         let m = game.running.get().ok_or("admin.no_game")?.clone();
@@ -529,8 +533,12 @@ impl Hub {
                 world.set_shot_mode(mode);
                 meta.shot_mode = mode;
             }
+            if let Some(r) = rules {
+                world.set_rules(r);
+                meta.rules = r;
+            }
         }
-        info!("Spiel {id}: Einstellungen geändert (Handel {trade_mode:?}, Fernkampf {shot_mode:?})");
+        info!("Spiel {id}: Einstellungen geändert (Handel {trade_mode:?}, Fernkampf {shot_mode:?}, Regeln {rules:?})");
         if let Err(e) = self.save_game(&game) {
             warn!("Spiel {id}: Speichern nach Einstellungen fehlgeschlagen: {e}");
         }
@@ -638,6 +646,7 @@ impl Hub {
                 slots,
                 trade_mode: meta.trade_mode,
                 shot_mode: meta.shot_mode,
+                rules: meta.rules,
             };
             details.push((detail, meta.members().map(|m| m.token.clone()).collect()));
         }
@@ -705,6 +714,7 @@ impl Hub {
             slots,
             trade_mode: TradeMode::default(),
             shot_mode: protocol::ShotMode::default(),
+            rules: protocol::GameRules::default(),
             preview: Arc::new(preview::of_map(&map)),
         };
         let game = Arc::new(Game {
@@ -999,6 +1009,22 @@ impl Hub {
         Ok(())
     }
 
+    /// Gastgeber: Spielregeln (Munition).
+    fn set_rules(&self, token: &str, rules: protocol::GameRules) -> Reply {
+        let Some(game) = self.game_of(token) else {
+            return err("lobby.not_in_game");
+        };
+        let mut meta = game.meta.lock().unwrap();
+        if meta.host != token {
+            return err("lobby.not_host");
+        }
+        if meta.phase != GamePhase::Waiting {
+            return err("lobby.game_running");
+        }
+        meta.rules = rules;
+        Ok(())
+    }
+
     fn start(self: &Arc<Hub>, token: &str) -> Reply {
         let Some(game) = self.waiting_game_of(token) else {
             return err("lobby.not_in_game");
@@ -1022,6 +1048,7 @@ impl Hub {
             }
             world.set_trade_mode(meta.trade_mode);
             world.set_shot_mode(meta.shot_mode);
+            world.set_rules(meta.rules);
             meta.phase = GamePhase::Running;
             let mut m = Match::new(world, meta.map_name.clone(), meta.map_text.clone(), 100);
             m.set_computers(&meta.computers(), &self.personalities.lock().unwrap());
@@ -1057,6 +1084,7 @@ impl Hub {
             LobbyClientMsg::SetComputerTraits { slot, daring, helpfulness } => self.set_computer_traits(token, slot, daring, helpfulness),
             LobbyClientMsg::SetTradeMode { mode } => self.set_trade_mode(token, mode),
             LobbyClientMsg::SetShotMode { mode } => self.set_shot_mode(token, mode),
+            LobbyClientMsg::SetRules { rules } => self.set_rules(token, rules),
             // Braucht die Admin-Rechte (Datenbank): kommt über `handle_socket`.
             LobbyClientMsg::RenameGame { game_id, title } => self.rename_game(token, false, game_id, &title),
         }
@@ -1337,12 +1365,12 @@ mod tests {
         assert_eq!(count(copy), count(loaded));
         assert!(hub.import("kein json").is_err());
         // Starteinstellungen nachträglich ändern: nur dieses Spiel.
-        hub.change_settings(loaded, Some(TradeMode::Carts), Some(protocol::ShotMode::LineOfSight)).unwrap();
+        hub.change_settings(loaded, Some(TradeMode::Carts), Some(protocol::ShotMode::LineOfSight), None).unwrap();
         let mode = |g: u32| hub.game(g).unwrap().running.get().unwrap().world.lock().unwrap().shot_mode();
         assert_eq!(mode(loaded), protocol::ShotMode::LineOfSight);
         assert_eq!(mode(copy), protocol::ShotMode::default());
         assert_eq!(hub.game(loaded).unwrap().meta.lock().unwrap().trade_mode, TradeMode::Carts);
-        assert!(hub.change_settings(9999, None, None).is_err());
+        assert!(hub.change_settings(9999, None, None, None).is_err());
         hub.end_game(copy);
         hub.end_game(loaded);
         assert!(!hub.save_path(copy).exists());

@@ -4,6 +4,7 @@ import type { BuildingKind } from "./BuildingKind";
 import type { BuildingState } from "./BuildingState";
 import type { CastleStatus } from "./CastleStatus";
 import type { EconomyDef } from "./EconomyDef";
+import type { GameRules } from "./GameRules";
 import type { GoodAmount } from "./GoodAmount";
 import type { Heal } from "./Heal";
 import type { MapRef } from "./MapRef";
@@ -37,7 +38,11 @@ buildings: Array<BuildingState>,
 /**
  * Wie Fernkämpfer schießen (für die Reichweitenanzeige).
  */
-shot_mode: ShotMode, } | { "type": "tick", 
+shot_mode: ShotMode, 
+/**
+ * Spielregeln (z. B. ob Munition verbraucht wird).
+ */
+rules: GameRules, } | { "type": "tick", 
 /**
  * JSON-Zahl; reicht bei 20 Ticks/s für Millionen Jahre.
  */

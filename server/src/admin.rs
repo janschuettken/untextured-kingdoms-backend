@@ -34,7 +34,7 @@
 //! - `POST /api/games/{id}/new-game` nur Admin: neu anfangen (gleiche Karte, gleiche Mitspieler)
 //! - `POST /api/games/{id}/end`      nur Admin: Spiel ganz beenden, alle zurück in die Lobby
 //! - `POST /api/games/{id}/duplicate` nur Admin: laufendes Spiel samt Spielstand kopieren → `{ id }`
-//! - `GET  /api/games/{id}/settings`  Starteinstellungen des laufenden Spiels `{ trade_mode, shot_mode }`
+//! - `GET  /api/games/{id}/settings`  Starteinstellungen des laufenden Spiels `{ trade_mode, shot_mode, rules }`
 //! - `POST /api/games/{id}/settings`  nur Admin: dieselben nachträglich ändern (Felder optional),
 //!   alle Clients laden danach neu
 //! - `GET  /api/games/{id}/export`    nur Admin: aktuellen Spielstand als Datei herunterladen
@@ -797,6 +797,8 @@ struct GameSettings {
     trade_mode: Option<protocol::TradeMode>,
     #[serde(default)]
     shot_mode: Option<protocol::ShotMode>,
+    #[serde(default)]
+    rules: Option<protocol::GameRules>,
 }
 
 async fn get_settings(State(hub): State<Arc<Hub>>, Path(id): Path<u32>) -> Response {
@@ -805,7 +807,7 @@ async fn get_settings(State(hub): State<Arc<Hub>>, Path(id): Path<u32>) -> Respo
         Err(r) => return r,
     };
     let world = m.world.lock().unwrap();
-    Json(serde_json::json!({ "trade_mode": world.trade_mode(), "shot_mode": world.shot_mode() })).into_response()
+    Json(serde_json::json!({ "trade_mode": world.trade_mode(), "shot_mode": world.shot_mode(), "rules": world.rules() })).into_response()
 }
 
 async fn set_settings(
@@ -817,7 +819,7 @@ async fn set_settings(
     if !hub.admin.allows(&headers).await {
         return (StatusCode::UNAUTHORIZED, "admin.denied").into_response();
     }
-    match hub.change_settings(id, body.trade_mode, body.shot_mode) {
+    match hub.change_settings(id, body.trade_mode, body.shot_mode, body.rules) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
     }

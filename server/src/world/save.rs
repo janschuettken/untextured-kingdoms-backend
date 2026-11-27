@@ -42,6 +42,8 @@ pub struct SaveGame {
     #[serde(default)]
     shot_mode: protocol::ShotMode,
     #[serde(default)]
+    rules: protocol::GameRules,
+    #[serde(default)]
     eliminated: std::collections::BTreeSet<u32>,
     #[serde(default)]
     teams: HashMap<u32, u32>,
@@ -78,6 +80,7 @@ impl World {
             next_building_id: self.next_building_id,
             trade_mode: self.trade_mode,
             shot_mode: self.shot_mode,
+            rules: self.rules,
             eliminated: self.eliminated.clone(),
             teams: self.teams.clone(),
             winners: self.winners.clone(),
@@ -122,6 +125,7 @@ impl World {
         w.next_building_id = save.next_building_id;
         w.trade_mode = save.trade_mode;
         w.shot_mode = save.shot_mode;
+        w.rules = save.rules;
         w.eliminated = save.eliminated;
         w.teams = save.teams;
         w.winners = save.winners;

@@ -33,6 +33,10 @@ base_capacity: number,
  */
 storehouse_capacity: number, 
 /**
+ * So viele Stück einer Ware passen auf einen Lagerplatz (fehlt sie: 1). Pfeile z. B. 10.
+ */
+per_slot: Array<GoodAmount>, 
+/**
  * So viel Prozent der Bau- und Ausbaukosten gibt es beim Abriss zurück.
  */
 demolish_refund_percent: number, 

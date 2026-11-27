@@ -301,6 +301,49 @@ impl World {
         self.crew_follow(dt);
     }
 
+    /// Schützen und Geräte nahe an einem eigenen Lager (auch Belagerungslager) füllen ihren
+    /// Vorrat dort selbst auf, einmal je Sekunde.
+    pub(super) fn refill_at_hubs(&mut self, dt: f32) {
+        let r = self.economy.def.army.refill_radius;
+        let before = self.game_seconds - dt as f64;
+        if r <= 0.0 || before.floor() == self.game_seconds.floor() {
+            return;
+        }
+        let needy: Vec<(usize, protocol::Good)> = (0..self.units.len())
+            .filter(|&k| self.units[k].crew_of.is_none())
+            .filter_map(|k| self.ammo_need(&self.units[k]).map(|(g, _)| (k, g)))
+            .collect();
+        for (k, good) in needy {
+            let (owner, p) = (self.units[k].owner, self.units[k].pos);
+            let hub = self
+                .buildings
+                .iter()
+                .filter(|b| b.owner == owner && b.hp > 0 && b.site.is_none() && self.economy.building(b.kind).is_some_and(|d| d.hub))
+                .filter(|b| self.hub_amount(b.id, good) > 0)
+                .map(|b| {
+                    let dx = (b.x as f32 - p.0).max(p.0 - (b.x + b.w) as f32).max(0.0);
+                    let dy = (b.y as f32 - p.1).max(p.1 - (b.y + b.h) as f32).max(0.0);
+                    (b.id, dx.hypot(dy))
+                })
+                .filter(|&(_, d)| d <= r)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(id, _)| id);
+            let Some(hub) = hub else { continue };
+            let there = self.hub_amount(hub, good).min(self.stocks.get(&owner).map_or(0, |s| s.amount(good)));
+            let Some((_, need)) = self.ammo_need(&self.units[k]) else { continue };
+            let n = need.min(there);
+            if n == 0 {
+                continue;
+            }
+            let used = self.load_ammo(k, GoodAmount { good, amount: n });
+            if let Some(s) = self.stocks.get_mut(&owner) {
+                s.take_all(&[GoodAmount { good, amount: used }]);
+            }
+            self.hub_take(hub, good, used);
+            self.dirty_stocks.insert(owner);
+        }
+    }
+
     fn step_sites(&mut self, dt: f32) {
         self.site_clock += dt;
         let report = self.site_clock >= SITE_REPORT_SECONDS;
@@ -411,10 +454,40 @@ impl World {
         }
     }
 
-    /// Wie viel Nachschub braucht dieses Gerät, bis es wieder voll ist? (Ware, Menge)
+    /// Spielregeln aus der Lobby.
+    pub fn rules(&self) -> protocol::GameRules {
+        self.rules
+    }
+
+    pub fn set_rules(&mut self, rules: protocol::GameRules) {
+        self.rules = rules;
+    }
+
+    /// Vorrat dieser Einheitenart: (Schüsse, Nachschub je Schuss). `None` = unbegrenzt
+    /// (keine Angabe im Balancing oder die Spielregel verlangt keine Munition).
+    pub(super) fn magazine(&self, kind: protocol::UnitKind) -> Option<(u32, GoodAmount)> {
+        let def = self.economy.unit(kind)?;
+        let ammo = def.ammo.filter(|a| a.amount > 0 && def.shots > 0)?;
+        let on = if kind.is_siege() { self.rules.siege_ammo } else { self.rules.arrows };
+        on.then_some((def.shots, ammo))
+    }
+
+    /// Vorrat leer: schießt erst nach Nachschub wieder.
+    pub(super) fn out_of_ammo(&self, u: &Unit) -> bool {
+        self.magazine(u.kind).is_some_and(|(s, _)| u.shots_fired >= s)
+    }
+
+    /// Ein Schuss ist raus (zählt nur mit begrenztem Vorrat).
+    pub(super) fn spend_shot(&mut self, k: usize) {
+        if let Some((s, _)) = self.magazine(self.units[k].kind) {
+            let u = &mut self.units[k];
+            u.shots_fired = (u.shots_fired + 1).min(s);
+        }
+    }
+
+    /// Wie viel Nachschub braucht diese Einheit, bis sie wieder voll ist? (Ware, Menge)
     pub(super) fn ammo_need(&self, u: &Unit) -> Option<(protocol::Good, u32)> {
-        let sd = self.economy.unit(u.kind)?.siege.as_ref()?;
-        let per = sd.ammo.filter(|a| a.amount > 0 && sd.shots > 0)?;
+        let (_, per) = self.magazine(u.kind)?;
         let need = (u.shots_fired * per.amount).saturating_sub(u.ammo_part);
         (need > 0).then_some((per.good, need))
     }
@@ -425,7 +498,7 @@ impl World {
         if good != load.good {
             return 0;
         }
-        let per = self.economy.unit(self.units[k].kind).and_then(|d| d.siege.as_ref()).and_then(|s| s.ammo).map_or(1, |a| a.amount.max(1));
+        let per = self.magazine(self.units[k].kind).map_or(1, |(_, a)| a.amount.max(1));
         let used = load.amount.min(need);
         let u = &mut self.units[k];
         u.ammo_part += used;
@@ -643,7 +716,7 @@ impl World {
                 continue;
             }
             // Vorrat leer: wartet auf Nachschub.
-            if sd.shots > 0 && u.shots_fired >= sd.shots {
+            if self.out_of_ammo(u) {
                 continue;
             }
             let range = def.range;
@@ -805,10 +878,8 @@ impl World {
             let shooter = u.id;
             let u = &mut self.units[k];
             u.attack_cooldown = def.attack_seconds;
-            if sd.shots > 0 {
-                u.shots_fired += 1;
-            }
             u.strikes = u.strikes.wrapping_add(1);
+            self.spend_shot(k);
             if let Some(j) = foe {
                 let fid = self.units[j].id;
                 self.units[k].last_foe = Some((fid, 0.0));
@@ -1135,9 +1206,8 @@ mod tests {
         let mut w = world();
         let d = w.economy.def.units.iter_mut().find(|u| u.kind == UnitKind::Catapult).unwrap();
         d.attack_seconds = 0.5;
-        let sd = d.siege.as_mut().unwrap();
-        sd.shots = 3;
-        sd.ammo = Some(GoodAmount { good: Good::Stone, amount: 2 });
+        d.shots = 3;
+        d.ammo = Some(GoodAmount { good: Good::Stone, amount: 2 });
         // Mauer des Gegners als Ziel, weit weg vom eigenen Lager.
         let wall = w.place_building_rotated(2, BuildingKind::Wall, 80, 50, 0, 1).unwrap().id;
         w.buildings.iter_mut().find(|b| b.id == wall).unwrap().hp = 100_000;
@@ -1253,5 +1323,83 @@ mod tests {
             }
         }
         assert!(took, "Baustelle bekommt Bretter aus dem Belagerungslager");
+    }
+
+    /// Schützen mit kleinem Köcher gegen einen zähen Gegner; liefert die Zahl der Pfeile.
+    fn archer_duel(w: &mut World, seconds: f32) -> usize {
+        let mut fired = 0;
+        for _ in 0..(seconds / 0.05) as u32 {
+            w.step(0.05);
+            for e in w.take_events() {
+                if let protocol::ServerMsg::Shots { shots } = e {
+                    fired += shots.iter().filter(|s| s.kind == UnitKind::Archer).count();
+                }
+            }
+        }
+        fired
+    }
+
+    fn archer_world() -> World {
+        let mut w = world();
+        for d in w.economy.def.units.iter_mut() {
+            if d.kind == UnitKind::Archer {
+                d.shots = 3;
+                d.ammo = Some(GoodAmount { good: Good::Arrows, amount: 1 });
+                d.attack_seconds = 0.5;
+            }
+            if d.kind == UnitKind::Spearman {
+                d.hp = 1_000_000;
+                d.range = 0.0;
+                d.attack = 0;
+                d.damage.clear();
+            }
+        }
+        w.units.push(Unit::new(9300, 1, UnitKind::Archer, (40.5, 30.5)));
+        w.units.push(Unit::new(9301, 2, UnitKind::Spearman, (48.5, 30.5)));
+        w
+    }
+
+    #[test]
+    fn schuetzen_verschiessen_ihren_koecher_und_fuellen_am_lager_nach() {
+        let mut w = archer_world();
+        assert_eq!(archer_duel(&mut w, 8.0), 3, "nur so viele Pfeile, wie im Köcher sind");
+        let a = w.units.iter().find(|u| u.id == 9300).unwrap();
+        assert_eq!(w.snapshot_unit_shots(a), Some(0));
+        // Lager mit Pfeilen gleich daneben: der Köcher füllt sich dort, es geht weiter.
+        let store = w.place_building_rotated(1, BuildingKind::Armory, 36, 28, 0, 1).unwrap().id;
+        w.admin_give(1, &[GoodAmount { good: Good::Arrows, amount: 50 }], 0);
+        run(&mut w, 1.0);
+        assert!(w.hub_amount(store, Good::Arrows) > 0, "Pfeile liegen in der Waffenkammer");
+        let before = w.stocks[&1].amount(Good::Arrows);
+        assert!(archer_duel(&mut w, 8.0) > 0, "nach dem Auffüllen schießt er wieder");
+        assert!(w.stocks[&1].amount(Good::Arrows) < before, "Pfeile kamen aus dem Vorrat");
+    }
+
+    #[test]
+    fn spielregel_ohne_munition_schiesst_unbegrenzt() {
+        let mut w = archer_world();
+        w.set_rules(protocol::GameRules { arrows: false, siege_ammo: true });
+        assert!(archer_duel(&mut w, 8.0) > 3, "ohne Regel kein Köcher");
+        let a = w.units.iter().find(|u| u.id == 9300).unwrap();
+        assert_eq!(w.snapshot_unit_shots(a), None);
+        // Geräte zählen getrennt: dort gilt die Regel weiter.
+        assert!(w.magazine(UnitKind::Catapult).is_some());
+        w.set_rules(protocol::GameRules { arrows: true, siege_ammo: false });
+        assert!(w.magazine(UnitKind::Catapult).is_none());
+        assert!(w.magazine(UnitKind::Archer).is_some());
+    }
+
+    #[test]
+    fn pfeile_brauchen_weniger_lagerplatz() {
+        let mut w = world();
+        let per = w.economy.per_slot(Good::Arrows);
+        assert!(per > 1, "Pfeile: mehrere Stück je Lagerplatz");
+        let store = w.place_building_rotated(1, BuildingKind::Armory, 36, 28, 0, 1).unwrap().id;
+        run(&mut w, 0.1);
+        let cap = w.hub_capacity(store);
+        w.admin_give(1, &[GoodAmount { good: Good::Arrows, amount: cap * per }], 0);
+        run(&mut w, 0.1);
+        assert_eq!(w.hub_amount(store, Good::Arrows), cap * per, "passt alles hinein");
+        assert_eq!(w.hub_total(store), cap, "belegt genau den Platz");
     }
 }

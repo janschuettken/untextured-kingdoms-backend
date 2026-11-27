@@ -14,7 +14,7 @@ use protocol::{BuildingKind, Good, GoodAmount};
 use super::World;
 
 /// Was ein neues Belagerungslager anfangs bereithalten will (Ware, Menge).
-pub(super) const CAMP_DEFAULT: [(Good, u32); 4] = [(Good::Stone, 50), (Good::Boards, 40), (Good::Wood, 30), (Good::Iron, 10)];
+pub(super) const CAMP_DEFAULT: [(Good, u32); 5] = [(Good::Stone, 50), (Good::Boards, 40), (Good::Wood, 30), (Good::Iron, 10), (Good::Arrows, 200)];
 
 /// Waren in einem Lager.
 pub type HubGoods = BTreeMap<Good, u32>;
@@ -129,7 +129,7 @@ impl World {
                 }
                 // Volle Lager geben ab, was nicht mehr hineinpasst (Gesamtplatz je Lager).
                 for h in &mine {
-                    let over = self.hub_total(h.0).saturating_sub(self.hub_capacity(h.0)).min(self.hub_amount(h.0, good));
+                    let over = (self.hub_total(h.0).saturating_sub(self.hub_capacity(h.0)) * self.economy.per_slot(good)).min(self.hub_amount(h.0, good));
                     if over == 0 {
                         continue;
                     }
@@ -165,12 +165,15 @@ impl World {
         if !self.hub_accepts(b, good) {
             return 0;
         }
-        self.hub_capacity(hub).saturating_sub(self.hub_total(hub))
+        let per = self.economy.per_slot(good);
+        let have = self.hub_amount(hub, good);
+        let slack = have.div_ceil(per) * per - have;
+        self.hub_capacity(hub).saturating_sub(self.hub_total(hub)) * per + slack
     }
 
-    /// Alles, was in diesem Lager liegt, zusammen.
+    /// Belegte Lagerplätze in diesem Lager (Waren mit `per_slot` teilen sich einen Platz).
     pub(super) fn hub_total(&self, hub: u32) -> u32 {
-        self.hub_goods.get(&hub).map_or(0, |g| g.values().sum())
+        self.hub_goods.get(&hub).map_or(0, |g| g.iter().map(|(&good, &n)| n.div_ceil(self.economy.per_slot(good))).sum())
     }
 
     /// Welche Waren dieses Lager nimmt (Art des Lagers und Auswahl des Spielers); `None` = alle.

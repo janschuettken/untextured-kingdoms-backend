@@ -325,6 +325,8 @@ impl World {
         // (Gebäude, Art des Angreifers)
         let mut building_hits: Vec<(u32, UnitKind)> = siege_building_hits;
         let mut shots: Vec<Shot> = self.siege_fire(dt, &grid, CELL);
+        // Schützen, die einen Pfeil verschossen haben (Köcher).
+        let mut spent: Vec<usize> = Vec::new();
         // Angriffsbefehle: hingehen, verfolgen, zuschlagen.
         for k in ordered {
             let u = &self.units[k];
@@ -338,12 +340,16 @@ impl World {
                 if let Some((j, flight)) = self.nearest_foe(k, &grid, true) {
                     let (by, me, kind) = (u.owner, u.id, u.kind);
                     let range = self.range_against(u, &self.units[j], def.range);
+                    let empty = ranged && self.out_of_ammo(u);
                     let u = &mut self.units[k];
                     u.path.clear();
                     u.layers.clear();
                     u.target = Some(u.pos);
                     u.chase_timer = 0.0;
-                    if u.attack_cooldown <= 0.0 {
+                    if u.attack_cooldown <= 0.0 && !empty {
+                        if ranged {
+                            spent.push(k);
+                        }
                         u.attack_cooldown = def.attack_seconds;
                         u.strikes = u.strikes.wrapping_add(1);
                         match flight {
@@ -406,6 +412,7 @@ impl World {
             };
             if dist <= reach && level_ok {
                 let by = u.owner;
+                let empty = ranged && self.out_of_ammo(u);
                 let u = &mut self.units[k];
                 // Fernkämpfer schießen nur im Stand (außer sie dürfen im Laufen): wer gerade noch lief, hält erst an.
                 let was_moving = !u.path.is_empty();
@@ -419,7 +426,11 @@ impl World {
                 if !may_attack(def, u.mounted, false) {
                     continue;
                 }
-                if u.attack_cooldown <= 0.0 {
+                // Köcher leer: bleibt stehen, bis Nachschub kommt.
+                if u.attack_cooldown <= 0.0 && !empty {
+                    if ranged {
+                        spent.push(k);
+                    }
                     u.attack_cooldown = def.attack_seconds;
                     u.strikes = u.strikes.wrapping_add(1);
                     match (order, j) {
@@ -455,6 +466,9 @@ impl World {
         for &k in &fighters {
             let u = &self.units[k];
             let def = self.economy.unit(u.kind).expect("oben geprüft");
+            if self.out_of_ammo(u) {
+                continue;
+            }
             if let Some((j, flight)) = self.nearest_foe(k, &grid, false) {
                 match flight {
                     Some(f) => launches.push((k, j, self.range_against(u, &self.units[j], def.range), f)),
@@ -462,9 +476,13 @@ impl World {
                 }
                 self.units[k].attack_cooldown = def.attack_seconds;
                 self.units[k].strikes = self.units[k].strikes.wrapping_add(1);
+                spent.push(k);
                 let foe = self.units[j].id;
                 self.units[k].last_foe = Some((foe, 0.0));
             }
+        }
+        for k in spent {
+            self.spend_shot(k);
         }
         // Abschuss: vorhalten, Pfeil in die Luft. Das Ziel merkt schon jetzt, wer auf es schießt.
         for (k, j, range, flight) in launches {
@@ -1187,6 +1205,8 @@ mod tests {
         eco.def.units.iter_mut().find(|u| u.kind == UnitKind::Spearman).unwrap().hp = u32::MAX;
         eco.def.units.iter_mut().find(|u| u.kind == UnitKind::Archer).unwrap().attack_seconds /= rate;
         w.set_economy(eco);
+        // Hier geht es um Takt und Deckung, nicht um den Köcher.
+        w.set_rules(protocol::GameRules { arrows: false, siege_ammo: true });
         w.units.retain(|u| u.kind != UnitKind::King);
         let keep = w.buildings.iter().find(|b| b.owner == 2 && b.kind == BuildingKind::Keep).unwrap().clone();
         let top = (keep.x as f32 + keep.w as f32 / 2.0, keep.y as f32 + keep.h as f32 / 2.0);

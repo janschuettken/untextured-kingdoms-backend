@@ -47,11 +47,14 @@ pub struct Stock {
     pub limits: BTreeMap<Good, u32>,
     /// Geld, ohne Obergrenze.
     pub taler: u32,
+    /// Vorrat eines Spielers: so viele Stück einer Ware passen auf einen Lagerplatz (fehlt: 1).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub per_slot: BTreeMap<Good, u32>,
 }
 
 impl Stock {
     pub fn new(capacity: u32) -> Stock {
-        Stock { goods: BTreeMap::new(), capacity, pooled: false, pools: Vec::new(), limits: BTreeMap::new(), taler: 0 }
+        Stock { goods: BTreeMap::new(), capacity, pooled: false, pools: Vec::new(), limits: BTreeMap::new(), taler: 0, per_slot: BTreeMap::new() }
     }
 
     /// Vorrat eines Spielers: Platz kommt aus den Lagern (`pools`).
@@ -59,14 +62,23 @@ impl Stock {
         Stock { pooled: true, ..Stock::new(0) }
     }
 
-    /// Belegung je Lagerart: Waren mit wenigen passenden Lagern zuerst, jeweils
+    fn per(&self, good: Good) -> u32 {
+        self.per_slot.get(&good).copied().unwrap_or(1).max(1)
+    }
+
+    /// So viele Lagerplätze belegt diese Menge.
+    fn slots(&self, good: Good, n: u32) -> u32 {
+        n.div_ceil(self.per(good))
+    }
+
+    /// Belegung je Lagerart (in Lagerplätzen): Waren mit wenigen passenden Lagern zuerst, jeweils
     /// ins engste passende Lager (Kornspeicher vor Vorratslager).
     fn allocation(&self) -> Vec<u32> {
         let mut used = vec![0u32; self.pools.len()];
         let width = |p: &Pool| p.goods.as_ref().map_or(usize::MAX, |g| g.len());
         let mut order: Vec<usize> = (0..self.pools.len()).collect();
         order.sort_by_key(|&i| width(&self.pools[i]));
-        let mut goods: Vec<(Good, u32)> = self.goods.keys().map(|&g| (g, self.amount(g))).filter(|g| g.1 > 0).collect();
+        let mut goods: Vec<(Good, u32)> = self.goods.keys().map(|&g| (g, self.slots(g, self.amount(g)))).filter(|g| g.1 > 0).collect();
         goods.sort_by_key(|&(g, _)| self.pools.iter().filter(|p| p.accepts(g)).count());
         for (good, mut left) in goods {
             for &i in order.iter().filter(|&&i| self.pools[i].accepts(good)) {
@@ -81,19 +93,23 @@ impl Stock {
     /// Höchstmenge dieser Ware.
     pub fn capacity_of(&self, good: Good) -> u32 {
         if let Some(&n) = self.limits.get(&good) {
-            return n;
+            return n * self.per(good);
         }
         if self.pooled {
             return self.amount(good) + self.room(good);
         }
-        self.capacity
+        self.capacity * self.per(good)
     }
 
     /// So viel passt von dieser Ware noch hinein.
     pub fn room(&self, good: Good) -> u32 {
         if self.pooled && !self.limits.contains_key(&good) {
             let used = self.allocation();
-            return self.pools.iter().zip(used).filter(|(p, _)| p.accepts(good)).map(|(p, u)| p.capacity.saturating_sub(u)).sum();
+            let free: u32 = self.pools.iter().zip(used).filter(|(p, _)| p.accepts(good)).map(|(p, u)| p.capacity.saturating_sub(u)).sum();
+            // Ein angebrochener Lagerplatz nimmt noch den Rest auf.
+            let have = self.amount(good);
+            let slack = self.slots(good, have) * self.per(good) - have;
+            return free * self.per(good) + slack;
         }
         self.capacity_of(good).saturating_sub(self.amount(good))
     }

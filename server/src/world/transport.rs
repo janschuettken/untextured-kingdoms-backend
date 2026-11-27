@@ -96,6 +96,8 @@ enum JobKind {
 const AMMO_KEY: u32 = 1 << 31;
 /// So nah muss der Karren am Gerät sein, um abzuladen.
 const AMMO_REACH: f32 = 3.0;
+/// Bis hierhin (Felder um den Karren) verteilt ein Nachschubkarren, was übrig ist.
+const SHARE_RADIUS: f32 = 6.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum Stage {
@@ -485,7 +487,9 @@ impl World {
     fn find_job(&self, k: usize, reserved: &Reserved, index: &HashMap<u32, usize>) -> Option<Job> {
         let u = &self.units[k];
         let owner = u.owner;
-        let cap = self.capacity(u.kind);
+        let cap1 = self.capacity(u.kind);
+        // Ware mit mehreren Stück je Lagerplatz (Pfeile): so viel mehr passt auf einmal.
+        let per_slot = |g: Good| cap1 * self.economy.per_slot(g);
         let cart = u.kind == UnitKind::Cart;
         let cart_min = self.economy.def.transport.cart_min_load;
         let min_load = if cart { cart_min } else { 1 };
@@ -537,7 +541,7 @@ impl World {
                 }
                 let free = g.amount.saturating_sub(Reserved::get(&reserved.pickup, (b.id, g.good)));
                 let room = stock.room(g.good);
-                let amount = free.min(cap).min(room);
+                let amount = free.min(per_slot(g.good)).min(room);
                 if free >= cart_min && free_carts.iter().any(|a| within(*a, b)) {
                     continue;
                 }
@@ -564,7 +568,7 @@ impl World {
                 let want = if cart { inv.capacity_of(i.good) } else { (i.amount * 2).min(inv.capacity_of(i.good)) };
                 let min_load = if cart { cart_min.min(want).max(1) } else { min_load };
                 let have = inv.amount(i.good) + Reserved::get(&reserved.incoming, (b.id, i.good));
-                let need = want.saturating_sub(have).min(cap);
+                let need = want.saturating_sub(have).min(per_slot(i.good));
                 if need < min_load {
                     continue;
                 }
@@ -601,7 +605,7 @@ impl World {
             for b in self.buildings.iter().filter(|b| b.owner == owner) {
                 let Some(site) = &b.site else { continue };
                 for g in &site.needed {
-                    let need = site.missing(g.good).saturating_sub(Reserved::get(&reserved.incoming, (b.id, g.good))).min(cap);
+                    let need = site.missing(g.good).saturating_sub(Reserved::get(&reserved.incoming, (b.id, g.good))).min(per_slot(g.good));
                     if need == 0 {
                         continue;
                     }
@@ -615,15 +619,14 @@ impl World {
                 }
             }
         }
-        // Nachschub für Belagerungsgeräte: sobald ein Drittel des Vorrats verschossen ist
-        // (oder alles), mit Vorrang wie die Baustellen.
+        // Nachschub für Belagerungsgeräte und Schützen: sobald ein Drittel des Vorrats
+        // verschossen ist (oder alles), mit Vorrang wie die Baustellen.
         if cart {
-            for dev in self.units.iter().filter(|d| d.owner == owner && d.kind.is_siege()) {
+            for dev in self.units.iter().filter(|d| d.owner == owner && d.crew_of.is_none()) {
                 let Some((good, need)) = self.ammo_need(dev) else { continue };
-                let need = need.saturating_sub(Reserved::get(&reserved.incoming, (dev.id | AMMO_KEY, good))).min(cap);
-                let sd = self.economy.unit(dev.kind).and_then(|d| d.siege.as_ref());
-                let full = sd.map_or(0, |s| s.shots * s.ammo.map_or(0, |a| a.amount));
-                let empty = sd.is_some_and(|s| dev.shots_fired >= s.shots);
+                let need = need.saturating_sub(Reserved::get(&reserved.incoming, (dev.id | AMMO_KEY, good))).min(per_slot(good));
+                let full = self.magazine(dev.kind).map_or(0, |(s, a)| s * a.amount);
+                let empty = self.out_of_ammo(dev);
                 if need == 0 || (need * 3 < full && !empty) {
                     continue;
                 }
@@ -655,7 +658,7 @@ impl World {
                 let room = self.hub_capacity(camp.id).saturating_sub(self.hub_total(camp.id));
                 for want in &camp.settings.keep_in_stock {
                     let have = self.hub_amount(camp.id, want.good) + Reserved::get(&reserved.incoming, (camp.id, want.good));
-                    let need = want.amount.saturating_sub(have).min(cap).min(room);
+                    let need = want.amount.saturating_sub(have).min(per_slot(want.good)).min(room * self.economy.per_slot(want.good));
                     if need < cart_min.min(want.amount) || need == 0 {
                         continue;
                     }
@@ -682,7 +685,7 @@ impl World {
         if cart && best.is_none() {
             for ((_, good), mut list) in groups {
                 list.sort_by(|a, b| a.0.total_cmp(&b.0));
-                let room = stock.room(good).min(cap);
+                let room = stock.room(good).min(per_slot(good));
                 let mut stops: Vec<(u32, u32)> = Vec::new();
                 let mut total = 0;
                 for &(_, id, n) in list.iter().take(TOUR_STOPS) {
@@ -952,8 +955,9 @@ impl World {
     /// Weg zum Belagerungsgerät `unit` planen (bis an ein freies Feld daneben).
     fn route_to_unit(&mut self, k: usize, unit: u32) -> bool {
         let Some(dev) = self.units.iter().find(|u| u.id == unit) else { return false };
-        // Auf dem Turm (Balliste): an den Fuß des Turms.
-        let goal = dev.perch.and_then(|t| self.buildings.iter().find(|b| b.id == t)).and_then(|b| self.door(b, self.units[k].pos)).unwrap_or(dev.pos);
+        // Auf dem Turm (Balliste): an den Fuß des Turms. Auf der Mauer: an ihren Fuß.
+        let goal = dev.perch.and_then(|t| self.buildings.iter().find(|b| b.id == t)).and_then(|b| self.door(b, self.units[k].pos));
+        let goal = goal.unwrap_or(if dev.on_wall { self.foot_of(dev.pos, self.units[k].pos) } else { dev.pos });
         let pos = self.units[k].pos;
         let u = &mut self.units[k];
         u.path = self.map.nav.waypoints(pos, goal);
@@ -971,7 +975,7 @@ impl World {
         let Some(d) = self.units.iter().position(|u| u.id == to && u.owner == owner) else {
             return self.fail(k, index);
         };
-        let reach = if self.units[d].perch.is_some() { AMMO_REACH + 2.0 } else { AMMO_REACH };
+        let reach = if self.units[d].perch.is_some() || self.units[d].on_wall { AMMO_REACH + 2.0 } else { AMMO_REACH };
         let (p, q) = (self.units[k].pos, self.units[d].pos);
         if (p.0 - q.0).hypot(p.1 - q.1) > reach {
             // Das Gerät ist weitergefahren: hinterher.
@@ -980,8 +984,21 @@ impl World {
             }
             return;
         }
-        let used = self.load_ammo(d, load);
-        let left = load.amount - used;
+        let mut left = load.amount - self.load_ammo(d, load);
+        // Was übrig ist, bekommen andere in der Nähe, die dieselbe Munition brauchen.
+        let near: Vec<usize> = (0..self.units.len())
+            .filter(|&i| i != d && self.units[i].owner == owner && self.units[i].crew_of.is_none())
+            .filter(|&i| {
+                let r = self.units[i].pos;
+                (r.0 - p.0).hypot(r.1 - p.1) <= SHARE_RADIUS
+            })
+            .collect();
+        for i in near {
+            if left == 0 {
+                break;
+            }
+            left -= self.load_ammo(i, GoodAmount { good: load.good, amount: left });
+        }
         if left == 0 {
             self.units[k].carrying = None;
             self.units[k].job = None;

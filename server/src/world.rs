@@ -331,6 +331,8 @@ pub struct World {
     trade_mode: protocol::TradeMode,
     /// Fernkampf: Wurfbahn oder Sichtlinie (Lobby), siehe `ballistics.rs`.
     shot_mode: protocol::ShotMode,
+    /// Spielregeln aus der Lobby (Munition).
+    rules: protocol::GameRules,
     /// Spieler, deren König gefallen ist (siehe `combat.rs`).
     eliminated: BTreeSet<u32>,
     /// Bündnis je Spieler; wer fehlt, kämpft allein (eigene Nummer). Siehe `diplomacy.rs`.
@@ -395,7 +397,7 @@ fn resource_key(r: ResourceKind) -> String {
 impl World {
     #[cfg(test)]
     pub(crate) fn snapshot_unit_shots(&self, u: &Unit) -> Option<u32> {
-        self.economy.unit(u.kind).and_then(|d| d.siege.as_ref()).filter(|s| s.shots > 0).map(|s| s.shots.saturating_sub(u.shots_fired))
+        self.magazine(u.kind).map(|(s, _)| s.saturating_sub(u.shots_fired))
     }
 
     pub fn new(mut map: GameMap, economy: Economy) -> World {
@@ -437,6 +439,7 @@ impl World {
             hub_goods: HashMap::new(),
             trade_mode: protocol::TradeMode::default(),
             shot_mode: protocol::ShotMode::default(),
+            rules: protocol::GameRules::default(),
             eliminated: BTreeSet::new(),
             teams: HashMap::new(),
             winners: None,
@@ -506,9 +509,11 @@ impl World {
                 None => pools.push(crate::stock::Pool { kind: b.kind, goods, capacity }),
             }
         }
+        let per_slot = self.economy.per_slot_map();
         if let Some(s) = self.stocks.get_mut(&player) {
             s.pooled = true;
             s.pools = pools;
+            s.per_slot = per_slot;
             self.dirty_stocks.insert(player);
         }
     }
@@ -544,6 +549,7 @@ impl World {
             if let Some(inv) = self.inventories.get_mut(&id) {
                 inv.capacity = cap;
                 inv.limits = limits;
+                inv.per_slot = self.economy.per_slot_map();
             }
         }
     }
@@ -917,6 +923,7 @@ impl World {
             let (cap, limits) = self.inventory_limits(b.kind, b.level);
             let mut inv = Stock::new(cap);
             inv.limits = limits;
+            inv.per_slot = self.economy.per_slot_map();
             self.inventories.insert(b.id, inv);
         }
         if def.hub {
@@ -1213,6 +1220,7 @@ impl World {
         if let Some(inv) = self.inventories.get_mut(&b.id) {
             inv.capacity = cap;
             inv.limits = limits;
+            inv.per_slot = self.economy.per_slot_map();
         }
         self.dirty_buildings.insert(b.id);
         for s in spawns {
@@ -1765,6 +1773,7 @@ impl World {
         timed!(self, Phase::Trade, self.step_auto_trade(dt));
         timed!(self, Phase::Combat, self.step_siege(dt));
         timed!(self, Phase::Combat, self.step_combat(dt));
+        timed!(self, Phase::Combat, self.refill_at_hubs(dt));
         timed!(self, Phase::Waypoints, self.step_waypoints());
         timed!(self, Phase::Heal, self.step_heal(dt));
         timed!(self, Phase::Alerts, self.step_alerts(dt));
@@ -1885,7 +1894,7 @@ impl World {
                 crew: if u.kind.is_siege() { crews.get(&u.id).copied().unwrap_or(0) } else { 0 },
                 crew_of: u.crew_of,
                 docked_at: u.dock.map(|d| d.0),
-                shots_left: self.economy.unit(u.kind).and_then(|d| d.siege.as_ref()).filter(|s| s.shots > 0).map(|s| s.shots.saturating_sub(u.shots_fired)),
+                shots_left: self.magazine(u.kind).map(|(s, _)| s.saturating_sub(u.shots_fired)),
             })
             .collect()
     }

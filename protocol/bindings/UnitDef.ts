@@ -93,6 +93,16 @@ heal: number,
  */
 heal_range: number, 
 /**
+ * Vorrat an Schüssen (Köcher, Steine im Gerät); ist er leer, schießt die Einheit erst nach
+ * Nachschub wieder. 0 = unbegrenzt. Gilt nur, wenn die Spielregel Munition verlangt.
+ */
+shots: number, 
+/**
+ * Nachschub je Schuss (Karren bringen ihn, Schützen holen ihn auch am nahen Lager).
+ * Ohne: unbegrenzt.
+ */
+ammo: GoodAmount | null, 
+/**
  * Belagerungsgerät: Bau und Bedienung. `cost` sind dann die Baustoffe, die zur Baustelle
  * gebracht werden, `seconds` die Bauzeit für einen Baumeister.
  */

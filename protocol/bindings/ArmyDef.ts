@@ -92,4 +92,9 @@ loot_percent: number,
 /**
  * Belagerung: so viele Baustoffe trägt ein Baumeister im Rucksack zur Baustelle („provisorisch mitnehmen“).
  */
-builder_backpack: number, };
+builder_backpack: number, 
+/**
+ * Munition: Schützen und Geräte so nah (Felder) an einem eigenen Lager füllen ihren
+ * Vorrat dort selbst auf (sonst bringen Karren Nachschub). 0 = nie.
+ */
+refill_radius: number, };
