@@ -19,6 +19,7 @@ mod combat;
 mod crowd;
 mod errand;
 mod enclosure;
+mod fire;
 pub use enclosure::castle_closed;
 pub use gate::{is_gate, passage_tiles};
 mod gate;
@@ -151,6 +152,18 @@ pub struct Unit {
     /// Belagerungsturm: liegt an (Gebäude, Feld oben auf dem Wehrgang).
     #[serde(default)]
     dock: Option<(u32, usize)>,
+    /// Der Angriffsbefehl (auf ein Gebäude) heißt anzünden statt einreißen.
+    #[serde(default)]
+    ignite: bool,
+    /// Anzünden: so viele Sekunden noch an der Fackel, bevor es brennt.
+    #[serde(default)]
+    ignite_left: f32,
+    /// Legt gerade Feuer (für die Anzeige).
+    #[serde(skip)]
+    torch: bool,
+    /// Feuerwehrmann (Arbeiter einer Feuerwache): was er gerade löscht, wie viel Wasser er hat.
+    #[serde(default)]
+    fire_job: Option<fire::FireJob>,
 }
 
 /// Ein späteres Ziel eines Laufbefehls (siehe `Unit::waypoints`).
@@ -211,6 +224,10 @@ impl Unit {
             ammo_part: 0,
             dock_target: None,
             dock: None,
+            ignite: false,
+            ignite_left: 0.0,
+            torch: false,
+            fire_job: None,
         }
     }
 
@@ -357,6 +374,8 @@ pub struct World {
     replan_pending: Option<(f64, f64)>,
     /// Uhr dafür (Sekunden Spielzeit, läuft auch nach Spielende weiter).
     replan_clock: f64,
+    /// Sekunden seit dem letzten Feuer-Takt (Schaden, Überspringen), siehe `fire.rs`.
+    fire_clock: f32,
 }
 
 /// Was es kostet, gleich auf `level` zu bauen: alle Stufen bis dahin zusammen.
@@ -456,6 +475,7 @@ impl World {
             game_seconds: 0.0,
             replan_pending: None,
             replan_clock: 0.0,
+            fire_clock: 0.0,
             respawn_clock: HashMap::new(),
             alerts: alerts::Alerts::default(),
             timeline: Vec::new(),
@@ -953,6 +973,7 @@ impl World {
             mature_in: def.release_after_seconds,
             rally: None,
             site: None,
+            fire: 0.0,
         };
         self.next_building_id += 1;
         if let Some((ex, ey)) = entrance {
@@ -1822,6 +1843,7 @@ impl World {
         timed!(self, Phase::Combat, self.refill_at_hubs(dt));
         timed!(self, Phase::Waypoints, self.step_waypoints());
         timed!(self, Phase::Heal, self.step_heal(dt));
+        timed!(self, Phase::Combat, self.step_fire(dt));
         timed!(self, Phase::Alerts, self.step_alerts(dt));
         timed!(self, Phase::Orchards, self.step_orchards(dt));
         timed!(self, Phase::Food, self.spoil_unstored_food());
@@ -1940,6 +1962,9 @@ impl World {
                 crew: if u.kind.is_siege() { crews.get(&u.id).copied().unwrap_or(0) } else { 0 },
                 crew_of: u.crew_of,
                 docked_at: u.dock.map(|d| d.0),
+                firefighter: u.fire_job.is_some(),
+                spraying: u.fire_job.as_ref().is_some_and(|j| j.spraying),
+                igniting: u.torch,
                 shots_left: self.magazine(u.kind).map(|(s, _)| s.saturating_sub(u.shots_fired)),
             })
             .collect()

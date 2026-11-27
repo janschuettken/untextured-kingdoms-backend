@@ -169,6 +169,8 @@ impl World {
                 u.attack_order = Some(target);
                 u.resume_order = None;
                 u.attack_force = force;
+                u.ignite = false;
+                u.torch = false;
                 u.waypoints.clear();
                 u.chase_timer = 0.0;
                 u.speed_cap = None;
@@ -277,6 +279,8 @@ impl World {
             index.insert(u.id, k);
             let Some(def) = self.economy.unit(u.kind) else { continue };
             u.attack_cooldown = (u.attack_cooldown - dt).max(0.0);
+            // Fackel nur, solange sie in diesem Takt wirklich anzündet (siehe `step_ignite`).
+            u.torch = false;
             // Selbst gewähltes Ziel nur kurz anzeigen, solange weiter gekämpft wird.
             u.last_foe = u.last_foe.map(|(id, age)| (id, age + dt)).filter(|&(_, age)| age < FOE_SHOWN_SECONDS);
             u.attacked_by = u.attacked_by.map(|(id, age)| (id, age + dt)).filter(|&(_, age)| age < STRUCK_SECONDS);
@@ -395,7 +399,9 @@ impl World {
                     (b.owner, self.foot_of(center, u.pos), false, dx.hypot(dy), true, None)
                 }),
             };
-            let Some((owner, pos, on_wall, dist, level_ok, j)) = found.filter(|f| (u.attack_force || self.can_attack(u.owner, f.0)) && self.can_hurt(u, order)) else {
+            let igniting = u.ignite && matches!(order, AttackTarget::Building { .. });
+            let able = |w: &World| if igniting { true } else { w.can_hurt(u, order) };
+            let Some((owner, pos, on_wall, dist, level_ok, j)) = found.filter(|f| (u.attack_force || self.can_attack(u.owner, f.0)) && able(self)) else {
                 // Ziel gefallen, abgerissen oder nicht (mehr) angreifbar: stehen bleiben
                 // (nach der Gegenwehr: zurück zum Gebäude).
                 let u = &mut self.units[k];
@@ -405,12 +411,27 @@ impl World {
                     continue;
                 }
                 u.attack_order = None;
+                u.ignite = false;
+                u.torch = false;
                 u.path.clear();
                 u.layers.clear();
                 u.target = Some(u.pos);
                 continue;
             };
-            if dist <= reach && level_ok {
+            // Anzünden: mit der Fackel direkt ans Gebäude (wie im Nahkampf, auch bei Schützen).
+            if igniting {
+                let melee = self.economy.def.army.melee_range.min(def.range).max(1.0) + REACH;
+                if dist <= melee {
+                    let u = &mut self.units[k];
+                    u.path.clear();
+                    u.layers.clear();
+                    u.target = Some(u.pos);
+                    if let AttackTarget::Building { id } = order {
+                        self.step_ignite(k, id, dt);
+                    }
+                    continue;
+                }
+            } else if dist <= reach && level_ok {
                 let by = u.owner;
                 let empty = ranged && self.out_of_ammo(u);
                 let u = &mut self.units[k];
@@ -669,6 +690,9 @@ impl World {
         }
         let def = self.economy.building(b.kind).ok_or_else(|| protocol::Text::new("error.unknown_building"))?;
         let max = def.at(b.level).max_hp.max(1);
+        if b.fire > 0.0 {
+            return Err(protocol::Text::new("error.burning"));
+        }
         if b.hp >= max {
             return Err(protocol::Text::new("error.not_damaged"));
         }
@@ -817,7 +841,7 @@ impl World {
     }
 
     /// Gebäude im Kampf eingerissen: verschwindet wie beim Abriss, nur ohne Erstattung.
-    fn destroy_building(&mut self, id: u32) {
+    pub(super) fn destroy_building(&mut self, id: u32) {
         let Some(b) = self.buildings.iter().find(|b| b.id == id).cloned() else { return };
         self.remove_building(id);
         if self.economy.building(b.kind).is_some_and(|d| d.hub) {

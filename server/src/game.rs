@@ -1014,8 +1014,12 @@ pub fn apply_command(
         ClientMsg::MoveUnits { unit_ids, x, y, fast, append } => {
             world.order_move_full(player_id, &unit_ids, (x, y), fast.unwrap_or(false), append.unwrap_or(false));
         }
-        ClientMsg::Attack { unit_ids, target, force } => {
-            world.order_attack_full(player_id, &unit_ids, target, force.unwrap_or(false));
+        ClientMsg::Attack { unit_ids, target, force, ignite } => {
+            if ignite.unwrap_or(false) {
+                world.order_ignite(player_id, &unit_ids, target, force.unwrap_or(false));
+            } else {
+                world.order_attack_full(player_id, &unit_ids, target, force.unwrap_or(false));
+            }
             for event in world.take_events() {
                 send(event);
             }

@@ -3,4 +3,4 @@
 /**
  * Art einer Warnung (siehe `ServerMsg::Alert`).
  */
-export type AlertKind = "enemy_near" | "building_attacked";
+export type AlertKind = "enemy_near" | "building_attacked" | "fire";

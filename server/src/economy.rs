@@ -39,6 +39,7 @@ fn default_king(speed: f32) -> UnitDef {
         attack_seconds: 1.5,
         heal: 0,
         heal_range: 0.0,
+        ignite_seconds: 0.0,
         scatter: 0.0,
         siege: None,
     }
@@ -85,12 +86,13 @@ fn builtin_def() -> Option<EconomyDef> {
 /// Aktueller Aufbau der Balancing-Datei.
 /// Format 3: Schadensarten und Rüstung (`damage`, `armor`, `horse_armor`, Stufe `armor`).
 /// Format 4: `build_radius` einmal je Gebäude statt je Stufe.
-pub const FORMAT: u32 = 4;
+/// Format 5: Feuer (`fire`, Stufe `fire_risk`, Einheit `ignite_seconds`, Feuerwache).
+pub const FORMAT: u32 = 5;
 
 /// Werte, die je Gebäudestufe gelten. Fehlen sie in einer Stufe, gilt die Stufe davor.
-const LEVEL_FIELDS: [&str; 14] = [
+const LEVEL_FIELDS: [&str; 15] = [
     "max_hp", "workers", "gather_radius", "service_radius", "walkway", "stairs", "gate_radius", "garrison",
-    "cover_percent", "road_speed_percent", "hub_capacity", "storage_inputs", "storage_outputs", "armor",
+    "cover_percent", "road_speed_percent", "hub_capacity", "storage_inputs", "storage_outputs", "armor", "fire_risk",
 ];
 
 /// Bringt ältere Balancing-Dateien in den aktuellen Aufbau (Format 2: Werte je Stufe).
@@ -255,7 +257,8 @@ impl Economy {
     /// Liest und prüft die Wirtschaftsdaten.
     pub fn parse(json: &str) -> Result<Economy, String> {
         let mut value: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("economy.json: {e}"))?;
-        let old_format = value.get("format").and_then(serde_json::Value::as_u64).unwrap_or(1) < 3;
+        let format = value.get("format").and_then(serde_json::Value::as_u64).unwrap_or(1);
+        let old_format = format < 3;
         migrate(&mut value);
         let mut def: EconomyDef = serde_json::from_value(value).map_err(|e| format!("economy.json: {e}"))?;
         // Ältere Balancing-Dateien kennen den König noch nicht: Grundwerte einsetzen.
@@ -279,6 +282,9 @@ impl Economy {
         fill_from_builtin(&mut def);
         if old_format {
             add_armor_from_builtin(&mut def);
+        }
+        if format < 5 {
+            add_fire_from_builtin(&mut def);
         }
         fill_damage(&mut def);
         let mut buildings = HashMap::new();
@@ -695,6 +701,25 @@ fn add_arrows(def: &mut EconomyDef) {
     }
 }
 
+/// Ältere Balancing-Dateien (vor Format 5) kennen kein Feuer: Brandgefahr der Betriebe und
+/// Fackeln der Soldaten aus den eingebauten Werten (Feuerwache und `fire` kommen von selbst).
+fn add_fire_from_builtin(def: &mut EconomyDef) {
+    let Some(base) = builtin_def() else { return };
+    for b in &mut def.buildings {
+        let Some(src) = base.buildings.iter().find(|x| x.kind == b.kind) else { continue };
+        for (n, l) in b.levels.iter_mut().enumerate() {
+            if l.fire_risk <= 0.0 {
+                l.fire_risk = src.at(n as u32 + 1).fire_risk;
+            }
+        }
+    }
+    for u in &mut def.units {
+        if u.ignite_seconds <= 0.0 {
+            u.ignite_seconds = base.units.iter().find(|x| x.kind == u.kind).map_or(0.0, |x| x.ignite_seconds);
+        }
+    }
+}
+
 /// Ältere Balancing-Dateien kennen Apotheke, Heilsalbe und Heiler noch nicht: aus den
 /// eingebauten Werten übernehmen, was fehlt (Salbe kommt dann auch in die Waffenkammer).
 fn add_apothecary(def: &mut EconomyDef) {
@@ -870,7 +895,7 @@ mod tests {
         for b in &eco.def.buildings {
             assert!(eco.building(b.kind).is_some());
         }
-        assert_eq!(eco.def.buildings.len(), 41);
+        assert_eq!(eco.def.buildings.len(), 42);
         assert!(eco.def.buildings.iter().any(|b| b.hub), "ohne Lager kein Transport");
     }
 
