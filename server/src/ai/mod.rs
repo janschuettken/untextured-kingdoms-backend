@@ -955,7 +955,7 @@ impl Computer {
         if self.count(world, BuildingKind::Market) == 0 {
             return;
         }
-        let price = |good: Good| world.economy.def.market.prices.iter().find(|p| p.good == good).copied();
+        let price = |good: Good| world.price_now(good);
         let mut taler = stock.taler;
         for &(good, limit) in &trade.sell_above {
             let n = have(stock, good).saturating_sub(limit);

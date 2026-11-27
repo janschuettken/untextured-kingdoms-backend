@@ -1172,6 +1172,9 @@ pub struct StockState {
     /// Grenzen je Ware aus dem Ressourcen-Fenster: Startwerte für neue Betriebe.
     #[serde(default)]
     pub limits: Vec<GoodLimit>,
+    /// Aktuelle Marktpreise (Preisdynamik); leer = die Grundpreise aus `market.prices`.
+    #[serde(default)]
+    pub prices: Vec<Price>,
 }
 
 /// Grenzen für eine Ware, die neue Betriebe übernehmen: Hersteller pausieren ab
@@ -1987,10 +1990,38 @@ pub struct MarketDef {
     pub default_tax: u32,
     /// Preise je Ware. Fehlt eine Ware, kann man sie nicht handeln.
     pub prices: Vec<Price>,
+    /// Preisdynamik: jedes gekaufte Stück hebt den Preis der Ware um so viel Prozent,
+    /// jedes verkaufte senkt ihn (für alle Spieler gemeinsam). 0 = feste Preise.
+    #[serde(default = "default_price_step")]
+    pub price_step_percent: f32,
+    /// So viel Prozent ihres Abstands zum Grundpreis holen die Preise je Minute wieder auf.
+    #[serde(default = "default_price_recovery")]
+    pub price_recovery_percent: f32,
+    /// Untere und obere Grenze der Preise in Prozent des Grundpreises.
+    #[serde(default = "default_price_min")]
+    pub price_min_percent: f32,
+    #[serde(default = "default_price_max")]
+    pub price_max_percent: f32,
+}
+
+fn default_price_step() -> f32 {
+    0.5
+}
+
+fn default_price_recovery() -> f32 {
+    20.0
+}
+
+fn default_price_min() -> f32 {
+    30.0
+}
+
+fn default_price_max() -> f32 {
+    300.0
 }
 
 /// Preis einer Ware am Markt: so viel zahlt man beim Kauf, so viel bekommt man beim Verkauf.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Price {
     pub good: Good,

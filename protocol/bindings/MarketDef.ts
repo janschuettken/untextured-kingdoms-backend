@@ -25,4 +25,17 @@ default_tax: number,
 /**
  * Preise je Ware. Fehlt eine Ware, kann man sie nicht handeln.
  */
-prices: Array<Price>, };
+prices: Array<Price>, 
+/**
+ * Preisdynamik: jedes gekaufte Stück hebt den Preis der Ware um so viel Prozent,
+ * jedes verkaufte senkt ihn (für alle Spieler gemeinsam). 0 = feste Preise.
+ */
+price_step_percent: number, 
+/**
+ * So viel Prozent ihres Abstands zum Grundpreis holen die Preise je Minute wieder auf.
+ */
+price_recovery_percent: number, 
+/**
+ * Untere und obere Grenze der Preise in Prozent des Grundpreises.
+ */
+price_min_percent: number, price_max_percent: number, };

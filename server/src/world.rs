@@ -295,6 +295,10 @@ pub struct World {
     tax_carry: HashMap<u32, u32>,
     /// Sekunden seit dem letzten automatischen Handel.
     auto_trade_clock: f32,
+    /// Preisdynamik: Faktor auf den Grundpreis je Ware (fehlt = 1).
+    price_factor: HashMap<protocol::Good, f32>,
+    /// Zuletzt an die Spieler geschickte Preise (ändern sie sich, gehen sie an alle).
+    sent_prices: Vec<protocol::Price>,
     /// Tempo-Faktor je Betrieb, dessen Arbeiter (teils) hungern (siehe `people.rs`).
     worker_hunger: HashMap<u32, f32>,
     /// Betriebe ohne Arbeiter (keine Wohnung frei).
@@ -430,6 +434,8 @@ impl World {
             tax_carry: HashMap::new(),
             transport_wait: HashMap::new(),
             auto_trade_clock: 0.0,
+            price_factor: HashMap::new(),
+            sent_prices: Vec::new(),
             unstaffed: HashSet::new(),
             idle_units: HashSet::new(),
             gather_status: HashMap::new(),
@@ -467,7 +473,8 @@ impl World {
     }
 
     pub fn stock_state(&self, player: u32) -> StockState {
-        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, pools: Vec::new(), people: Default::default(), taler: 0, army: Default::default(), auto_trade: Vec::new(), limits: Vec::new() });
+        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, pools: Vec::new(), people: Default::default(), taler: 0, army: Default::default(), auto_trade: Vec::new(), limits: Vec::new(), prices: Vec::new() });
+        state.prices = self.current_prices();
         state.auto_trade = self.auto_trade.get(&player).cloned().unwrap_or_default();
         state.limits = self.good_limits.get(&player).cloned().unwrap_or_default();
         state.people = self.people.get(&player).cloned().unwrap_or_default();

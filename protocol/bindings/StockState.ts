@@ -4,6 +4,7 @@ import type { AutoTrade } from "./AutoTrade";
 import type { GoodAmount } from "./GoodAmount";
 import type { GoodLimit } from "./GoodLimit";
 import type { PeopleState } from "./PeopleState";
+import type { Price } from "./Price";
 import type { StoragePool } from "./StoragePool";
 
 /**
@@ -34,4 +35,8 @@ auto_trade: Array<AutoTrade>,
 /**
  * Grenzen je Ware aus dem Ressourcen-Fenster: Startwerte für neue Betriebe.
  */
-limits: Array<GoodLimit>, };
+limits: Array<GoodLimit>, 
+/**
+ * Aktuelle Marktpreise (Preisdynamik); leer = die Grundpreise aus `market.prices`.
+ */
+prices: Array<Price>, };
