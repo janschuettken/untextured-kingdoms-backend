@@ -70,6 +70,9 @@ pub struct Member {
     pub daring: Option<u8>,
     #[serde(default)]
     pub helpfulness: Option<u8>,
+    /// Computergegner: Startvorteil in Prozent (0 bis 200).
+    #[serde(default)]
+    pub bonus: u8,
 }
 
 impl Member {
@@ -82,6 +85,7 @@ impl Member {
             team: 0,
             daring: None,
             helpfulness: None,
+            bonus: 0,
         }
     }
 
@@ -89,6 +93,9 @@ impl Member {
         self.computer.is_none()
     }
 }
+
+/// Höchster Startvorteil eines Computergegners in Prozent.
+const MAX_BONUS: u8 = 200;
 
 /// Token eines Computergegners: enthält `:`, das kein Browser-Token enthalten darf.
 fn computer_token(game: u32, n: u64) -> String {
@@ -617,6 +624,7 @@ impl Hub {
                         daring: m.daring,
                         helpfulness: m.helpfulness,
                         defeated: defeated.contains(&(i as u32 + 1)),
+                        bonus: m.bonus,
                     }),
                 })
                 .collect();
@@ -893,6 +901,7 @@ impl Hub {
             team: 0,
             daring: None,
             helpfulness: None,
+            bonus: 0,
         });
         Ok(())
     }
@@ -961,6 +970,24 @@ impl Hub {
         };
         m.daring = daring.map(|d| d.min(100));
         m.helpfulness = helpfulness.map(|h| h.min(100));
+        Ok(())
+    }
+
+    fn set_computer_bonus(&self, token: &str, slot: u32, bonus: u8) -> Reply {
+        let Some(game) = self.game_of(token) else {
+            return err("lobby.not_in_game");
+        };
+        let mut meta = game.meta.lock().unwrap();
+        if meta.host != token {
+            return err("lobby.not_host");
+        }
+        if meta.phase != GamePhase::Waiting {
+            return err("lobby.game_running");
+        }
+        let Some(m) = meta.slots.get_mut(slot as usize).and_then(|s| s.as_mut()).filter(|m| !m.is_human()) else {
+            return err("lobby.not_computer");
+        };
+        m.bonus = bonus.min(MAX_BONUS);
         Ok(())
     }
 
@@ -1044,6 +1071,9 @@ impl Hub {
                 if let Some(m) = s {
                     world.spawn_player_at(i as u32 + 1, meta.spawns[i]);
                     world.set_team(i as u32 + 1, m.team);
+                    if !m.is_human() && m.bonus > 0 {
+                        world.grant_start_bonus(i as u32 + 1, m.bonus as u32);
+                    }
                 }
             }
             world.set_trade_mode(meta.trade_mode);
@@ -1082,6 +1112,7 @@ impl Hub {
             LobbyClientMsg::RemoveComputer { slot } => self.remove_computer(token, slot),
             LobbyClientMsg::SetTeam { slot, team } => self.set_team(token, slot, team),
             LobbyClientMsg::SetComputerTraits { slot, daring, helpfulness } => self.set_computer_traits(token, slot, daring, helpfulness),
+            LobbyClientMsg::SetComputerBonus { slot, bonus } => self.set_computer_bonus(token, slot, bonus),
             LobbyClientMsg::SetTradeMode { mode } => self.set_trade_mode(token, mode),
             LobbyClientMsg::SetShotMode { mode } => self.set_shot_mode(token, mode),
             LobbyClientMsg::SetRules { rules } => self.set_rules(token, rules),

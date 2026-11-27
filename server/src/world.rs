@@ -624,6 +624,39 @@ impl World {
         self.units.push(Unit::new(id, player, UnitKind::King, king));
     }
 
+    /// Startvorteil (Computergegner aus der Lobby): `percent` % mehr Startwaren und Taler,
+    /// dazu je 25 % ein Soldat (abwechselnd Speerträger und Bogenschütze) beim König.
+    pub fn grant_start_bonus(&mut self, player: u32, percent: u32) {
+        if percent == 0 {
+            return;
+        }
+        let start = self.economy.def.start_stock.clone();
+        let taler = self.economy.def.market.start_taler;
+        if let Some(stock) = self.stocks.get_mut(&player) {
+            for g in &start {
+                stock.add_unlimited(g.good, g.amount * percent / 100);
+            }
+            stock.taler += taler * percent / 100;
+        }
+        self.dirty_stocks.insert(player);
+        let Some(king) = self.units.iter().find(|u| u.owner == player && u.kind == UnitKind::King).map(|u| u.pos) else {
+            return;
+        };
+        for n in 0..percent / 25 {
+            let kind = if n % 2 == 0 { UnitKind::Spearman } else { UnitKind::Archer };
+            if self.economy.unit(kind).is_none() {
+                continue;
+            }
+            let id = self.next_unit_id;
+            self.next_unit_id += 1;
+            // Leicht versetzt, auseinander stellen sie sich selbst (`crowd spread`).
+            let off = (n as f32 * 0.37 % 1.0 - 0.5, (n as f32 * 0.61) % 1.0 - 0.5);
+            let mut unit = Unit::new(id, player, kind, (king.0 + off.0, king.1 + off.1));
+            unit.mounted = self.economy.unit(kind).is_some_and(|d| d.mounted);
+            self.units.push(unit);
+        }
+    }
+
     /// Startgebäude möglichst mittig auf die Fahne setzen; passt es dort nicht
     /// (Hang, Wald, Wasser), den nächsten passenden Platz in der Nähe suchen.
     fn place_start_building(&mut self, player: u32, kind: BuildingKind, (sx, sy): (u32, u32)) -> Option<BuildingState> {
@@ -1989,6 +2022,20 @@ mod tests {
         let (tx, ty) = info.target.unwrap();
         assert!((tx - 122.5).abs() < 1.5 && (ty - 82.5).abs() < 1.5, "Ziel {tx},{ty}");
         assert!(world.unit_info(999_999).is_none());
+    }
+
+    #[test]
+    fn startvorteil_gibt_waren_taler_und_soldaten() {
+        let mut world = World::new(GameMap::parse(DEFAULT_MAP).unwrap(), eco());
+        world.spawn_player(1);
+        world.spawn_player(2);
+        world.grant_start_bonus(2, 50);
+        let (a, b) = (&world.stocks[&1], &world.stocks[&2]);
+        assert_eq!(b.taler, a.taler + a.taler / 2);
+        let g = world.economy.def.start_stock[0].clone();
+        assert_eq!(b.amount(g.good), a.amount(g.good) + g.amount / 2);
+        let soldiers = |p: u32| world.units.iter().filter(|u| u.owner == p && u.kind.is_soldier()).count();
+        assert_eq!((soldiers(1), soldiers(2)), (0, 2));
     }
 
     #[test]

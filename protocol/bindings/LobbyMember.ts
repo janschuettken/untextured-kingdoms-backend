@@ -33,4 +33,8 @@ helpfulness: number | null,
 /**
  * Laufendes Spiel: sein König ist gefallen, er ist ausgeschieden.
  */
-defeated: boolean, };
+defeated: boolean, 
+/**
+ * Computergegner: Startvorteil in Prozent (mehr Waren und Taler, Soldaten dazu).
+ */
+bonus: number, };

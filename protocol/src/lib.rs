@@ -470,6 +470,9 @@ pub enum LobbyClientMsg {
         #[ts(optional)]
         helpfulness: Option<u8>,
     },
+    /// Nur Gastgeber, nur vor dem Start: Startvorteil eines Computergegners in Prozent
+    /// (0 bis 200): so viel mehr Startwaren und Taler, je 25 % ein Soldat dazu.
+    SetComputerBonus { slot: u32, bonus: u8 },
     /// Nur Gastgeber, nur vor dem Start: wie Waren zwischen Verbündeten ankommen.
     SetTradeMode { mode: TradeMode },
     /// Nur Gastgeber, nur vor dem Start: wann Fernkämpfer treffen (Wurfbahn oder Sichtlinie).
@@ -612,6 +615,9 @@ pub struct LobbyMember {
     /// Laufendes Spiel: sein König ist gefallen, er ist ausgeschieden.
     #[serde(default)]
     pub defeated: bool,
+    /// Computergegner: Startvorteil in Prozent (mehr Waren und Taler, Soldaten dazu).
+    #[serde(default)]
+    pub bonus: u8,
 }
 
 /// Kleine Kartenvorschau für die Lobby (`GET /api/games/{id}/preview`).
