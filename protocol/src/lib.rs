@@ -90,6 +90,8 @@ pub enum ClientMsg {
     WatchUnit { unit_id: Option<u32> },
     /// Laufkosten aller Felder anfordern (Heatmap). Antwort: `NavCosts`.
     RequestNavCosts,
+    /// Zeitstrahl anfordern (Angriffe, Meilensteine, Ausscheiden). Antwort: `Timeline`.
+    RequestTimeline,
     /// Baumeister bauen ein Belagerungsgerät: Baustelle mit der linken oberen Ecke bei (x, y),
     /// bei der Balliste ein Feld eines eigenen Turms. `backpack`: jeder nimmt gleich
     /// `army.builder_backpack` Baustoffe aus dem Vorrat mit.
@@ -249,6 +251,14 @@ pub enum ServerMsg {
         x: f32,
         y: f32,
     },
+    /// Zeitstrahl des Spiels (Antwort auf `RequestTimeline`), älteste zuerst. Solange das
+    /// Spiel läuft, nur was den Spieler oder seine Verbündeten betrifft; nach Spielende
+    /// oder nach dem eigenen Ausscheiden alles.
+    Timeline {
+        entries: Vec<TimelineEntry>,
+        /// Aktuelle Spielzeit in Sekunden.
+        now: f64,
+    },
     /// Laufkosten je Feld (Antwort auf `RequestNavCosts`), zeilenweise, ein Zeichen je Feld:
     /// `' '` = nicht begehbar, sonst Tempo in Prozent = (Zeichencode - 48) * 5.
     NavCosts {
@@ -348,6 +358,54 @@ pub enum ServerMsg {
     GameOver {
         winners: Vec<u32>,
     },
+}
+
+/// Ein Eintrag im Zeitstrahl. Angriffe sind Vorfälle: Geht es innerhalb von 30 s weiter,
+/// wird derselbe Eintrag bis `until` verlängert statt ein neuer angelegt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TimelineEntry {
+    /// Spielzeit (Sekunden) des Ereignisses bzw. des Beginns des Vorfalls.
+    pub at: f64,
+    /// Spielzeit des letzten Treffers im Vorfall (sonst gleich `at`).
+    pub until: f64,
+    pub event: TimelineEvent,
+}
+
+/// Was im Zeitstrahl steht. `player` = der Betroffene, `by` = wer angreift.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum TimelineEvent {
+    /// Feindliche Kämpfer von `by` nahe der Burg von `player` (wie die Warnung).
+    EnemyNear { player: u32, by: u32 },
+    /// `by` beschädigt Gebäude von `player` (die Arten, die im Vorfall getroffen wurden).
+    BuildingAttacked { player: u32, by: u32, buildings: Vec<BuildingKind> },
+    /// `by` greift Einheiten von `player` an.
+    UnitsAttacked { player: u32, by: u32 },
+    /// Meilenstein eines Spielers (mit der Einheit, die ihn ausgelöst hat).
+    Milestone { player: u32, milestone: Milestone, unit: Option<UnitKind> },
+    /// König gefallen, `by` hat den letzten Schlag geführt.
+    PlayerDefeated { player: u32, by: Option<u32> },
+    /// Spiel entschieden.
+    GameOver { winners: Vec<u32> },
+}
+
+/// Meilensteine im Zeitstrahl, je Spieler höchstens einmal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Milestone {
+    /// Erster Soldat (Speerträger, Bogenschütze, …).
+    FirstSoldier,
+    /// Erste mittlere Einheit (Armbrustschütze, Schwertkämpfer mit Rüstung).
+    FirstMedium,
+    /// Erste schwere Einheit (Ritter).
+    FirstHeavy,
+    /// Erstes Belagerungsgerät.
+    FirstSiege,
+    /// Burg zum ersten Mal geschlossen (kein Weg von außen zum Bergfried).
+    CastleClosed,
 }
 
 /// Art einer Warnung (siehe `ServerMsg::Alert`).
@@ -903,6 +961,18 @@ pub enum UnitKind {
 }
 
 impl UnitKind {
+    /// Meilensteine, die diese Einheit beim Ausbilden bzw. Bauen auslösen kann.
+    pub fn milestones(self) -> &'static [Milestone] {
+        use UnitKind::*;
+        match self {
+            Spearman | Archer | LightSwordsman => &[Milestone::FirstSoldier],
+            Crossbowman | Swordsman => &[Milestone::FirstSoldier, Milestone::FirstMedium],
+            Knight => &[Milestone::FirstSoldier, Milestone::FirstHeavy],
+            Catapult | Trebuchet | Ballista | SiegeTower => &[Milestone::FirstSiege],
+            _ => &[],
+        }
+    }
+
     /// Soldaten: werden in der Kaserne ausgebildet und kosten Sold.
     pub fn is_soldier(self) -> bool {
         matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer | UnitKind::Builder)

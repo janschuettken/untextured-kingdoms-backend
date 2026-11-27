@@ -247,6 +247,7 @@ impl World {
         let mut unit = Unit::new(id, b.owner, kind, door);
         unit.mounted = self.economy.unit(kind).is_some_and(|d| d.mounted);
         self.units.push(unit);
+        self.timeline_unit_ready(b.owner, kind);
         // Eigener Sammelpunkt: dorthin laufen, auseinander stellen sich die Soldaten selbst.
         if let Some(spot) = b.rally {
             self.order_move(b.owner, &[id], spot);
