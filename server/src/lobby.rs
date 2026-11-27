@@ -70,6 +70,9 @@ pub struct Member {
     pub daring: Option<u8>,
     #[serde(default)]
     pub helpfulness: Option<u8>,
+    /// Computergegner: Startvorteil in Prozent (0 bis 200).
+    #[serde(default)]
+    pub bonus: u8,
 }
 
 impl Member {
@@ -82,6 +85,7 @@ impl Member {
             team: 0,
             daring: None,
             helpfulness: None,
+            bonus: 0,
         }
     }
 
@@ -89,6 +93,14 @@ impl Member {
         self.computer.is_none()
     }
 }
+
+/// Jetzt in Unix-Sekunden.
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// Höchster Startvorteil eines Computergegners in Prozent.
+const MAX_BONUS: u8 = 200;
 
 /// Token eines Computergegners: enthält `:`, das kein Browser-Token enthalten darf.
 fn computer_token(game: u32, n: u64) -> String {
@@ -116,6 +128,8 @@ pub struct Meta {
     pub rules: protocol::GameRules,
     /// Kartenvorschau für die Lobby, solange das Spiel wartet.
     pub preview: Arc<protocol::GamePreview>,
+    /// Zuletzt gespielt (Unix-Sekunden): solange ein Mensch im Spiel ist, laufend neu.
+    pub last_played: u64,
 }
 
 impl Meta {
@@ -174,6 +188,9 @@ struct GameFile {
     id: u32,
     #[serde(default)]
     title: String,
+    /// Zuletzt gespielt (Unix-Sekunden).
+    #[serde(default)]
+    last_played: u64,
     map: String,
     /// Die Karte, wie sie beim Start war (die Datei im Kartenordner kann sich ändern).
     map_text: String,
@@ -350,15 +367,19 @@ impl Hub {
     /// Umwandeln in JSON und Schreiben macht `PendingSave::write`, gern in einem anderen Thread.
     pub fn prepare_save(&self, game: &Game) -> Option<PendingSave> {
         let m = game.running.get()?;
-        let (host, slots, title) = {
-            let meta = game.meta.lock().unwrap();
-            (meta.host.clone(), meta.slots.clone(), meta.title.clone())
+        let (host, slots, title, last_played) = {
+            let mut meta = game.meta.lock().unwrap();
+            if !m.online_players().is_empty() {
+                meta.last_played = now_secs();
+            }
+            (meta.host.clone(), meta.slots.clone(), meta.title.clone(), meta.last_played)
         };
         let save = m.world.lock().unwrap().to_save(&m.map_name);
         let seq = m.save_seq.fetch_add(1, Ordering::Relaxed) + 1;
         let file = GameFile {
             id: game.id,
             title,
+            last_played,
             map: m.map_name.clone(),
             map_text: m.map_text.clone(),
             host,
@@ -451,6 +472,7 @@ impl Hub {
             shot_mode: world.shot_mode(),
             rules: world.rules(),
             preview: Arc::new(preview::of_map(&map)),
+            last_played: file.last_played,
         };
         let computers = meta.computers();
         let game = Arc::new(Game {
@@ -579,12 +601,16 @@ impl Hub {
         // Pro Spiel: Detailansicht und welche Tokens dazugehören.
         let mut details: Vec<(LobbyGame, Vec<String>)> = Vec::new();
         for g in &games {
-            let meta = g.meta.lock().unwrap();
+            let mut meta = g.meta.lock().unwrap();
             let in_game = g
                 .running
                 .get()
                 .map(|m| m.online_players())
                 .unwrap_or_default();
+            if !in_game.is_empty() {
+                meta.last_played = now_secs();
+            }
+            let finished = g.running.get().is_some_and(|m| m.world.lock().unwrap().winners().is_some());
             let paused = g.running.get().is_some_and(|m| m.paused());
             // Reihenfolge: erst `meta`, dann die Welt (siehe `Hub::games`).
             let defeated: Vec<u32> = g
@@ -617,6 +643,7 @@ impl Hub {
                         daring: m.daring,
                         helpfulness: m.helpfulness,
                         defeated: defeated.contains(&(i as u32 + 1)),
+                        bonus: m.bonus,
                     }),
                 })
                 .collect();
@@ -634,6 +661,8 @@ impl Hub {
                 mine: false,
                 paused,
                 slots: slots.clone(),
+                last_played: meta.last_played,
+                finished,
             });
             let detail = LobbyGame {
                 id: g.id,
@@ -716,6 +745,7 @@ impl Hub {
             shot_mode: protocol::ShotMode::default(),
             rules: protocol::GameRules::default(),
             preview: Arc::new(preview::of_map(&map)),
+            last_played: now_secs(),
         };
         let game = Arc::new(Game {
             id,
@@ -893,6 +923,7 @@ impl Hub {
             team: 0,
             daring: None,
             helpfulness: None,
+            bonus: 0,
         });
         Ok(())
     }
@@ -962,6 +993,46 @@ impl Hub {
         m.daring = daring.map(|d| d.min(100));
         m.helpfulness = helpfulness.map(|h| h.min(100));
         Ok(())
+    }
+
+    fn set_computer_bonus(&self, token: &str, slot: u32, bonus: u8) -> Reply {
+        let Some(game) = self.game_of(token) else {
+            return err("lobby.not_in_game");
+        };
+        let mut meta = game.meta.lock().unwrap();
+        if meta.host != token {
+            return err("lobby.not_host");
+        }
+        if meta.phase != GamePhase::Waiting {
+            return err("lobby.game_running");
+        }
+        let Some(m) = meta.slots.get_mut(slot as usize).and_then(|s| s.as_mut()).filter(|m| !m.is_human()) else {
+            return err("lobby.not_computer");
+        };
+        m.bonus = bonus.min(MAX_BONUS);
+        Ok(())
+    }
+
+    /// Beendete Spiele löschen: Admins alle, sonst die, in denen `token` mitspielt.
+    /// Liefert die Ids der gelöschten Spiele.
+    fn cleanup_games(&self, token: &str, admin: bool) -> Vec<u32> {
+        let games: Vec<Arc<Game>> = self.games.lock().unwrap().values().cloned().collect();
+        let mut gone = Vec::new();
+        for g in games {
+            let Some(m) = g.running.get() else { continue };
+            let mine = admin || g.meta.lock().unwrap().slot_of(token).is_some();
+            // Reihenfolge der Sperren: erst `meta`, dann die Welt; hier nie beide zugleich.
+            if mine && m.world.lock().unwrap().winners().is_some() {
+                gone.push(g.id);
+            }
+        }
+        for &id in &gone {
+            self.end_game(id);
+        }
+        if !gone.is_empty() {
+            info!("Aufgeräumt: beendete Spiele {gone:?}");
+        }
+        gone
     }
 
     /// Gastgeber oder Admin: ein Spiel umbenennen (auch laufend; leer = Standardname).
@@ -1044,6 +1115,9 @@ impl Hub {
                 if let Some(m) = s {
                     world.spawn_player_at(i as u32 + 1, meta.spawns[i]);
                     world.set_team(i as u32 + 1, m.team);
+                    if !m.is_human() && m.bonus > 0 {
+                        world.grant_start_bonus(i as u32 + 1, m.bonus as u32);
+                    }
                 }
             }
             world.set_trade_mode(meta.trade_mode);
@@ -1082,11 +1156,16 @@ impl Hub {
             LobbyClientMsg::RemoveComputer { slot } => self.remove_computer(token, slot),
             LobbyClientMsg::SetTeam { slot, team } => self.set_team(token, slot, team),
             LobbyClientMsg::SetComputerTraits { slot, daring, helpfulness } => self.set_computer_traits(token, slot, daring, helpfulness),
+            LobbyClientMsg::SetComputerBonus { slot, bonus } => self.set_computer_bonus(token, slot, bonus),
             LobbyClientMsg::SetTradeMode { mode } => self.set_trade_mode(token, mode),
             LobbyClientMsg::SetShotMode { mode } => self.set_shot_mode(token, mode),
             LobbyClientMsg::SetRules { rules } => self.set_rules(token, rules),
             // Braucht die Admin-Rechte (Datenbank): kommt über `handle_socket`.
             LobbyClientMsg::RenameGame { game_id, title } => self.rename_game(token, false, game_id, &title),
+            LobbyClientMsg::CleanupGames => {
+                self.cleanup_games(token, false);
+                Ok(())
+            }
         }
     }
 }
@@ -1154,6 +1233,11 @@ async fn handle_socket(socket: WebSocket, hub: Arc<Hub>) {
                     LobbyClientMsg::RenameGame { game_id, title } => {
                         let admin = hub.admin.check(&token).await;
                         hub.rename_game(&token, admin, game_id, &title)
+                    }
+                    LobbyClientMsg::CleanupGames => {
+                        let admin = hub.admin.check(&token).await;
+                        hub.cleanup_games(&token, admin);
+                        Ok(())
                     }
                     msg => hub.handle(&token, &mut name, msg),
                 };
@@ -1337,6 +1421,25 @@ mod tests {
         hub.leave(A, None).unwrap();
         hub.leave(C, None).unwrap();
         assert!(hub.game(first).is_none() && hub.game(second).is_none());
+    }
+
+    #[test]
+    fn aufraeumen_loescht_nur_beendete_eigene_spiele() {
+        let hub = hub();
+        hub.create(A, "Anna", "zwei-burgen").unwrap();
+        let done = hub.waiting_game_of(A).unwrap().id;
+        hub.join(B, "Bert", done).unwrap();
+        hub.start(A).unwrap();
+        hub.create(A, "Anna", "zwei-burgen").unwrap();
+        let open = hub.waiting_game_of(A).unwrap().id;
+        hub.join(B, "Bert", open).unwrap();
+        hub.start(A).unwrap();
+        hub.game(done).unwrap().running.get().unwrap().world.lock().unwrap().eliminate(2, Some(1));
+        assert!(hub.cleanup_games(C, false).is_empty(), "Carl spielt nicht mit");
+        assert_eq!(hub.cleanup_games(B, false), vec![done]);
+        assert!(hub.game(done).is_none() && hub.game(open).is_some());
+        assert!(!hub.save_path(done).exists());
+        hub.end_game(open);
     }
 
     #[test]

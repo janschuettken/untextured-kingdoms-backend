@@ -527,7 +527,12 @@ fn step(state: &Match, tick: u64, phases: &mut PhaseTimes) {
         let castles: HashMap<u32, protocol::CastleStatus> = if tick.is_multiple_of(CASTLE_CHECK_SECONDS * TICK_RATE as u64) {
             let players = players_of(&state.clients.lock().unwrap());
             let castle = Instant::now();
-            let list = players.into_iter().map(|p| (p, world.castle_status(p))).collect();
+            let list: HashMap<u32, protocol::CastleStatus> = players.into_iter().map(|p| (p, world.castle_status(p))).collect();
+            for (&p, status) in &list {
+                if status.closed {
+                    world.timeline_milestone(p, protocol::Milestone::CastleClosed, None);
+                }
+            }
             castle_took = castle.elapsed();
             list
         } else {
@@ -907,6 +912,13 @@ async fn handle_msg(
                 let world = state.world.lock().unwrap();
                 let nav = &world.map.nav;
                 ServerMsg::NavCosts { width: nav.width, height: nav.height, cells: nav.cost_map() }
+            };
+            let _ = out_tx.send(msg).await;
+        }
+        ClientMsg::RequestTimeline => {
+            let msg = {
+                let world = state.world.lock().unwrap();
+                ServerMsg::Timeline { entries: world.timeline_for(player_id), now: world.game_seconds() }
             };
             let _ = out_tx.send(msg).await;
         }

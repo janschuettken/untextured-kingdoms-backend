@@ -29,4 +29,12 @@ paused: boolean,
 /**
  * Wer mitspielt (für den Admin: „Spielen als“ hinter jedem Spieler).
  */
-slots: Array<LobbySlot>, };
+slots: Array<LobbySlot>, 
+/**
+ * Zuletzt gespielt (Unix-Sekunden; wartende Spiele: angelegt). Die Liste ist danach sortiert.
+ */
+last_played: number, 
+/**
+ * Entschieden (ein König oder Bündnis ist übrig): kann aufgeräumt werden.
+ */
+finished: boolean, };

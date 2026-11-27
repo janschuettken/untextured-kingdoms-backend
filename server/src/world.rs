@@ -34,6 +34,7 @@ pub use save::SaveGame;
 mod people;
 mod production;
 mod progress;
+mod timeline;
 mod transport;
 use production::Work;
 use gather::Gather;
@@ -312,6 +313,10 @@ pub struct World {
     tax_carry: HashMap<u32, u32>,
     /// Sekunden seit dem letzten automatischen Handel.
     auto_trade_clock: f32,
+    /// Preisdynamik: Faktor auf den Grundpreis je Ware (fehlt = 1).
+    price_factor: HashMap<protocol::Good, f32>,
+    /// Zuletzt an die Spieler geschickte Preise (ändern sie sich, gehen sie an alle).
+    sent_prices: Vec<protocol::Price>,
     /// Tempo-Faktor je Betrieb, dessen Arbeiter (teils) hungern (siehe `people.rs`).
     worker_hunger: HashMap<u32, f32>,
     /// Betriebe ohne Arbeiter (keine Wohnung frei).
@@ -362,6 +367,9 @@ pub struct World {
     respawn_clock: HashMap<u32, f32>,
     /// Warnungen an Spieler (siehe `alerts.rs`).
     alerts: alerts::Alerts,
+    /// Zeitstrahl: Angriffe, Meilensteine, Ausscheiden (siehe `timeline.rs`).
+    pub(crate) timeline: Vec<protocol::TimelineEntry>,
+    incidents: timeline::Incidents,
     /// Aufgeschobene Weg-Neuberechnung: (Uhr der ersten, Uhr der letzten Änderung).
     replan_pending: Option<(f64, f64)>,
     /// Uhr dafür (Sekunden Spielzeit, läuft auch nach Spielende weiter).
@@ -449,6 +457,8 @@ impl World {
             tax_carry: HashMap::new(),
             transport_wait: HashMap::new(),
             auto_trade_clock: 0.0,
+            price_factor: HashMap::new(),
+            sent_prices: Vec::new(),
             unstaffed: HashSet::new(),
             idle_units: HashSet::new(),
             gather_status: HashMap::new(),
@@ -468,6 +478,8 @@ impl World {
             fire_clock: 0.0,
             respawn_clock: HashMap::new(),
             alerts: alerts::Alerts::default(),
+            timeline: Vec::new(),
+            incidents: timeline::Incidents::default(),
             worker_carries_default: true,
             self_carry: HashSet::new(),
             phase_us: Default::default(),
@@ -487,7 +499,8 @@ impl World {
     }
 
     pub fn stock_state(&self, player: u32) -> StockState {
-        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, pools: Vec::new(), people: Default::default(), taler: 0, army: Default::default(), auto_trade: Vec::new(), limits: Vec::new() });
+        let mut state = self.stocks.get(&player).map(|s| s.state()).unwrap_or(StockState { goods: Vec::new(), capacity: 0, pools: Vec::new(), people: Default::default(), taler: 0, army: Default::default(), auto_trade: Vec::new(), limits: Vec::new(), prices: Vec::new() });
+        state.prices = self.current_prices();
         state.auto_trade = self.auto_trade.get(&player).cloned().unwrap_or_default();
         state.limits = self.good_limits.get(&player).cloned().unwrap_or_default();
         state.people = self.people.get(&player).cloned().unwrap_or_default();
@@ -642,6 +655,39 @@ impl World {
             }
         }
         self.units.push(Unit::new(id, player, UnitKind::King, king));
+    }
+
+    /// Startvorteil (Computergegner aus der Lobby): `percent` % mehr Startwaren und Taler,
+    /// dazu je 25 % ein Soldat (abwechselnd Speerträger und Bogenschütze) beim König.
+    pub fn grant_start_bonus(&mut self, player: u32, percent: u32) {
+        if percent == 0 {
+            return;
+        }
+        let start = self.economy.def.start_stock.clone();
+        let taler = self.economy.def.market.start_taler;
+        if let Some(stock) = self.stocks.get_mut(&player) {
+            for g in &start {
+                stock.add_unlimited(g.good, g.amount * percent / 100);
+            }
+            stock.taler += taler * percent / 100;
+        }
+        self.dirty_stocks.insert(player);
+        let Some(king) = self.units.iter().find(|u| u.owner == player && u.kind == UnitKind::King).map(|u| u.pos) else {
+            return;
+        };
+        for n in 0..percent / 25 {
+            let kind = if n % 2 == 0 { UnitKind::Spearman } else { UnitKind::Archer };
+            if self.economy.unit(kind).is_none() {
+                continue;
+            }
+            let id = self.next_unit_id;
+            self.next_unit_id += 1;
+            // Leicht versetzt, auseinander stellen sie sich selbst (`crowd spread`).
+            let off = (n as f32 * 0.37 % 1.0 - 0.5, (n as f32 * 0.61) % 1.0 - 0.5);
+            let mut unit = Unit::new(id, player, kind, (king.0 + off.0, king.1 + off.1));
+            unit.mounted = self.economy.unit(kind).is_some_and(|d| d.mounted);
+            self.units.push(unit);
+        }
     }
 
     /// Startgebäude möglichst mittig auf die Fahne setzen; passt es dort nicht
@@ -2014,6 +2060,20 @@ mod tests {
         let (tx, ty) = info.target.unwrap();
         assert!((tx - 122.5).abs() < 1.5 && (ty - 82.5).abs() < 1.5, "Ziel {tx},{ty}");
         assert!(world.unit_info(999_999).is_none());
+    }
+
+    #[test]
+    fn startvorteil_gibt_waren_taler_und_soldaten() {
+        let mut world = World::new(GameMap::parse(DEFAULT_MAP).unwrap(), eco());
+        world.spawn_player(1);
+        world.spawn_player(2);
+        world.grant_start_bonus(2, 50);
+        let (a, b) = (&world.stocks[&1], &world.stocks[&2]);
+        assert_eq!(b.taler, a.taler + a.taler / 2);
+        let g = world.economy.def.start_stock[0].clone();
+        assert_eq!(b.amount(g.good), a.amount(g.good) + g.amount / 2);
+        let soldiers = |p: u32| world.units.iter().filter(|u| u.owner == p && u.kind.is_soldier()).count();
+        assert_eq!((soldiers(1), soldiers(2)), (0, 2));
     }
 
     #[test]

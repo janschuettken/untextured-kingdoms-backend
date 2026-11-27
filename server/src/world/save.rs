@@ -57,6 +57,11 @@ pub struct SaveGame {
     policies: HashMap<u32, (u32, u32)>,
     #[serde(default)]
     game_seconds: f64,
+    /// Preisdynamik am Markt: Faktor je Ware.
+    #[serde(default)]
+    price_factor: HashMap<protocol::Good, f32>,
+    #[serde(default)]
+    timeline: Vec<protocol::TimelineEntry>,
 }
 
 impl World {
@@ -87,7 +92,9 @@ impl World {
             auto_trade: self.auto_trade.clone(),
             good_limits: self.good_limits.clone(),
             policies: self.policies.clone(),
+            price_factor: self.price_factor.clone(),
             game_seconds: self.game_seconds,
+            timeline: self.timeline.clone(),
         }
     }
 
@@ -132,7 +139,9 @@ impl World {
         w.auto_trade = save.auto_trade;
         w.good_limits = save.good_limits;
         w.policies = save.policies;
+        w.price_factor = save.price_factor;
         w.game_seconds = save.game_seconds;
+        w.timeline = save.timeline;
         // Ältere Stände: Herstellungsbetriebe hatten noch keine eigenen Arbeiter.
         for bi in 0..w.buildings.len() {
             let id = w.buildings[bi].id;

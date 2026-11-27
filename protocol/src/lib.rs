@@ -95,6 +95,8 @@ pub enum ClientMsg {
     WatchUnit { unit_id: Option<u32> },
     /// Laufkosten aller Felder anfordern (Heatmap). Antwort: `NavCosts`.
     RequestNavCosts,
+    /// Zeitstrahl anfordern (Angriffe, Meilensteine, Ausscheiden). Antwort: `Timeline`.
+    RequestTimeline,
     /// Baumeister bauen ein Belagerungsgerät: Baustelle mit der linken oberen Ecke bei (x, y),
     /// bei der Balliste ein Feld eines eigenen Turms. `backpack`: jeder nimmt gleich
     /// `army.builder_backpack` Baustoffe aus dem Vorrat mit.
@@ -254,6 +256,14 @@ pub enum ServerMsg {
         x: f32,
         y: f32,
     },
+    /// Zeitstrahl des Spiels (Antwort auf `RequestTimeline`), älteste zuerst. Solange das
+    /// Spiel läuft, nur was den Spieler oder seine Verbündeten betrifft; nach Spielende
+    /// oder nach dem eigenen Ausscheiden alles.
+    Timeline {
+        entries: Vec<TimelineEntry>,
+        /// Aktuelle Spielzeit in Sekunden.
+        now: f64,
+    },
     /// Laufkosten je Feld (Antwort auf `RequestNavCosts`), zeilenweise, ein Zeichen je Feld:
     /// `' '` = nicht begehbar, sonst Tempo in Prozent = (Zeichencode - 48) * 5.
     NavCosts {
@@ -353,6 +363,54 @@ pub enum ServerMsg {
     GameOver {
         winners: Vec<u32>,
     },
+}
+
+/// Ein Eintrag im Zeitstrahl. Angriffe sind Vorfälle: Geht es innerhalb von 30 s weiter,
+/// wird derselbe Eintrag bis `until` verlängert statt ein neuer angelegt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TimelineEntry {
+    /// Spielzeit (Sekunden) des Ereignisses bzw. des Beginns des Vorfalls.
+    pub at: f64,
+    /// Spielzeit des letzten Treffers im Vorfall (sonst gleich `at`).
+    pub until: f64,
+    pub event: TimelineEvent,
+}
+
+/// Was im Zeitstrahl steht. `player` = der Betroffene, `by` = wer angreift.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum TimelineEvent {
+    /// Feindliche Kämpfer von `by` nahe der Burg von `player` (wie die Warnung).
+    EnemyNear { player: u32, by: u32 },
+    /// `by` beschädigt Gebäude von `player` (die Arten, die im Vorfall getroffen wurden).
+    BuildingAttacked { player: u32, by: u32, buildings: Vec<BuildingKind> },
+    /// `by` greift Einheiten von `player` an.
+    UnitsAttacked { player: u32, by: u32 },
+    /// Meilenstein eines Spielers (mit der Einheit, die ihn ausgelöst hat).
+    Milestone { player: u32, milestone: Milestone, unit: Option<UnitKind> },
+    /// König gefallen, `by` hat den letzten Schlag geführt.
+    PlayerDefeated { player: u32, by: Option<u32> },
+    /// Spiel entschieden.
+    GameOver { winners: Vec<u32> },
+}
+
+/// Meilensteine im Zeitstrahl, je Spieler höchstens einmal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Milestone {
+    /// Erster Soldat (Speerträger, Bogenschütze, …).
+    FirstSoldier,
+    /// Erste mittlere Einheit (Armbrustschütze, Schwertkämpfer mit Rüstung).
+    FirstMedium,
+    /// Erste schwere Einheit (Ritter).
+    FirstHeavy,
+    /// Erstes Belagerungsgerät.
+    FirstSiege,
+    /// Burg zum ersten Mal geschlossen (kein Weg von außen zum Bergfried).
+    CastleClosed,
 }
 
 /// Art einer Warnung (siehe `ServerMsg::Alert`).
@@ -477,6 +535,9 @@ pub enum LobbyClientMsg {
         #[ts(optional)]
         helpfulness: Option<u8>,
     },
+    /// Nur Gastgeber, nur vor dem Start: Startvorteil eines Computergegners in Prozent
+    /// (0 bis 200): so viel mehr Startwaren und Taler, je 25 % ein Soldat dazu.
+    SetComputerBonus { slot: u32, bonus: u8 },
     /// Nur Gastgeber, nur vor dem Start: wie Waren zwischen Verbündeten ankommen.
     SetTradeMode { mode: TradeMode },
     /// Nur Gastgeber, nur vor dem Start: wann Fernkämpfer treffen (Wurfbahn oder Sichtlinie).
@@ -485,6 +546,8 @@ pub enum LobbyClientMsg {
     SetRules { rules: GameRules },
     /// Gastgeber oder Admin, jederzeit: Namen eines Spiels setzen (leer = Standardname).
     RenameGame { game_id: u32, title: String },
+    /// Beendete Spiele löschen: Admins alle, sonst die, in denen man mitspielt.
+    CleanupGames,
 }
 
 /// Stärke eines Computergegners. Was jede Stufe tut, steht im Server (`server/src/ai/`).
@@ -554,6 +617,13 @@ pub struct GameSummary {
     pub paused: bool,
     /// Wer mitspielt (für den Admin: „Spielen als“ hinter jedem Spieler).
     pub slots: Vec<LobbySlot>,
+    /// Zuletzt gespielt (Unix-Sekunden; wartende Spiele: angelegt). Die Liste ist danach sortiert.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub last_played: u64,
+    /// Entschieden (ein König oder Bündnis ist übrig): kann aufgeräumt werden.
+    #[serde(default)]
+    pub finished: bool,
 }
 
 /// Das Spiel, in dem man selbst ist, mit allen Startplätzen.
@@ -619,6 +689,9 @@ pub struct LobbyMember {
     /// Laufendes Spiel: sein König ist gefallen, er ist ausgeschieden.
     #[serde(default)]
     pub defeated: bool,
+    /// Computergegner: Startvorteil in Prozent (mehr Waren und Taler, Soldaten dazu).
+    #[serde(default)]
+    pub bonus: u8,
 }
 
 /// Kleine Kartenvorschau für die Lobby (`GET /api/games/{id}/preview`).
@@ -910,6 +983,18 @@ pub enum UnitKind {
 }
 
 impl UnitKind {
+    /// Meilensteine, die diese Einheit beim Ausbilden bzw. Bauen auslösen kann.
+    pub fn milestones(self) -> &'static [Milestone] {
+        use UnitKind::*;
+        match self {
+            Spearman | Archer | LightSwordsman => &[Milestone::FirstSoldier],
+            Crossbowman | Swordsman => &[Milestone::FirstSoldier, Milestone::FirstMedium],
+            Knight => &[Milestone::FirstSoldier, Milestone::FirstHeavy],
+            Catapult | Trebuchet | Ballista | SiegeTower => &[Milestone::FirstSiege],
+            _ => &[],
+        }
+    }
+
     /// Soldaten: werden in der Kaserne ausgebildet und kosten Sold.
     pub fn is_soldier(self) -> bool {
         matches!(self, UnitKind::Spearman | UnitKind::Archer | UnitKind::Crossbowman | UnitKind::LightSwordsman | UnitKind::Swordsman | UnitKind::Knight | UnitKind::Healer | UnitKind::Builder)
@@ -1173,6 +1258,9 @@ pub struct StockState {
     /// Grenzen je Ware aus dem Ressourcen-Fenster: Startwerte für neue Betriebe.
     #[serde(default)]
     pub limits: Vec<GoodLimit>,
+    /// Aktuelle Marktpreise (Preisdynamik); leer = die Grundpreise aus `market.prices`.
+    #[serde(default)]
+    pub prices: Vec<Price>,
 }
 
 /// Grenzen für eine Ware, die neue Betriebe übernehmen: Hersteller pausieren ab
@@ -2037,10 +2125,38 @@ pub struct MarketDef {
     pub default_tax: u32,
     /// Preise je Ware. Fehlt eine Ware, kann man sie nicht handeln.
     pub prices: Vec<Price>,
+    /// Preisdynamik: jedes gekaufte Stück hebt den Preis der Ware um so viel Prozent,
+    /// jedes verkaufte senkt ihn (für alle Spieler gemeinsam). 0 = feste Preise.
+    #[serde(default = "default_price_step")]
+    pub price_step_percent: f32,
+    /// So viel Prozent ihres Abstands zum Grundpreis holen die Preise je Minute wieder auf.
+    #[serde(default = "default_price_recovery")]
+    pub price_recovery_percent: f32,
+    /// Untere und obere Grenze der Preise in Prozent des Grundpreises.
+    #[serde(default = "default_price_min")]
+    pub price_min_percent: f32,
+    #[serde(default = "default_price_max")]
+    pub price_max_percent: f32,
+}
+
+fn default_price_step() -> f32 {
+    0.5
+}
+
+fn default_price_recovery() -> f32 {
+    20.0
+}
+
+fn default_price_min() -> f32 {
+    30.0
+}
+
+fn default_price_max() -> f32 {
+    300.0
 }
 
 /// Preis einer Ware am Markt: so viel zahlt man beim Kauf, so viel bekommt man beim Verkauf.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Price {
     pub good: Good,

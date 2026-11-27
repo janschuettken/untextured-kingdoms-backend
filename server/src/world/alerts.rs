@@ -51,15 +51,22 @@ impl World {
             if near_now.contains(&player) {
                 continue;
             }
-            // Der nächste feindliche Kämpfer im Umkreis (dorthin springt die Kamera).
-            let nearest = self
+            // Feindliche Kämpfer im Umkreis; zum nächsten springt die Kamera.
+            let near: Vec<((f32, f32), f32, u32)> = self
                 .units
                 .iter()
                 .filter(|u| self.economy.unit(u.kind).is_some_and(|d| d.attack > 0) && self.can_attack(player, u.owner))
-                .map(|u| (u.pos, (u.pos.0 - at.0).hypot(u.pos.1 - at.1)))
-                .filter(|&(_, d)| d <= radius)
-                .min_by(|a, b| a.1.total_cmp(&b.1));
-            let Some((pos, _)) = nearest else { continue };
+                .map(|u| (u.pos, (u.pos.0 - at.0).hypot(u.pos.1 - at.1), u.owner))
+                .filter(|&(_, d, _)| d <= radius)
+                .collect();
+            let mut by: Vec<u32> = near.iter().map(|n| n.2).collect();
+            by.sort_unstable();
+            by.dedup();
+            for foe in by {
+                self.timeline_enemy_near(player, foe);
+            }
+            let nearest = near.into_iter().min_by(|a, b| a.1.total_cmp(&b.1));
+            let Some((pos, _, _)) = nearest else { continue };
             near_now.insert(player);
             if !self.alerts.enemies_near.contains(&player) {
                 self.raise_alert(player, AlertKind::EnemyNear, pos, None);

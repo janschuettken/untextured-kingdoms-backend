@@ -402,6 +402,7 @@ impl World {
         let uid = self.next_unit_id;
         self.next_unit_id += 1;
         let mut unit = Unit::new(uid, b.owner, site.unit, center(&b));
+        self.timeline_unit_ready(b.owner, site.unit);
         if b.kind == BuildingKind::SiegeSite {
             self.remove_building(id);
             self.events.push(ServerMsg::BuildingRemoved { building_id: id });
@@ -891,7 +892,7 @@ impl World {
     }
 
     /// Steine und Bolzen, die jetzt einschlagen: (Treffer auf Einheiten, Treffer auf Gebäude).
-    pub(super) fn land_siege(&mut self, dt: f32, grid: &HashMap<(i32, i32), Vec<usize>>, cell: f32) -> (Vec<super::combat::Hit>, Vec<(u32, UnitKind)>) {
+    pub(super) fn land_siege(&mut self, dt: f32, grid: &HashMap<(i32, i32), Vec<usize>>, cell: f32) -> (Vec<super::combat::Hit>, Vec<(u32, UnitKind, u32)>) {
         if self.siege_shots.is_empty() {
             return (Vec::new(), Vec::new());
         }
@@ -914,7 +915,7 @@ impl World {
                 let id = self.tile_of(s.to).map_or(0, |i| self.occupied[i]);
                 if let Some(b) = self.buildings.iter().find(|b| b.id == id) {
                     if b.owner != s.owner && self.can_attack(s.owner, b.owner) && self.siege_target(b) {
-                        building_hits.push((id, s.kind));
+                        building_hits.push((id, s.kind, s.owner));
                     }
                 }
             }
