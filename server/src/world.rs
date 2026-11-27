@@ -33,6 +33,7 @@ pub use save::SaveGame;
 mod people;
 mod production;
 mod progress;
+mod timeline;
 mod transport;
 use production::Work;
 use gather::Gather;
@@ -349,6 +350,9 @@ pub struct World {
     respawn_clock: HashMap<u32, f32>,
     /// Warnungen an Spieler (siehe `alerts.rs`).
     alerts: alerts::Alerts,
+    /// Zeitstrahl: Angriffe, Meilensteine, Ausscheiden (siehe `timeline.rs`).
+    pub(crate) timeline: Vec<protocol::TimelineEntry>,
+    incidents: timeline::Incidents,
     /// Aufgeschobene Weg-Neuberechnung: (Uhr der ersten, Uhr der letzten Änderung).
     replan_pending: Option<(f64, f64)>,
     /// Uhr dafür (Sekunden Spielzeit, läuft auch nach Spielende weiter).
@@ -454,6 +458,8 @@ impl World {
             replan_clock: 0.0,
             respawn_clock: HashMap::new(),
             alerts: alerts::Alerts::default(),
+            timeline: Vec::new(),
+            incidents: timeline::Incidents::default(),
             worker_carries_default: true,
             self_carry: HashSet::new(),
             phase_us: Default::default(),

@@ -323,7 +323,7 @@ impl World {
             return;
         }
         // (Gebäude, Art des Angreifers)
-        let mut building_hits: Vec<(u32, UnitKind)> = siege_building_hits;
+        let mut building_hits: Vec<(u32, UnitKind, u32)> = siege_building_hits;
         let mut shots: Vec<Shot> = self.siege_fire(dt, &grid, CELL);
         // Schützen, die einen Pfeil verschossen haben (Köcher).
         let mut spent: Vec<usize> = Vec::new();
@@ -438,7 +438,7 @@ impl World {
                             Some(f) if ranged => launches.push((k, j, range, f)),
                             _ => hits.push((j, u.id, u.kind, by, ranged)),
                         },
-                        (AttackTarget::Building { id }, _) => building_hits.push((id, u.kind)),
+                        (AttackTarget::Building { id }, _) => building_hits.push((id, u.kind, u.owner)),
                         _ => {}
                     }
                 }
@@ -498,7 +498,7 @@ impl World {
         }
         // Gebäude: Schaden, bei 0 eingerissen.
         let mut building_alerts = Vec::new();
-        for (id, kind) in building_hits {
+        for (id, kind, by) in building_hits {
             let Some(adef) = self.economy.unit(kind) else { continue };
             let attack = self
                 .buildings
@@ -508,7 +508,7 @@ impl World {
                 .unwrap_or(0);
             let Some(b) = self.buildings.iter_mut().find(|b| b.id == id) else { continue };
             if attack > 0 && b.hp > 0 {
-                building_alerts.push((b.owner, b.kind, (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0)));
+                building_alerts.push((b.owner, b.kind, (b.x as f32 + b.w as f32 / 2.0, b.y as f32 + b.h as f32 / 2.0), by));
             }
             b.hp = b.hp.saturating_sub(attack);
             // Der Bergfried bleibt als Ruine stehen: nur die Tür ist weg, jeder kann hinauf.
@@ -521,7 +521,8 @@ impl World {
                 self.dirty_buildings.insert(id);
             }
         }
-        for (owner, kind, at) in building_alerts {
+        for (owner, kind, at, by) in building_alerts {
+            self.timeline_building_attacked(owner, by, kind);
             self.alert_building_attacked(owner, kind, at);
         }
         // Deckung: Schüsse auf Einheiten oben auf Gebäuden gehen teils daneben (vor der Rüstung).
@@ -547,6 +548,8 @@ impl World {
         }
         let mut killed_by: HashMap<usize, u32> = HashMap::new();
         for (j, attack, by, horse) in landed {
+            let victim = self.units[j].owner;
+            self.timeline_units_attacked(victim, by);
             let max = self.economy.unit(self.units[j].kind).map_or(0, |d| d.hp);
             self.hurt_unit(j, attack, horse);
             let u = &self.units[j];
@@ -846,6 +849,7 @@ impl World {
         self.unpaid.remove(&player);
         self.army_hungry.remove(&player);
         self.replan_all();
+        self.timeline_defeated(player, by);
         self.events.push(ServerMsg::PlayerDefeated { player, by });
     }
 
@@ -862,6 +866,7 @@ impl World {
         // Niemand mehr übrig (alle letzten Könige zugleich gefallen): unentschieden, `winners` leer.
         if teams.len() <= 1 {
             self.winners = Some(alive.clone());
+            self.timeline_game_over(alive.clone());
             self.events.push(ServerMsg::GameOver { winners: alive });
         }
     }

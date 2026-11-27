@@ -14,6 +14,7 @@ import type { Shot } from "./Shot";
 import type { ShotMode } from "./ShotMode";
 import type { StockState } from "./StockState";
 import type { Text } from "./Text";
+import type { TimelineEntry } from "./TimelineEntry";
 import type { TradeMode } from "./TradeMode";
 import type { UnitInfo } from "./UnitInfo";
 import type { UnitState } from "./UnitState";
@@ -59,7 +60,11 @@ units: Array<UnitState>,
 /**
  * Einheiten, die verschwunden oder aus dem Bild gelaufen sind.
  */
-gone: Array<number>, } | { "type": "pong", client_time: number, } | { "type": "building_placed", building: BuildingState, } | { "type": "building_removed", building_id: number, } | { "type": "building_changed", building: BuildingState, } | { "type": "resource_changed", x: number, y: number, resource: ResourceKind, } | { "type": "stock", stock: StockState, } | { "type": "rejected", text: Text, } | { "type": "move_unreachable", x: number, y: number, } | { "type": "nav_costs", width: number, height: number, cells: string, } | { "type": "admin_status", ok: boolean, } | { "type": "game_speed", percent: number, } | { "type": "pauses", players: Array<number>, } | { "type": "economy_changed", economy: EconomyDef, } | { "type": "reload" } | { "type": "not_in_game" } | { "type": "opened_elsewhere" } | { "type": "unit_path", unit_id: number, path: Array<[number, number]>, } | { "type": "castle", status: CastleStatus, } | { "type": "unit_info", info: UnitInfo, } | { "type": "diplomacy", players: Array<PlayerInfo>, trade_mode: TradeMode, } | { "type": "shipment", from: number, to: number, goods: Array<GoodAmount>, taler: number, arrived: boolean, 
+gone: Array<number>, } | { "type": "pong", client_time: number, } | { "type": "building_placed", building: BuildingState, } | { "type": "building_removed", building_id: number, } | { "type": "building_changed", building: BuildingState, } | { "type": "resource_changed", x: number, y: number, resource: ResourceKind, } | { "type": "stock", stock: StockState, } | { "type": "rejected", text: Text, } | { "type": "move_unreachable", x: number, y: number, } | { "type": "timeline", entries: Array<TimelineEntry>, 
+/**
+ * Aktuelle Spielzeit in Sekunden.
+ */
+now: number, } | { "type": "nav_costs", width: number, height: number, cells: string, } | { "type": "admin_status", ok: boolean, } | { "type": "game_speed", percent: number, } | { "type": "pauses", players: Array<number>, } | { "type": "economy_changed", economy: EconomyDef, } | { "type": "reload" } | { "type": "not_in_game" } | { "type": "opened_elsewhere" } | { "type": "unit_path", unit_id: number, path: Array<[number, number]>, } | { "type": "castle", status: CastleStatus, } | { "type": "unit_info", info: UnitInfo, } | { "type": "diplomacy", players: Array<PlayerInfo>, trade_mode: TradeMode, } | { "type": "shipment", from: number, to: number, goods: Array<GoodAmount>, taler: number, arrived: boolean, 
 /**
  * Wie viele Handelskarren fahren (0 = sofort angekommen).
  */

@@ -60,6 +60,8 @@ pub struct SaveGame {
     /// Preisdynamik am Markt: Faktor je Ware.
     #[serde(default)]
     price_factor: HashMap<protocol::Good, f32>,
+    #[serde(default)]
+    timeline: Vec<protocol::TimelineEntry>,
 }
 
 impl World {
@@ -92,6 +94,7 @@ impl World {
             policies: self.policies.clone(),
             price_factor: self.price_factor.clone(),
             game_seconds: self.game_seconds,
+            timeline: self.timeline.clone(),
         }
     }
 
@@ -138,6 +141,7 @@ impl World {
         w.policies = save.policies;
         w.price_factor = save.price_factor;
         w.game_seconds = save.game_seconds;
+        w.timeline = save.timeline;
         // Ältere Stände: Herstellungsbetriebe hatten noch keine eigenen Arbeiter.
         for bi in 0..w.buildings.len() {
             let id = w.buildings[bi].id;
