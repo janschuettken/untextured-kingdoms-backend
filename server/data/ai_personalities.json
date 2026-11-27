@@ -14,6 +14,7 @@
       "army": 100,
       "daring": 30,
       "helpfulness": 50,
+      "growth": 50,
       "castle": "level",
       "buildings": {},
       "units": {}
@@ -32,6 +33,7 @@
       "army": 80,
       "daring": 10,
       "helpfulness": 80,
+      "growth": 80,
       "castle": "octagon",
       "buildings": {
         "house": 150,
@@ -56,6 +58,7 @@
       "army": 140,
       "daring": 70,
       "helpfulness": 30,
+      "growth": 40,
       "castle": "square",
       "buildings": {
         "market": 0,
@@ -81,6 +84,7 @@
       "army": 100,
       "daring": 20,
       "helpfulness": 50,
+      "growth": 50,
       "castle": "narrows",
       "buildings": {
         "bowyer": 200,

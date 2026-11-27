@@ -18,6 +18,7 @@
 mod attack;
 mod layout;
 pub mod personality;
+mod plans;
 mod profile;
 mod siege;
 
@@ -30,6 +31,7 @@ use crate::world::{level_cost, World};
 use layout::{GateSpot, Layout};
 use attack::{Campaign, Relief};
 use protocol::AiPersonalities;
+pub use plans::Board;
 pub use profile::Profile;
 
 use crate::economy::Economy;
@@ -44,6 +46,7 @@ pub struct Seat {
     /// Eigene Regler für dieses Spiel (0 bis 100), sonst die des Charakters.
     pub daring: Option<u8>,
     pub helpfulness: Option<u8>,
+    pub growth: Option<u8>,
 }
 
 /// So lange (Spielsekunden) lässt er ein Gebäude aus, für das er keinen Platz gefunden hat.
@@ -58,6 +61,8 @@ const REMOTE_INPUT: u32 = 60;
 const ROAD_STONE_RESERVE: u32 = 25;
 /// Feindliche Soldaten näher als so viele Felder am Bergfried: Verteidigung.
 const THREAT_RADIUS: f32 = 30.0;
+/// Feinde näher als so viele Felder am Bergfried und die Burg offen: erst die Mauer zu.
+const DANGER_RADIUS: f32 = 50.0;
 /// So oft prüft er, ob die fertige Mauer dicht ist.
 const SEAL_SECONDS: f32 = 30.0;
 /// Über so viel Taler (zur Reserve dazu) kauft er zu, was ihm zuletzt gefehlt hat ...
@@ -136,6 +141,23 @@ pub struct Computer {
     next_siege_check: f32,
     /// Zähler für die Stelle der nächsten Baustelle.
     siege_try: u32,
+    /// Absprachen mit verbündeten Computergegnern (eine Tafel je Spiel).
+    board: Board,
+    /// Feinde nähern sich, die Burg ist aber noch offen: erst die Mauer zu.
+    danger: bool,
+    /// Weiterbauen nach fertiger Burg: Runden bisher, nächste Runde, Soldaten mehr.
+    grow_round: u32,
+    next_grow: f32,
+    grow_army: u32,
+    /// Abgebrochene Angriffe (höchstens 4): so viele Soldaten mehr, und wie stark die
+    /// gescheiterte Welle je Gegner war (die nächste muss stärker sein).
+    failures: u32,
+    fail_army: u32,
+    failed_power: HashMap<u32, f32>,
+    /// Holzfäller versetzen, Brücken: wann wieder prüfen, wie viele Brücken schon.
+    next_relocate: f32,
+    next_bridge: f32,
+    bridges: u32,
 }
 
 impl Computer {
@@ -174,6 +196,17 @@ impl Computer {
             siege_wanted: false,
             next_siege_check: 0.0,
             siege_try: 0,
+            board: Board::default(),
+            danger: false,
+            grow_round: 0,
+            next_grow: 0.0,
+            grow_army: 0,
+            failures: 0,
+            fail_army: 0,
+            failed_power: HashMap::new(),
+            next_relocate: 60.0,
+            next_bridge: 0.0,
+            bridges: 0,
         }
     }
 
@@ -181,7 +214,7 @@ impl Computer {
     #[cfg(test)]
     pub fn with_level(player: u32, level: AiLevel, economy: &Economy) -> Computer {
         let all = AiPersonalities { personalities: vec![personality::neutral()] };
-        Computer::new(Seat { player, level, personality: String::new(), daring: None, helpfulness: None }, &all, economy)
+        Computer::new(Seat { player, level, personality: String::new(), daring: None, helpfulness: None, growth: None }, &all, economy)
     }
 
     /// Charaktere wurden im Editor geändert: Profil neu, alles andere bleibt.
@@ -217,7 +250,7 @@ impl Computer {
         };
         let layout = match self.layout.take() {
             Some(l) => l,
-            None => Layout::new(world, keep, self.profile.wall_gap, self.profile.main_gate, self.profile.castle),
+            None => Layout::new(world, keep, self.profile.wall_gap, self.profile.main_gate, self.profile.castle).limit_gates(world, self.profile.max_gates as usize),
         };
         let cmds = self.think_with(world, &layout);
         self.layout = Some(layout);
@@ -233,14 +266,22 @@ impl Computer {
             self.next_closed_check = self.clock + 5.0;
             self.closed = crate::world::castle_closed(world, self.player);
         }
+        // Feinde im Anmarsch und die Burg noch offen: erst die Mauer zu.
+        // (Nur wer weit weg von der eigenen Burg ist, ist im Anmarsch; ein Nachbar, der vor
+        // seinem Tor steht, nicht.)
+        self.danger = self.profile.walls
+            && !self.closed
+            && attack::threats(world, self.player, self.player, DANGER_RADIUS)
+                .iter()
+                .any(|u| attack::keep_center(world, u.owner).is_none_or(|c| (u.pos.0 - c.0).hypot(u.pos.1 - c.1) > DANGER_RADIUS * 0.7));
         // Erst die Bauliste. Der Mauerring kommt nebenher, sobald das Profil es will
         // (`walls_after`), sonst erst, wenn die Bauliste durch ist; dann Wege, dann Ausbauten.
         let next = self.build_next(world, layout, &stock, &mut cmds);
         let idle = matches!(next, Next::Idle);
-        let walls_on = idle || self.profile.walls_after.is_some_and(|k| self.count(world, k) > 0);
+        let walls_on = idle || self.danger || self.profile.walls_after.is_some_and(|k| self.count(world, k) > 0);
         if walls_on {
             // Mauer und Wege teilen sich, was über der Reserve liegt.
-            let mut budget = Budget::new(&stock, self.profile.wall_wood_reserve);
+            let mut budget = Budget::new(&stock, if self.danger { 0 } else { self.profile.wall_wood_reserve });
             match &next {
                 // Was eben gebaut wurde, ist schon ausgegeben.
                 Next::Placed(Some(kind)) => budget.pay(world, *kind),
@@ -266,9 +307,17 @@ impl Computer {
                 self.build_roads(world, layout, &mut budget, true, &mut cmds);
             }
             if idle && cmds.len() == before && !walls_pending {
+                // Burg fertig (oder keine geplant): nach dem Regler weiter ausbauen.
+                if self.closed || !self.profile.walls {
+                    self.grow(world);
+                }
                 self.upgrade(world, &stock, &mut cmds);
             }
         }
+        if !self.danger && (!self.profile.walls || self.gates_built(world) > 0) {
+            self.upgrade_carts(world, &stock, &mut cmds);
+        }
+        self.relocate_woodcutters(world, layout, &stock, &mut cmds);
         self.configure(world, &stock, &mut cmds);
         let mut missing = match &next {
             Next::Waiting(_, missing) => missing.clone(),
@@ -298,7 +347,7 @@ impl Computer {
             self.relief = None;
         } else {
             self.help_allies(world, layout, &mut cmds);
-            self.attack(world, layout, &mut cmds);
+            self.attack(world, layout, &stock, &mut cmds);
         }
         self.aid(world, &stock, &mut cmds);
         self.rally(world, layout, &mut cmds);
@@ -407,6 +456,10 @@ impl Computer {
         if people.fed < people.working && orchards > 0 && orchards < people.working / 5 + 1 && ready(BuildingKind::Orchard) {
             return Some((BuildingKind::Orchard, None));
         }
+        // Die Soldaten hungern: noch eine (höchstens eine je vier Soldaten).
+        if stock.army.hungry && orchards > 0 && orchards < stock.army.soldiers / 4 + 1 && ready(BuildingKind::Orchard) {
+            return Some((BuildingKind::Orchard, None));
+        }
         // Abbaubetrieb weit weg vom nächsten Lager: dort ein Vorratslager, sonst laufen sich
         // die Arbeiter die Füße wund.
         for (category, hub) in [(BuildingCategory::Raw, BuildingKind::Storehouse), (BuildingCategory::Food, BuildingKind::Granary)] {
@@ -414,6 +467,12 @@ impl Computer {
                 if let Some(p) = self.far_from_hub(world, category, hub) {
                     return Some((hub, Some(p)));
                 }
+            }
+        }
+        // Betriebe außerhalb aller Wagenschuppen: noch einer dorthin (Karren sind stark).
+        if ready(BuildingKind::CartShed) {
+            if let Some(p) = self.cart_shed_wanted(world) {
+                return Some((BuildingKind::CartShed, Some(p)));
             }
         }
         // Viel Holz oder Stein in einem Lager weit draußen: die Werkstatt dazu dorthin, sonst
@@ -452,6 +511,9 @@ impl Computer {
 
     /// Wartet die Bauliste, bis die Burg zu ist (`walls_first`)?
     fn paused(&self, world: &World, stock: &StockState) -> bool {
+        if self.danger {
+            return true;
+        }
         let started = self.profile.walls && self.profile.walls_after.is_some_and(|k| self.count(world, k) > 0);
         self.profile.walls_first && started && self.ring_busy && !self.closed && have(stock, Good::Wood) < 60
     }
@@ -498,6 +560,7 @@ impl Computer {
 
     /// Höchstbestände aus dem Profil in neue Betriebe eintragen.
     fn configure(&self, world: &World, stock: &StockState, cmds: &mut Vec<ClientMsg>) {
+        let carted = self.carted(world);
         for b in world.buildings.iter().filter(|b| b.owner == self.player) {
             let Some(current) = b.settings.recipe.as_deref().and_then(|r| world.economy.recipe(r)) else { continue };
             // Rezept wechseln: unter den freigeschalteten, die er will (und dem laufenden),
@@ -523,10 +586,16 @@ impl Computer {
                 .filter_map(|o| self.profile.stock_targets.iter().find(|t| t.0 == o.good))
                 .map(|&(good, amount)| GoodAmount { good, amount })
                 .collect();
-            if switch || (b.settings.stop_at.is_empty() && !stop_at.is_empty()) {
+            // Wagenschuppen mit Karren in der Nähe: der Arbeiter trägt nicht mehr selbst.
+            let carry = self.worker_should_carry(world, b, &carted).unwrap_or(b.settings.worker_carries);
+            let limits = switch || (b.settings.stop_at.is_empty() && !stop_at.is_empty());
+            if limits || carry != b.settings.worker_carries {
                 let mut settings = b.settings.clone();
-                settings.recipe = Some(recipe.id.clone());
-                settings.stop_at = stop_at;
+                if limits {
+                    settings.recipe = Some(recipe.id.clone());
+                    settings.stop_at = stop_at;
+                }
+                settings.worker_carries = carry;
                 cmds.push(ClientMsg::ConfigureBuilding { building_id: b.id, settings });
             }
         }
@@ -547,6 +616,8 @@ impl Computer {
             }
             return;
         }
+        // Ausbauliste durch: beim Weiterbauen auch den Rest.
+        self.grow_upgrade(world, stock, cmds);
     }
 
     /// Mauerring mit Toren, ein paar Stücke pro Überlegung. Erst wenn die Kaserne steht.
@@ -606,7 +677,8 @@ impl Computer {
             if taken {
                 continue;
             }
-            if placed >= self.profile.walls_per_think {
+            // Feinde im Anmarsch: doppelt so schnell zumauern.
+            if placed >= self.profile.walls_per_think * if self.danger { 2 } else { 1 } {
                 return true;
             }
             // Reicht es nicht für die richtige Mauer, erst eine schnelle (Palisade): Hauptsache zu.
@@ -711,6 +783,11 @@ impl Computer {
                 cmds.push(ClientMsg::PlaceBuilding { kind, x: b.x, y: b.y, rotation: 0, level: 1 });
                 swapped += 1;
             }
+        }
+        // Erst die Burg zu (meist fehlt noch das Torhaus): Türme und Zinnen danach, sonst
+        // fressen sie die Bretter und Blöcke dafür.
+        if !self.closed {
+            return;
         }
         if self.profile.tower_spacing > 0 && self.profile.corner_towers {
             if let Some((x, y)) = self.next_ring_tower(world, layout) {
@@ -826,7 +903,8 @@ impl Computer {
             .filter(|b| world.economy.building(b.kind).is_some_and(|d| d.category == BuildingCategory::Fortification && b.hp < d.at(b.level).max_hp * 3 / 4))
             .min_by_key(|b| b.hp);
         if let Some(b) = damaged {
-            if world.repair_cost(b).iter().all(|c| have(stock, c.good) >= c.amount) {
+            let left = plans::available(world, stock, cmds);
+            if world.repair_cost(b).iter().all(|c| left.get(&c.good).copied().unwrap_or(0) >= c.amount) {
                 cmds.push(ClientMsg::RepairBuilding { building_id: b.id });
             }
         }
@@ -1013,7 +1091,10 @@ impl Computer {
         }
         // Alles, was ausbildet: Kasernen, Apotheken.
         let trains = |k: BuildingKind| world.economy.building(k).is_some_and(|d| d.levels.iter().any(|l| !l.trains.is_empty()));
-        let barracks: Vec<_> = world.buildings.iter().filter(|b| b.owner == self.player && trains(b.kind)).collect();
+        let mut barracks: Vec<_> = world.buildings.iter().filter(|b| b.owner == self.player && trains(b.kind)).collect();
+        // Die leerste Warteschlange zuerst: sonst füllen die Kasernen alles auf und die
+        // Apotheke kommt nie dran.
+        barracks.sort_by_key(|b| (b.training.len(), b.id));
         let mut queued: u32 = barracks.iter().map(|b| b.training.len() as u32).sum();
         let queue_max = (world.economy.def.army.queue_max).min(self.profile.queue_per_barracks) as usize;
         // Mit Markt bleibt ein Rest Taler für den Handel liegen.
@@ -1024,7 +1105,7 @@ impl Computer {
         let mut horses = world.horses_available(self.player);
         for b in barracks {
             let mut len = b.training.len();
-            while len < queue_max && stock.army.soldiers + queued < self.profile.army_size {
+            while len < queue_max && stock.army.soldiers + queued < self.army_target() {
                 // Der Reihe nach; kann er den, der dran ist, nicht ausbilden, den nächsten versuchen.
                 let pick = (0..units.len()).find_map(|step| {
                     let kind = units[(self.next_unit + step) % units.len()];
@@ -1065,7 +1146,9 @@ impl Computer {
     }
 
     /// Wellen: sammeln, Gegner einschätzen, losschicken, unterwegs nachsteuern, heimholen.
-    fn attack(&mut self, world: &World, layout: &Layout, cmds: &mut Vec<ClientMsg>) {
+    /// Verbündete Computer stimmen sich ab: wer schon gegen einen Gegner zieht oder dort
+    /// bereitsteht, den unterstützen die anderen, und ihre Stärke zählt mit.
+    fn attack(&mut self, world: &World, layout: &Layout, stock: &StockState, cmds: &mut Vec<ClientMsg>) {
         let Some(a) = self.profile.attack.clone() else {
             self.campaign = None;
             return;
@@ -1094,19 +1177,33 @@ impl Computer {
                         cmds.push(ClientMsg::MoveUnits { unit_ids: c.units.clone(), x: home.0, y: home.1, fast: None, append: None });
                     }
                 }
+                let (target, start_power) = (c.target, c.start_power);
                 self.campaign = None;
                 self.next_attack = self.clock + a.cooldown_seconds;
+                self.post(world, None);
+                if target_gone {
+                    self.failed_power.remove(&target);
+                    self.failures = self.failures.saturating_sub(1);
+                    self.fail_army = self.profile.army_size * self.failures / 4;
+                } else {
+                    // Abgebrochen: später mit einer größeren Armee noch einmal.
+                    self.attack_failed(world, target, start_power);
+                }
                 return;
             }
+            let (target, goal) = (c.target, c.goal);
+            // Den Verbündeten sagen, dass er unterwegs ist.
+            self.post(world, Some((target, power, true)));
+            let c = self.campaign.as_mut().expect("Welle unterwegs");
             // Belagern: wer angekommen ist (oder unterwegs auf Feinde trifft), greift an.
             let busy: Vec<&crate::world::Unit> = alive
                 .iter()
                 .copied()
-                .filter(|u| c.arrived.is_some() || (u.pos.0 - c.goal.0).hypot(u.pos.1 - c.goal.1) < 12.0 || !u.is_moving())
+                .filter(|u| c.arrived.is_some() || (u.pos.0 - goal.0).hypot(u.pos.1 - goal.1) < 12.0 || !u.is_moving())
                 .collect();
             let (engines, troops): (Vec<&crate::world::Unit>, Vec<&crate::world::Unit>) = busy.iter().copied().partition(|u| u.kind.is_siege());
-            cmds.extend(attack::siege(world, p, c.target, &troops));
-            cmds.extend(attack::bombard(world, p, c.target, &engines));
+            cmds.extend(attack::siege(world, p, target, &troops));
+            cmds.extend(attack::bombard(world, p, target, &engines));
             // Wer unterwegs hängen geblieben ist (weit vom Ziel, steht, ohne Angriff), läuft weiter.
             if c.arrived.is_none() {
                 let ordered: std::collections::HashSet<u32> = cmds
@@ -1120,11 +1217,11 @@ impl Computer {
                 let stuck: Vec<u32> = alive
                     .iter()
                     .filter(|u| !u.is_moving() && u.attack_order().is_none() && !ordered.contains(&u.id))
-                    .filter(|u| (u.pos.0 - c.goal.0).hypot(u.pos.1 - c.goal.1) > 8.0)
+                    .filter(|u| (u.pos.0 - goal.0).hypot(u.pos.1 - goal.1) > 8.0)
                     .map(|u| u.id)
                     .collect();
                 if !stuck.is_empty() {
-                    cmds.push(ClientMsg::MoveUnits { unit_ids: stuck, x: c.goal.0, y: c.goal.1, fast: None, append: None });
+                    cmds.push(ClientMsg::MoveUnits { unit_ids: stuck, x: goal.0, y: goal.1, fast: None, append: None });
                 }
             }
             return;
@@ -1144,25 +1241,55 @@ impl Computer {
             d(x).total_cmp(&d(y))
         });
         let mut wave: Vec<&crate::world::Unit> = ready.into_iter().skip(a.home_guard as usize).collect();
-        // Später wieder nachsehen (nicht jede Überlegung die ganze Karte absuchen).
-        self.next_attack = self.clock + 30.0;
-        if (wave.len() as u32) < a.wave_min {
+        // Verbündete Computer, die schon ziehen oder bereitstehen: deren Ziel zuerst.
+        let calls = self.ally_calls(world);
+        let ally_target = calls.first().map(|c| c.target);
+        // Später wieder nachsehen (nicht jede Überlegung die ganze Karte absuchen); stimmt er
+        // sich mit Verbündeten ab, öfter.
+        self.next_attack = self.clock + if calls.is_empty() { 30.0 } else { 8.0 };
+        // Nach abgebrochenen Angriffen braucht die Welle mehr Soldaten; einem Verbündeten
+        // hilft er schon mit der Hälfte.
+        let mut wave_min = a.wave_min + 2 * self.failures;
+        if ally_target.is_some() {
+            wave_min = (wave_min / 2).max(3);
+        }
+        if (wave.len() as u32) < wave_min {
             self.weak_since = None;
+            self.post(world, None);
             return;
         }
         let power: f32 = wave.iter().map(|u| attack::unit_power(world, u.kind)).sum();
-        let Some((target, enemy, goal)) = attack::choose_target(world, p, wave[0].pos) else { return };
+        let Some((target, enemy, goal)) = attack::choose_target(world, p, wave[0].pos, ally_target) else {
+            // Kein Gegner zu Fuß erreichbar: Brücke zum schwächsten.
+            if let Some(door) = attack::weakest_keep(world, p) {
+                cmds.extend(self.plan_bridge(world, stock, cmds, wave[0].pos, door));
+            }
+            return;
+        };
+        // Großer Umweg (Fluss, Mauer am Fluss)? Eine Brücke kürzt ab.
+        if let Some(door) = attack::keep_door(world, target) {
+            cmds.extend(self.plan_bridge(world, stock, cmds, wave[0].pos, door));
+        }
         // Mut: je länger die Welle schon bereitsteht, desto eher zieht sie auch gegen einen
         // stärkeren Gegner los (bei vollem Mut sofort).
         let since = *self.weak_since.get_or_insert(self.clock);
         let waited = (self.clock - since) / a.cooldown_seconds.max(1.0);
         let needed = attack::needed_ratio(a.superiority, self.profile.daring, waited);
-        if power < enemy * needed {
-            debug!("Computer {p}: Welle {power:.0} zu schwach gegen Spieler {target} ({enemy:.0}, braucht ×{needed:.2})");
+        // Was die Verbündeten gegen dasselbe Ziel aufbieten, zählt mit.
+        let allies: f32 = calls.iter().filter(|c| c.target == target).map(|c| c.power).sum();
+        let combined = power + allies;
+        // Ist eine Welle gegen ihn schon gescheitert, muss die neue deutlich stärker sein,
+        // solange die Armee noch wächst.
+        let failed = self.failed_power.get(&target).copied().unwrap_or(0.0) * 1.2;
+        let growing = stock.army.soldiers + 2 < self.army_target();
+        if combined < enemy * needed || (growing && combined < failed) {
+            debug!("Computer {p}: Welle {power:.0} (+{allies:.0} Verbündete) zu schwach gegen Spieler {target} ({enemy:.0}, braucht ×{needed:.2}, gescheitert {failed:.0})");
+            // Die Verbündeten wissen lassen, dass er bereitsteht.
+            self.post(world, Some((target, power, false)));
             return;
         }
         self.weak_since = None;
-        debug!("Computer {p}: greift Spieler {target} an ({} Soldaten, {power:.0} gegen {enemy:.0})", wave.len());
+        debug!("Computer {p}: greift Spieler {target} an ({} Soldaten, {power:.0} + {allies:.0} gegen {enemy:.0})", wave.len());
         // Bediente, fahrbare Belagerungsgeräte ziehen mit (ihre Bedienung fährt mit).
         let crews = world.units.iter().filter_map(|u| u.crew_of()).fold(HashMap::<u32, u32>::new(), |mut m, d| {
             *m.entry(d).or_default() += 1;
@@ -1175,6 +1302,7 @@ impl Computer {
         }));
         let units: Vec<u32> = wave.iter().map(|u| u.id).collect();
         cmds.push(ClientMsg::MoveUnits { unit_ids: units.clone(), x: goal.0, y: goal.1, fast: None, append: None });
+        self.post(world, Some((target, power, true)));
         self.campaign = Some(Campaign { target, units, start_power: power, goal, arrived: None, last_progress: self.clock });
     }
 
@@ -1616,8 +1744,19 @@ fn have(stock: &StockState, good: Good) -> u32 {
 }
 
 /// Die Computergegner eines Spiels aus der Lobby.
+/// Alle teilen eine Tafel für Absprachen unter Verbündeten.
 pub fn computers(list: &[Seat], personalities: &AiPersonalities, economy: &Economy) -> Vec<Computer> {
-    list.iter().map(|s| Computer::new(s.clone(), personalities, economy)).collect()
+    let mut all: Vec<Computer> = list.iter().map(|s| Computer::new(s.clone(), personalities, economy)).collect();
+    link(&mut all);
+    all
+}
+
+/// Diese Computergegner eine gemeinsame Tafel teilen lassen.
+pub fn link(all: &mut [Computer]) {
+    let board = Board::default();
+    for c in all {
+        c.set_board(board.clone());
+    }
 }
 
 #[cfg(test)]

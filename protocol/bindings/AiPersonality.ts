@@ -38,6 +38,12 @@ daring: number,
  */
 helpfulness: number, 
 /**
+ * Weiterbauen, wenn die Burg fertig ist, 0 bis 100: 0 = hört nach Bauliste und Mauer auf;
+ * sonst baut er die Wirtschaft weiter aus (mehr Betriebe, Ausbauten, größere Armee),
+ * umso schneller und weiter, je höher der Wert.
+ */
+growth: number, 
+/**
  * Gebäude in Prozent: 100 = wie die Stufe, 0 = baut es nie, 50 = halb so viele,
  * 200 = doppelt so viele. Steht es nicht in der Bauliste der Stufe, baut er ab 200 eins
  * (300 zwei, ...). Fehlende Gebäude gelten als 100.

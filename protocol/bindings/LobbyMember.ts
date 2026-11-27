@@ -31,6 +31,10 @@ daring: number | null,
  */
 helpfulness: number | null, 
 /**
+ * Computergegner: eigener Wert für „Weiterbauen nach fertiger Burg“ (sonst der des Charakters).
+ */
+growth: number | null, 
+/**
  * Laufendes Spiel: sein König ist gefallen, er ist ausgeschieden.
  */
 defeated: boolean, 

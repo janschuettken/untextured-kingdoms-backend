@@ -87,6 +87,11 @@ pub struct Profile {
     pub daring: f32,
     /// Hilfsbereitschaft gegenüber Verbündeten, 0 bis 1 (Anteil der freien Soldaten).
     pub helpfulness: f32,
+    /// Weiterbauen nach fertiger Burg, 0 bis 1 (0 = hört auf, 1 = schnell und weit).
+    pub growth: f32,
+    /// Höchstens so viele Tore im Mauerring (0 = eins je Seite). Das Haupttor und die Seite
+    /// mit den meisten Vorkommen davor; der Rest wird Mauer.
+    pub max_gates: u32,
 }
 
 /// Wann und wie er angreift.
@@ -151,7 +156,7 @@ impl Profile {
                     (Quarry, 2),
                     (Orchard, 2),
                 ],
-                upgrades: vec![(CartShed, 2), (House, 2), (Barracks, 2)],
+                upgrades: vec![(CartShed, 3), (House, 2), (Barracks, 2)],
                 stock_targets: vec![
                     (Good::Boards, 60),
                     (Good::Stone, 100),
@@ -198,6 +203,8 @@ impl Profile {
                 expand_seconds: Some(180.0),
                 expand_max: 1,
                 quick_wall: Some(Palisade),
+                growth: 0.5,
+                max_gates: 2,
             },
             // Mittel: die frühere schwere Stufe, dazu Zinnen, Ecktürme und Besatzung auf der Mauer.
             AiLevel::Normal => Profile {
@@ -288,6 +295,8 @@ impl Profile {
                 expand_seconds: Some(120.0),
                 expand_max: 2,
                 quick_wall: Some(Palisade),
+                growth: 0.5,
+                max_gates: 2,
             },
             // Schwer: schließt die Burg sehr früh, Zinnen, viele Türme, Mauer voll besetzt
             // (auch mit Armbrustschützen), kauft zu und baut aus, was fehlt; große Wellen,
@@ -402,6 +411,8 @@ impl Profile {
                 expand_seconds: Some(60.0),
                 expand_max: 3,
                 quick_wall: Some(Palisade),
+                growth: 0.5,
+                max_gates: 2,
             },
         }
     }
@@ -444,6 +455,9 @@ impl Profile {
         }
         if let Some(h) = seat.helpfulness {
             prof.helpfulness = h.min(100) as f32 / 100.0;
+        }
+        if let Some(g) = seat.growth {
+            prof.growth = g.min(100) as f32 / 100.0;
         }
         prof
     }
@@ -533,6 +547,7 @@ impl Profile {
         }
         prof.daring = p.daring.min(100) as f32 / 100.0;
         prof.helpfulness = p.helpfulness.min(100) as f32 / 100.0;
+        prof.growth = p.growth.min(100) as f32 / 100.0;
         // Angriffslust.
         if p.aggression == 0 {
             prof.attack = None;
