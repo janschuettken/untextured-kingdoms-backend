@@ -85,6 +85,10 @@ road_speed_percent: number,
  */
 hub_capacity: number, 
 /**
+ * Brandgefahr: Chance (Prozent je Minute Arbeit), dass der Betrieb von selbst Feuer fängt.
+ */
+fire_risk: number, 
+/**
  * Betriebe: so viel passt je Eingangsware ins eigene Lager. 0 = `transport.building_capacity`.
  */
 storage_inputs: number, 

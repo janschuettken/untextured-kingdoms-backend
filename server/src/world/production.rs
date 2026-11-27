@@ -33,6 +33,9 @@ impl World {
     fn step_building(&mut self, i: usize, dt: f32) -> BuildingStatus {
         let b = &self.buildings[i];
         let (id, kind) = (b.id, b.kind);
+        if b.fire > 0.0 {
+            return BuildingStatus::Burning;
+        }
         if b.settings.paused {
             return BuildingStatus::Paused;
         }

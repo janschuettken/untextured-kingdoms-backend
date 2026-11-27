@@ -74,7 +74,7 @@ impl World {
     }
 
     /// Warnung schicken, wenn diese Art für den Spieler gerade nicht gesperrt ist.
-    fn raise_alert(&mut self, player: u32, alert: AlertKind, at: (f32, f32), building: Option<BuildingKind>) {
+    pub(super) fn raise_alert(&mut self, player: u32, alert: AlertKind, at: (f32, f32), building: Option<BuildingKind>) {
         if player == 0 || self.alerts.cooldown.contains_key(&(player, alert)) {
             return;
         }

@@ -48,6 +48,11 @@ pub enum ClientMsg {
         #[serde(default)]
         #[ts(optional)]
         force: Option<bool>,
+        /// Anzünden statt angreifen (nur Gebäude): hinlaufen, die Fackel anlegen
+        /// (`ignite_seconds` der Einheit), dann brennt es.
+        #[serde(default)]
+        #[ts(optional)]
+        ignite: Option<bool>,
     },
     /// Einheiten, die reiten können, laufen zur nächsten eigenen Pferdezucht mit freiem
     /// Pferd und steigen dort auf.
@@ -359,6 +364,8 @@ pub enum AlertKind {
     EnemyNear,
     /// Ein eigenes Gebäude nimmt Schaden.
     BuildingAttacked,
+    /// Ein eigenes Gebäude brennt.
+    Fire,
 }
 
 /// Ein Spieler im laufenden Spiel.
@@ -1021,6 +1028,15 @@ pub struct UnitState {
     /// Belagerungsturm: liegt an diesem Gebäude (Mauer) an.
     #[serde(default)]
     pub docked_at: Option<u32>,
+    /// Arbeiter einer Feuerwache (Feuerwehrmann).
+    #[serde(default)]
+    pub firefighter: bool,
+    /// Feuerwehrmann: löscht gerade.
+    #[serde(default)]
+    pub spraying: bool,
+    /// Legt gerade Feuer an ein Gebäude (Fackel).
+    #[serde(default)]
+    pub igniting: bool,
 }
 
 /// Ein Text, den der Client übersetzt: Schlüssel plus Platzhalter.
@@ -1268,6 +1284,8 @@ pub enum BuildingKind {
     /// Brücke über einen Fluss: eine gerade Reihe Wasserfelder (höchstens `max_span`),
     /// an beiden Enden Ufer. Kosten der Stufe gelten je Feld.
     Bridge,
+    /// Feuerwache: ihre Arbeiter löschen Brände im Umkreis `service_radius`.
+    FireStation,
 }
 
 /// Gruppe im Baumenü.
@@ -1330,6 +1348,8 @@ pub struct BuildingLevel {
     pub road_speed_percent: u32,
     /// Platz je Ware in diesem Lager. 0 = wie bisher (`base_capacity` bzw. `storehouse_capacity`).
     pub hub_capacity: u32,
+    /// Brandgefahr: Chance (Prozent je Minute Arbeit), dass der Betrieb von selbst Feuer fängt.
+    pub fire_risk: f32,
     /// Betriebe: so viel passt je Eingangsware ins eigene Lager. 0 = `transport.building_capacity`.
     pub storage_inputs: u32,
     /// Betriebe: so viel passt je Ergebnis ins eigene Lager. 0 = `transport.building_capacity`.
@@ -1538,6 +1558,48 @@ pub struct EconomyDef {
     pub units: Vec<UnitDef>,
     #[serde(default)]
     pub army: ArmyDef,
+    /// Feuer: Brand, Ausbreitung, Löschen.
+    #[serde(default)]
+    pub fire: FireDef,
+}
+
+/// Wie Feuer brennt, sich ausbreitet und gelöscht wird (siehe `BuildingState::fire`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct FireDef {
+    /// So stark brennt ein Gebäude gleich nach dem Anzünden (0..1).
+    pub start: f32,
+    /// So viel stärker wird ein Brand je Sekunde (bis 1 = Vollbrand).
+    pub grow_per_second: f32,
+    /// Feuerschaden je Sekunde bei Vollbrand (weniger bei schwächerem Brand), gegen die
+    /// Feuer-Rüstung des Gebäudes. Wehrt sie Feuer ganz ab, brennt es gar nicht.
+    pub damage_per_second: f32,
+    /// Ab dieser Stärke kann der Brand überspringen.
+    pub spread_from: f32,
+    /// So nah (Felder Abstand zwischen den Rändern) muss ein Nachbargebäude stehen.
+    pub spread_distance: f32,
+    /// Chance (Prozent je Sekunde und Nachbar) bei Vollbrand, dass es überspringt.
+    pub spread_percent: f32,
+    /// So viel Brandstärke nimmt ein Feuerwehrmann je Sekunde weg.
+    pub extinguish_per_second: f32,
+    /// So viele Sekunden reicht das Wasser eines Feuerwehrmanns, dann holt er neues an der Wache.
+    pub water_seconds: f32,
+}
+
+impl Default for FireDef {
+    fn default() -> Self {
+        FireDef {
+            start: 0.2,
+            grow_per_second: 0.01,
+            damage_per_second: 4.0,
+            spread_from: 0.4,
+            spread_distance: 2.0,
+            spread_percent: 3.0,
+            extinguish_per_second: 0.06,
+            water_seconds: 10.0,
+        }
+    }
 }
 
 fn yes() -> bool {
@@ -1612,6 +1674,9 @@ pub struct UnitDef {
     /// Heiler: so weit (Felder) reicht er zu einem Verwundeten.
     #[serde(default)]
     pub heal_range: f32,
+    /// So viele Sekunden braucht die Einheit, um ein Gebäude anzuzünden (Fackel). 0 = kann es nicht.
+    #[serde(default)]
+    pub ignite_seconds: f32,
     /// Vorrat an Schüssen (Köcher, Steine im Gerät); ist er leer, schießt die Einheit erst nach
     /// Nachschub wieder. 0 = unbegrenzt. Gilt nur, wenn die Spielregel Munition verlangt.
     #[serde(default)]
@@ -2107,6 +2172,8 @@ pub enum BuildingStatus {
     /// Eingangswaren liegen nur noch bis zum Mindestbestand (`settings.keep_in_stock`)
     /// im Vorrat: der Betrieb wartet, bis wieder mehr da ist.
     StockReserved,
+    /// Das Gebäude brennt: keine Arbeit, bis es gelöscht ist.
+    Burning,
 }
 
 /// Ein Gebäude auf der Karte. Es belegt die Felder (x, y) bis (x + w - 1, y + h - 1).
@@ -2169,6 +2236,9 @@ pub struct BuildingState {
     /// Baustelle eines Belagerungsgeräts (Baustelle im Feld, Turm mit Balliste im Bau).
     #[serde(default)]
     pub site: Option<SiteState>,
+    /// Brand: 0 = brennt nicht, sonst Stärke bis 1 (Vollbrand).
+    #[serde(default)]
+    pub fire: f32,
 }
 
 fn default_enemy_radius() -> f32 {

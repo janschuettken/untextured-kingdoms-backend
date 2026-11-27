@@ -1,5 +1,5 @@
 {
-  "format": 4,
+  "format": 5,
   "goods": [
     "wood",
     "boards",
@@ -49,6 +49,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 60,
           "workers": 0,
           "gather_radius": 0,
@@ -64,6 +65,7 @@
           ],
           "road_speed_percent": 40,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -93,6 +95,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 150,
           "workers": 0,
           "gather_radius": 0,
@@ -108,6 +111,7 @@
           ],
           "road_speed_percent": 80,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -137,6 +141,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 400,
           "workers": 0,
           "gather_radius": 0,
@@ -152,6 +157,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -181,6 +187,7 @@
           "housing": 6,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 200,
           "workers": 0,
           "gather_radius": 0,
@@ -196,6 +203,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -205,6 +213,7 @@
           "housing": 14,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 200,
           "workers": 0,
           "gather_radius": 0,
@@ -220,6 +229,79 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
+          "storage_inputs": 0,
+          "storage_outputs": 0
+        }
+      ]
+    },
+    {
+      "kind": "fire_station",
+      "category": "housing",
+      "w": 3,
+      "h": 3,
+      "height": 2.4,
+      "release_after_seconds": 0,
+      "build_radius": 0,
+      "no_entrance": false,
+      "on_walls": false,
+      "on_ramps": false,
+      "first_free": false,
+      "hub_goods": [],
+      "delivery": {"carriers": false, "carts": false, "worker": false},
+      "horse_capacity": 0,
+      "max_span": 0,
+      "enemy_radius": 15,
+      "levels": [
+        {
+          "cost": [{"good": "wood", "amount": 15}, {"good": "stone", "amount": 5}],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": [],
+          "siege": [],
+          "max_hp": 250,
+          "workers": 2,
+          "gather_radius": 0,
+          "service_radius": 25,
+          "walkway": false,
+          "stairs": false,
+          "gate_radius": 0,
+          "garrison": 0,
+          "cover_percent": 0,
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
+          "road_speed_percent": 0,
+          "hub_capacity": 0,
+          "fire_risk": 0,
+          "storage_inputs": 0,
+          "storage_outputs": 0
+        },
+        {
+          "cost": [{"good": "boards", "amount": 15}, {"good": "stone", "amount": 10}],
+          "recipes": [],
+          "housing": 0,
+          "spawns": [],
+          "trains": [],
+          "siege": [],
+          "max_hp": 300,
+          "workers": 4,
+          "gather_radius": 0,
+          "service_radius": 35,
+          "walkway": false,
+          "stairs": false,
+          "gate_radius": 0,
+          "garrison": 0,
+          "cover_percent": 0,
+          "armor": [
+            {"type": "ranged", "min": 0, "block": 1},
+            {"type": "heavy_ranged", "min": 0, "block": 1}
+          ],
+          "road_speed_percent": 0,
+          "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -249,6 +331,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 0,
           "gather_radius": 0,
@@ -267,6 +350,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -276,6 +360,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 0,
           "gather_radius": 0,
@@ -294,6 +379,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -323,6 +409,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 1000,
           "workers": 0,
           "gather_radius": 0,
@@ -341,6 +428,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -350,6 +438,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 1000,
           "workers": 0,
           "gather_radius": 0,
@@ -368,6 +457,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -397,6 +487,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 2000,
           "workers": 0,
           "gather_radius": 0,
@@ -415,6 +506,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -444,6 +536,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 1200,
           "workers": 0,
           "gather_radius": 0,
@@ -462,6 +555,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -491,6 +585,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 1200,
           "workers": 0,
           "gather_radius": 0,
@@ -509,6 +604,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -518,6 +614,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 1200,
           "workers": 0,
           "gather_radius": 0,
@@ -536,6 +633,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -570,6 +668,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 3000,
           "workers": 0,
           "gather_radius": 0,
@@ -588,6 +687,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -617,6 +717,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 150,
           "workers": 0,
           "gather_radius": 0,
@@ -634,6 +735,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -643,6 +745,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 150,
           "workers": 0,
           "gather_radius": 0,
@@ -660,6 +763,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -689,6 +793,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 0,
           "gather_radius": 0,
@@ -707,6 +812,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -722,7 +828,6 @@
       "release_after_seconds": 0,
       "build_radius": 0,
       "no_entrance": false,
-      "hub": false,
       "on_walls": false,
       "on_ramps": false,
       "first_free": true,
@@ -742,6 +847,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 3000,
           "workers": 0,
           "gather_radius": 0,
@@ -760,6 +866,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -790,6 +897,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 600,
           "workers": 0,
           "gather_radius": 0,
@@ -805,6 +913,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -814,6 +923,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 600,
           "workers": 0,
           "gather_radius": 0,
@@ -829,6 +939,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 1200,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -859,6 +970,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 500,
           "workers": 0,
           "gather_radius": 0,
@@ -874,6 +986,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 300,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -887,6 +1000,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 700,
           "workers": 0,
           "gather_radius": 0,
@@ -902,6 +1016,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 600,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -946,6 +1061,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 500,
           "workers": 0,
           "gather_radius": 0,
@@ -961,6 +1077,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 200,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -974,6 +1091,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 500,
           "workers": 0,
           "gather_radius": 0,
@@ -989,6 +1107,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 400,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1018,6 +1137,7 @@
           "housing": 0,
           "spawns": [{"kind": "carrier", "count": 3}],
           "trains": [],
+          "siege": [],
           "max_hp": 500,
           "workers": 0,
           "gather_radius": 0,
@@ -1033,6 +1153,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -1042,6 +1163,7 @@
           "housing": 0,
           "spawns": [{"kind": "cart", "count": 1}],
           "trains": [],
+          "siege": [],
           "max_hp": 500,
           "workers": 0,
           "gather_radius": 0,
@@ -1057,6 +1179,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -1066,6 +1189,7 @@
           "housing": 0,
           "spawns": [{"kind": "cart", "count": 1}, {"kind": "carrier", "count": 3}],
           "trains": [],
+          "siege": [],
           "max_hp": 500,
           "workers": 0,
           "gather_radius": 0,
@@ -1081,6 +1205,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -1090,6 +1215,7 @@
           "housing": 0,
           "spawns": [{"kind": "cart", "count": 2}, {"kind": "carrier", "count": 3}],
           "trains": [],
+          "siege": [],
           "max_hp": 500,
           "workers": 0,
           "gather_radius": 0,
@@ -1105,6 +1231,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1135,6 +1262,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 400,
           "workers": 0,
           "gather_radius": 0,
@@ -1150,6 +1278,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1180,6 +1309,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 250,
           "workers": 1,
           "gather_radius": 1000,
@@ -1195,6 +1325,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1226,6 +1357,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 250,
           "workers": 1,
           "gather_radius": 3,
@@ -1241,6 +1373,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1272,6 +1405,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 1,
           "gather_radius": 3,
@@ -1287,6 +1421,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1317,6 +1452,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 250,
           "workers": 1,
           "gather_radius": 0,
@@ -1332,6 +1468,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1361,6 +1498,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 1,
           "gather_radius": 0,
@@ -1376,6 +1514,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1405,6 +1544,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 1,
           "gather_radius": 0,
@@ -1420,6 +1560,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1449,6 +1590,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 250,
           "workers": 1,
           "gather_radius": 0,
@@ -1464,6 +1606,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1493,6 +1636,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 250,
           "workers": 1,
           "gather_radius": 0,
@@ -1508,6 +1652,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1537,6 +1682,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 1,
           "gather_radius": 0,
@@ -1552,6 +1698,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -1561,6 +1708,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 1,
           "gather_radius": 0,
@@ -1576,6 +1724,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1605,6 +1754,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 1,
           "gather_radius": 0,
@@ -1620,6 +1770,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -1629,6 +1780,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 1,
           "gather_radius": 0,
@@ -1644,6 +1796,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1677,6 +1830,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 400,
           "workers": 1,
           "gather_radius": 0,
@@ -1692,6 +1846,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 1,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1725,6 +1880,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 400,
           "workers": 1,
           "gather_radius": 0,
@@ -1740,6 +1896,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 1,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -1753,6 +1910,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 400,
           "workers": 1,
           "gather_radius": 0,
@@ -1768,6 +1926,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 1,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1797,6 +1956,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 1,
           "gather_radius": 0,
@@ -1812,6 +1972,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1845,6 +2006,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 350,
           "workers": 1,
           "gather_radius": 0,
@@ -1860,6 +2022,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1890,6 +2053,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 200,
           "workers": 1,
           "gather_radius": 0,
@@ -1905,6 +2069,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -1934,6 +2099,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 250,
           "workers": 1,
           "gather_radius": 0,
@@ -1949,6 +2115,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -1958,6 +2125,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 250,
           "workers": 1,
           "gather_radius": 0,
@@ -1973,6 +2141,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -2003,6 +2172,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 1,
           "gather_radius": 0,
@@ -2018,6 +2188,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -2047,6 +2218,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 1,
           "gather_radius": 0,
@@ -2062,6 +2234,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 5,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -2095,6 +2268,7 @@
           "housing": 0,
           "spawns": [],
           "trains": ["spearman", "archer", "light_swordsman"],
+          "siege": [],
           "max_hp": 600,
           "workers": 0,
           "gather_radius": 0,
@@ -2110,6 +2284,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -2123,6 +2298,7 @@
           "housing": 0,
           "spawns": [],
           "trains": ["crossbowman", "swordsman"],
+          "siege": [],
           "max_hp": 600,
           "workers": 0,
           "gather_radius": 0,
@@ -2138,6 +2314,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         },
@@ -2147,6 +2324,7 @@
           "housing": 0,
           "spawns": [],
           "trains": ["knight"],
+          "siege": [],
           "max_hp": 600,
           "workers": 0,
           "gather_radius": 0,
@@ -2162,6 +2340,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -2195,6 +2374,7 @@
           "housing": 0,
           "spawns": [],
           "trains": ["healer"],
+          "siege": [],
           "max_hp": 250,
           "workers": 1,
           "gather_radius": 0,
@@ -2210,6 +2390,7 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
           "storage_outputs": 0
         }
@@ -2243,6 +2424,7 @@
           "housing": 0,
           "spawns": [],
           "trains": ["builder"],
+          "siege": ["catapult", "ballista"],
           "max_hp": 500,
           "workers": 0,
           "gather_radius": 0,
@@ -2258,9 +2440,9 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
-          "storage_outputs": 0,
-          "siege": ["catapult", "ballista"]
+          "storage_outputs": 0
         },
         {
           "cost": [
@@ -2272,6 +2454,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": ["trebuchet", "siege_tower"],
           "max_hp": 600,
           "workers": 0,
           "gather_radius": 0,
@@ -2287,9 +2470,9 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
-          "storage_outputs": 0,
-          "siege": ["trebuchet", "siege_tower"]
+          "storage_outputs": 0
         }
       ]
     },
@@ -2317,6 +2500,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 150,
           "workers": 0,
           "gather_radius": 0,
@@ -2329,9 +2513,9 @@
           "armor": [],
           "road_speed_percent": 0,
           "hub_capacity": 0,
+          "fire_risk": 0,
           "storage_inputs": 0,
-          "storage_outputs": 0,
-          "siege": []
+          "storage_outputs": 0
         }
       ]
     },
@@ -2360,6 +2544,7 @@
           "housing": 0,
           "spawns": [],
           "trains": [],
+          "siege": [],
           "max_hp": 300,
           "workers": 0,
           "gather_radius": 0,
@@ -2375,9 +2560,9 @@
           ],
           "road_speed_percent": 0,
           "hub_capacity": 150,
+          "fire_risk": 0,
           "storage_inputs": 0,
-          "storage_outputs": 0,
-          "siege": []
+          "storage_outputs": 0
         }
       ]
     }
@@ -2682,6 +2867,7 @@
       ],
       "horse_armor": [],
       "range": 1.2,
+      "scatter": 0,
       "upkeep": 0,
       "food": 0,
       "can_ride": true,
@@ -2691,7 +2877,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
-      "heal_range": 0
+      "heal_range": 0,
+      "ignite_seconds": 0,
+      "shots": 0
     },
     {
       "kind": "worker",
@@ -2705,6 +2893,7 @@
       "armor": [{"type": "melee", "min": 2, "block": 0}],
       "horse_armor": [],
       "range": 0,
+      "scatter": 0,
       "upkeep": 0,
       "food": 0,
       "can_ride": false,
@@ -2714,7 +2903,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
-      "heal_range": 0
+      "heal_range": 0,
+      "ignite_seconds": 0,
+      "shots": 0
     },
     {
       "kind": "carrier",
@@ -2728,6 +2919,7 @@
       "armor": [],
       "horse_armor": [],
       "range": 0,
+      "scatter": 0,
       "upkeep": 0,
       "food": 0,
       "can_ride": false,
@@ -2737,7 +2929,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
-      "heal_range": 0
+      "heal_range": 0,
+      "ignite_seconds": 0,
+      "shots": 0
     },
     {
       "kind": "cart",
@@ -2751,6 +2945,7 @@
       "armor": [],
       "horse_armor": [],
       "range": 0,
+      "scatter": 0,
       "upkeep": 0,
       "food": 0,
       "can_ride": false,
@@ -2760,7 +2955,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
-      "heal_range": 0
+      "heal_range": 0,
+      "ignite_seconds": 0,
+      "shots": 0
     },
     {
       "kind": "trade_cart",
@@ -2774,6 +2971,7 @@
       "armor": [],
       "horse_armor": [],
       "range": 0,
+      "scatter": 0,
       "upkeep": 0,
       "food": 0,
       "can_ride": false,
@@ -2783,7 +2981,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
-      "heal_range": 0
+      "heal_range": 0,
+      "ignite_seconds": 0,
+      "shots": 0
     },
     {
       "kind": "spearman",
@@ -2800,6 +3000,7 @@
         {"type": "ranged", "min": 0, "block": 0.15}
       ],
       "range": 1.5,
+      "scatter": 0,
       "upkeep": 0,
       "food": 0,
       "can_ride": true,
@@ -2809,7 +3010,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
-      "heal_range": 0
+      "heal_range": 0,
+      "ignite_seconds": 3,
+      "shots": 0
     },
     {
       "kind": "archer",
@@ -2837,6 +3040,7 @@
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0,
+      "ignite_seconds": 3,
       "shots": 24,
       "ammo": {"good": "arrows", "amount": 1}
     },
@@ -2866,6 +3070,7 @@
       "attack_seconds": 1.5,
       "heal": 0,
       "heal_range": 0,
+      "ignite_seconds": 3,
       "shots": 20,
       "ammo": {"good": "arrows", "amount": 1}
     },
@@ -2887,6 +3092,7 @@
         {"type": "ranged", "min": 0, "block": 0.15}
       ],
       "range": 1,
+      "scatter": 0,
       "upkeep": 0,
       "food": 1,
       "can_ride": true,
@@ -2896,7 +3102,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
-      "heal_range": 0
+      "heal_range": 0,
+      "ignite_seconds": 3,
+      "shots": 0
     },
     {
       "kind": "swordsman",
@@ -2918,6 +3126,7 @@
         {"type": "ranged", "min": 0, "block": 0.15}
       ],
       "range": 1,
+      "scatter": 0,
       "upkeep": 0,
       "food": 2,
       "can_ride": true,
@@ -2927,7 +3136,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
-      "heal_range": 0
+      "heal_range": 0,
+      "ignite_seconds": 3,
+      "shots": 0
     },
     {
       "kind": "knight",
@@ -2955,6 +3166,7 @@
         {"type": "heavy_ranged", "min": 0, "block": 0.2}
       ],
       "range": 1,
+      "scatter": 0,
       "upkeep": 0,
       "food": 3,
       "can_ride": true,
@@ -2964,7 +3176,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
-      "heal_range": 0
+      "heal_range": 0,
+      "ignite_seconds": 4,
+      "shots": 0
     },
     {
       "kind": "healer",
@@ -2978,6 +3192,7 @@
       "armor": [],
       "horse_armor": [],
       "range": 0,
+      "scatter": 0,
       "upkeep": 0,
       "food": 0,
       "can_ride": false,
@@ -2987,7 +3202,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 5,
-      "heal_range": 5
+      "heal_range": 5,
+      "ignite_seconds": 0,
+      "shots": 0
     },
     {
       "kind": "builder",
@@ -3001,6 +3218,7 @@
       "armor": [],
       "horse_armor": [],
       "range": 0,
+      "scatter": 0,
       "upkeep": 0,
       "food": 0,
       "can_ride": false,
@@ -3010,7 +3228,9 @@
       "attack_mounted": true,
       "attack_seconds": 1.5,
       "heal": 0,
-      "heal_range": 0
+      "heal_range": 0,
+      "ignite_seconds": 0,
+      "shots": 0
     },
     {
       "kind": "catapult",
@@ -3032,7 +3252,7 @@
       ],
       "horse_armor": [],
       "range": 30,
-      "scatter": 2.0,
+      "scatter": 2,
       "upkeep": 0,
       "food": 0,
       "can_ride": false,
@@ -3043,6 +3263,9 @@
       "attack_seconds": 6,
       "heal": 0,
       "heal_range": 0,
+      "ignite_seconds": 0,
+      "shots": 10,
+      "ammo": {"good": "stone", "amount": 1},
       "siege": {
         "size": 2,
         "crew": 2,
@@ -3052,10 +3275,9 @@
         "hits_buildings": true,
         "hits_units": true,
         "on_towers": false,
-        "shot_speed": 14
-      },
-      "shots": 10,
-      "ammo": {"good": "stone", "amount": 1}
+        "shot_speed": 14,
+        "docks": false
+      }
     },
     {
       "kind": "trebuchet",
@@ -3089,6 +3311,9 @@
       "attack_seconds": 12,
       "heal": 0,
       "heal_range": 0,
+      "ignite_seconds": 0,
+      "shots": 6,
+      "ammo": {"good": "stone", "amount": 2},
       "siege": {
         "size": 3,
         "crew": 3,
@@ -3098,10 +3323,9 @@
         "hits_buildings": true,
         "hits_units": false,
         "on_towers": false,
-        "shot_speed": 12
-      },
-      "shots": 6,
-      "ammo": {"good": "stone", "amount": 2}
+        "shot_speed": 12,
+        "docks": false
+      }
     },
     {
       "kind": "ballista",
@@ -3126,6 +3350,9 @@
       "attack_seconds": 4,
       "heal": 0,
       "heal_range": 0,
+      "ignite_seconds": 0,
+      "shots": 20,
+      "ammo": {"good": "boards", "amount": 1},
       "siege": {
         "size": 1,
         "crew": 1,
@@ -3135,10 +3362,9 @@
         "hits_buildings": false,
         "hits_units": true,
         "on_towers": true,
-        "shot_speed": 30
-      },
-      "shots": 20,
-      "ammo": {"good": "boards", "amount": 1}
+        "shot_speed": 30,
+        "docks": false
+      }
     },
     {
       "kind": "siege_tower",
@@ -3160,6 +3386,7 @@
       ],
       "horse_armor": [],
       "range": 0,
+      "scatter": 0,
       "upkeep": 0,
       "food": 0,
       "can_ride": false,
@@ -3170,6 +3397,8 @@
       "attack_seconds": 1,
       "heal": 0,
       "heal_range": 0,
+      "ignite_seconds": 0,
+      "shots": 0,
       "siege": {
         "size": 2,
         "crew": 2,
@@ -3181,8 +3410,7 @@
         "on_towers": false,
         "shot_speed": 15,
         "docks": true
-      },
-      "shots": 0
+      }
     }
   ],
   "army": {
@@ -3203,8 +3431,20 @@
     "horse_hit_percent": 70,
     "melee_max_levels": 1,
     "height_range_percent": 5,
+    "arrow_speed": 22,
+    "arrow_hit_radius": 0.6,
     "loot_percent": 50,
     "builder_backpack": 5,
     "refill_radius": 10
+  },
+  "fire": {
+    "start": 0.2,
+    "grow_per_second": 0.01,
+    "damage_per_second": 4,
+    "spread_from": 0.4,
+    "spread_distance": 2,
+    "spread_percent": 3,
+    "extinguish_per_second": 0.06,
+    "water_seconds": 10
   }
 }

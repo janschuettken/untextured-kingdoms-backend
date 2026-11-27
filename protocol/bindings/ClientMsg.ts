@@ -14,7 +14,12 @@ export type ClientMsg = { "type": "hello", name: string, } | { "type": "ping", c
  * Strg+Rechtsklick: als weiteren Wegpunkt hinten anhängen, statt den Weg zu ersetzen.
  * Ein Befehl ohne `append` löscht alle alten Wegpunkte.
  */
-append?: boolean, } | { "type": "attack", unit_ids: Array<number>, target: AttackTarget, force?: boolean, } | { "type": "mount", unit_ids: Array<number>, } | { "type": "dismount", unit_ids: Array<number>, } | { "type": "stop", unit_ids: Array<number>, } | { "type": "place_building", kind: BuildingKind, x: number, y: number, rotation: number, 
+append?: boolean, } | { "type": "attack", unit_ids: Array<number>, target: AttackTarget, force?: boolean, 
+/**
+ * Anzünden statt angreifen (nur Gebäude): hinlaufen, die Fackel anlegen
+ * (`ignite_seconds` der Einheit), dann brennt es.
+ */
+ignite?: boolean, } | { "type": "mount", unit_ids: Array<number>, } | { "type": "dismount", unit_ids: Array<number>, } | { "type": "stop", unit_ids: Array<number>, } | { "type": "place_building", kind: BuildingKind, x: number, y: number, rotation: number, 
 /**
  * Gleich auf dieser Stufe bauen (0 oder 1 = erste Stufe). Kostet alle Stufen bis dahin.
  */

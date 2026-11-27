@@ -2,6 +2,7 @@
 import type { ArmyDef } from "./ArmyDef";
 import type { BuildingDef } from "./BuildingDef";
 import type { BuildingKind } from "./BuildingKind";
+import type { FireDef } from "./FireDef";
 import type { Good } from "./Good";
 import type { GoodAmount } from "./GoodAmount";
 import type { MarketDef } from "./MarketDef";
@@ -60,4 +61,8 @@ fertile_bonus_percent: number, transport: TransportDef, movement: MovementDef, p
 /**
  * Soldaten: Kosten, Ausbildungszeit, Werte.
  */
-units: Array<UnitDef>, army: ArmyDef, };
+units: Array<UnitDef>, army: ArmyDef, 
+/**
+ * Feuer: Brand, Ausbreitung, Löschen.
+ */
+fire: FireDef, };

@@ -119,7 +119,7 @@ pub fn siege(world: &World, me: u32, target: u32, wave: &[&Unit]) -> Vec<ClientM
             }
         }
     }
-    orders.into_iter().map(|(target, unit_ids)| ClientMsg::Attack { unit_ids, target, force: None }).collect()
+    orders.into_iter().map(|(target, unit_ids)| ClientMsg::Attack { unit_ids, target, force: None, ignite: None }).collect()
 }
 
 /// Belagerungsgeräte der Welle: wer gerade nichts beschießt, wirft auf die Bresche
@@ -130,7 +130,7 @@ pub fn bombard(world: &World, me: u32, target: u32, engines: &[&Unit]) -> Vec<Cl
         return Vec::new();
     }
     match breach_target(world, me, target, &free) {
-        Some(t @ AttackTarget::Building { .. }) => vec![ClientMsg::Attack { unit_ids: free.iter().map(|u| u.id).collect(), target: t, force: None }],
+        Some(t @ AttackTarget::Building { .. }) => vec![ClientMsg::Attack { unit_ids: free.iter().map(|u| u.id).collect(), target: t, force: None, ignite: None }],
         _ => Vec::new(),
     }
 }

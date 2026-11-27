@@ -93,6 +93,10 @@ heal: number,
  */
 heal_range: number, 
 /**
+ * So viele Sekunden braucht die Einheit, um ein Gebäude anzuzünden (Fackel). 0 = kann es nicht.
+ */
+ignite_seconds: number, 
+/**
  * Vorrat an Schüssen (Köcher, Steine im Gerät); ist er leer, schießt die Einheit erst nach
  * Nachschub wieder. 0 = unbegrenzt. Gilt nur, wenn die Spielregel Munition verlangt.
  */

@@ -225,6 +225,8 @@ impl Profile {
                     (Quarry, 2),
                     (Sawmill, 2),
                     (Smithy, 1),
+                    // Schmiede kann brennen: Feuerwache gleich daneben.
+                    (FireStation, 1),
                     (Apothecary, 1),
                     (Barracks, 2),
                     (House, 4),
@@ -319,6 +321,8 @@ impl Profile {
                     (Woodcutter, 10),
                     (Sawmill, 2),
                     (Smithy, 1),
+                    // Schmiede kann brennen: Feuerwache gleich daneben.
+                    (FireStation, 1),
                     (Apothecary, 1),
                     (Orchard, 2),
                     (House, 4),

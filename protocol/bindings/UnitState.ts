@@ -58,4 +58,16 @@ shots_left: number | null,
 /**
  * Belagerungsturm: liegt an diesem Gebäude (Mauer) an.
  */
-docked_at: number | null, };
+docked_at: number | null, 
+/**
+ * Arbeiter einer Feuerwache (Feuerwehrmann).
+ */
+firefighter: boolean, 
+/**
+ * Feuerwehrmann: löscht gerade.
+ */
+spraying: boolean, 
+/**
+ * Legt gerade Feuer an ein Gebäude (Fackel).
+ */
+igniting: boolean, };

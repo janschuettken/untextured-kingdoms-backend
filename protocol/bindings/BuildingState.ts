@@ -68,4 +68,8 @@ rally: [number, number] | null,
 /**
  * Baustelle eines Belagerungsgeräts (Baustelle im Feld, Turm mit Balliste im Bau).
  */
-site: SiteState | null, };
+site: SiteState | null, 
+/**
+ * Brand: 0 = brennt nicht, sonst Stärke bis 1 (Vollbrand).
+ */
+fire: number, };

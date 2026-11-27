@@ -40,6 +40,10 @@ impl World {
             }
             let Some(home) = self.units[k].home else { continue };
             let Some(&bi) = index.get(&home) else { continue };
+            // Feuerwehrleute gehen eigene Wege (siehe `fire.rs`).
+            if self.buildings[bi].kind == protocol::BuildingKind::FireStation {
+                continue;
+            }
             let gathers = self.economy.building(self.buildings[bi].kind).is_some_and(|d| !d.gathers.is_empty());
             if !gathers {
                 // Herstellungsbetrieb: unterwegs = der Betrieb steht, solange keiner da ist.
@@ -276,7 +280,7 @@ impl World {
     /// Mauern, Lager usw. haben keine).
     pub(super) fn worker_slots(&self, b: &protocol::BuildingState) -> u32 {
         let Some(def) = self.economy.building(b.kind) else { return 0 };
-        if def.gathers.is_empty() && def.levels.iter().all(|l| l.recipes.is_empty()) {
+        if def.gathers.is_empty() && def.levels.iter().all(|l| l.recipes.is_empty()) && b.kind != protocol::BuildingKind::FireStation {
             return 0;
         }
         def.at(b.level).workers.max(1)
