@@ -11,4 +11,4 @@ export type LobbyClientMsg = { "type": "hello", token: string, name: string, } |
 /**
  * Charakter (Id aus `ai_personalities.json`), leer = der erste.
  */
-personality?: string, } | { "type": "remove_computer", slot: number, } | { "type": "set_team", slot: number, team: number, } | { "type": "set_computer_traits", slot: number, daring?: number, helpfulness?: number, } | { "type": "set_computer_bonus", slot: number, bonus: number, } | { "type": "set_trade_mode", mode: TradeMode, } | { "type": "set_shot_mode", mode: ShotMode, } | { "type": "set_rules", rules: GameRules, } | { "type": "rename_game", game_id: number, title: string, };
+personality?: string, } | { "type": "remove_computer", slot: number, } | { "type": "set_team", slot: number, team: number, } | { "type": "set_computer_traits", slot: number, daring?: number, helpfulness?: number, } | { "type": "set_computer_bonus", slot: number, bonus: number, } | { "type": "set_trade_mode", mode: TradeMode, } | { "type": "set_shot_mode", mode: ShotMode, } | { "type": "set_rules", rules: GameRules, } | { "type": "rename_game", game_id: number, title: string, } | { "type": "cleanup_games" };

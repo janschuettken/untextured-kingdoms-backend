@@ -481,6 +481,8 @@ pub enum LobbyClientMsg {
     SetRules { rules: GameRules },
     /// Gastgeber oder Admin, jederzeit: Namen eines Spiels setzen (leer = Standardname).
     RenameGame { game_id: u32, title: String },
+    /// Beendete Spiele löschen: Admins alle, sonst die, in denen man mitspielt.
+    CleanupGames,
 }
 
 /// Stärke eines Computergegners. Was jede Stufe tut, steht im Server (`server/src/ai/`).
@@ -550,6 +552,13 @@ pub struct GameSummary {
     pub paused: bool,
     /// Wer mitspielt (für den Admin: „Spielen als“ hinter jedem Spieler).
     pub slots: Vec<LobbySlot>,
+    /// Zuletzt gespielt (Unix-Sekunden; wartende Spiele: angelegt). Die Liste ist danach sortiert.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub last_played: u64,
+    /// Entschieden (ein König oder Bündnis ist übrig): kann aufgeräumt werden.
+    #[serde(default)]
+    pub finished: bool,
 }
 
 /// Das Spiel, in dem man selbst ist, mit allen Startplätzen.
